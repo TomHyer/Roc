@@ -6441,6 +6441,8 @@ template <bool me> void gen_next_moves(bool depth_parity)
 		p = gen_quiet_moves<me>(Current->start);
 		Current->gen_flags |= FlagSort;
 		Current->current = Current->start;
+		for (auto q = Current->start; *q; ++q)
+			apply_parity(&*q, depth_parity);
 		return;
 	case s_bad_cap:
 		*(Current->start) = 0;
@@ -6839,23 +6841,6 @@ template <bool me> int* gen_captures(int* list)
 	return NullTerminate(list);
 }
 
-INLINE uint64 knight_joins(const uint64& knights)
-{
-	if (!knights)
-		return 0;
-	int n1 = lsb(knights), n2 = msb(knights);
-	return n1 == n2 ? 0 : NAtt[n1] & NAtt[n2];
-}
-
-INLINE uint64 rook_joins(const uint64& rooks)
-{
-	if (!rooks)
-		return 0;
-	int r1 = lsb(rooks), r2 = msb(rooks);
-	int fileSwap = FileOf(r1) ^ FileOf(r2);
-	return Bit(r1 ^ fileSwap) ^ Bit(r2 ^ fileSwap);
-}
-
 INLINE pair<uint64, uint64> pawn_joins(bool me, const uint64& pawns)  // returns (pawn attacks, reversed attacks)
 {
 	pair<uint64, uint64> retval(0, 0);
@@ -6879,8 +6864,6 @@ template <bool me> int* gen_evasions(int* list)
 	int from;
 	uint64 b, u;
 	//	pair<uint64, uint64> pJoins = pawn_joins(me, Pawn(me));
-	//	uint64 nJoins = knight_joins(Knight(me));
-	//	uint64 rJoins = rook_joins(Rook(me));
 
 	int king = lsb(King(me));
 	uint64 att = (NAtt[king] & Knight(opp)) | (PAtt[me][king] & Pawn(opp));
@@ -7028,7 +7011,8 @@ template <bool me> int* gen_quiet_moves(int* list)
 		for (v = free & NAtt[from]; T(v); Cut(v))
 		{
 			int to = lsb(v);
-			list = AddHistoryP(list, IKnight[me], from, to, 0);
+			int flag = NAtt[to] & Major(opp) ? FlagCastling : 0;
+			list = AddHistoryP(list, IKnight[me], from, to, flag);
 		}
 	}
 
@@ -7039,7 +7023,8 @@ template <bool me> int* gen_quiet_moves(int* list)
 		for (v = free & BishopAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			list = AddHistoryP(list, which, from, to, 0);
+			int flag = BMask[to] & (PAtt[opp][to] & Pawn(me) ? Major(opp) : Rook(opp)) ? FlagCastling : 0;
+			list = AddHistoryP(list, which, from, to, flag);
 		}
 	}
 
@@ -7049,7 +7034,8 @@ template <bool me> int* gen_quiet_moves(int* list)
 		for (v = free & RookAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			list = AddHistoryP(list, IRook[me], from, to, 0);
+			int flag = (PAtt[opp][to] & Pawn(me)) && (RMask[to] & Queen(opp)) ? FlagCastling : 0;
+			list = AddHistoryP(list, IRook[me], from, to, flag);
 		}
 	}
 	for (u = Queen(me); T(u); Cut(u))
@@ -9921,7 +9907,7 @@ void uci()
 		*ptr = 0;
 	if (!strcmp(mstring, "uci"))
 	{
-		fprintf(stdout, "id name Roc");
+		fprintf(stdout, "id name Roc ");
 		fprintf(stdout, now);
 		fprintf(stdout, "\n");
 		fprintf(stdout, "id author Demichev/Hyer\n");
