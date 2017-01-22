@@ -417,7 +417,7 @@ static const int KingSafetyNoQueen = 8;	// numerator; denominator is 16
 static const int SeeThreshold = 40 * CP_EVAL;
 static const int DrawCapConstant = 100 * CP_EVAL;
 static const int DrawCapLinear = 0;	// numerator; denominator is 64
-static const int DeltaDecrement = CP_SEARCH;
+static const int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
 
 inline int MapPositive(int scale, int param)
 {
@@ -1590,7 +1590,7 @@ inline int FileSpan(uint64* occ)
 	*occ |= *occ >> 16;
 	*occ |= *occ >> 8;
 	*occ &= 0xFF;	// now it is the file population
-	return SpanWidth[*occ];
+	return SpanWidth[static_cast<size_t>(*occ)];
 }
 inline int FileSpan(const uint64& occ)
 {
@@ -3077,24 +3077,33 @@ INLINE int popcnt(uint64 x)
 }
 
 #else
-INLINE int lsb(uint64 x)
-{
-	_asm
-	{
-		mov eax, dword ptr x[0] test eax, eax jz l_high bsf eax, eax jmp l_ret l_high : bsf eax, dword ptr x[4] add eax, 20h l_ret :
+INLINE int lsb(uint64 x) {
+	_asm {
+		mov eax, dword ptr x[0]
+			test eax, eax
+			jz l_high
+			bsf eax, eax
+			jmp l_ret
+			l_high : bsf eax, dword ptr x[4]
+			add eax, 20h
+			l_ret :
 	}
 }
 
-INLINE int msb(uint64 x)
-{
-	_asm
-	{
-		mov eax, dword ptr x[4] test eax, eax jz l_low bsr eax, eax add eax, 20h jmp l_ret l_low : bsr eax, dword ptr x[0] l_ret :
+INLINE int msb(uint64 x) {
+	_asm {
+		mov eax, dword ptr x[4]
+			test eax, eax
+			jz l_low
+			bsr eax, eax
+			add eax, 20h
+			jmp l_ret
+			l_low : bsr eax, dword ptr x[0]
+			l_ret :
 	}
 }
 
-INLINE int popcnt(uint64 x)
-{
+INLINE int popcnt(uint64 x) {
 	unsigned int x1, x2;
 	x1 = (unsigned int)(x & 0xFFFFFFFF);
 	x1 -= (x1 >> 1) & 0x55555555;
@@ -5960,13 +5969,6 @@ template<class POP> void evaluation()
 	}
 }
 
-struct pop1_
-{
-	INLINE int operator()(const uint64& b) const
-	{
-		return static_cast<int>(_mm_popcnt_u64(b));
-	}
-};
 struct pop0_
 {
 	INLINE int operator()(const uint64& b) const
@@ -5974,6 +5976,17 @@ struct pop0_
 		return popcnt(b);
 	}
 };
+#ifdef W32_BUILD
+#define pop1_ pop0_
+#else
+struct pop1_
+{
+	INLINE int operator()(const uint64& b) const
+	{
+		return static_cast<int>(_mm_popcnt_u64(b));
+	}
+};
+#endif
 
 INLINE void evaluate()
 {HI
@@ -9549,7 +9562,12 @@ sint64 get_time()
 	}
 #endif
 #endif
+
+#ifdef W32_BUILD
+	return GetTickCount();
+#else
 	return GetTickCount64();
+#endif
 }
 
 int time_to_stop(GSearchInfo* SI, int time, int searching)
@@ -10170,9 +10188,9 @@ void main(int argc, char* argv[])
 	{
 		if (((CPUInfo[3] >> 28) & 1) && GetProcAddress(GetModuleHandle(TEXT("kernel32")), "GetLogicalProcessorInformation") != nullptr)
 		{
-			SYSTEM_LOGICAL_PROCESSOR_INFORMATION syslogprocinfo[1];
 			p = sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
 #ifndef W32_BUILD
+			SYSTEM_LOGICAL_PROCESSOR_INFORMATION syslogprocinfo[1];
 			GetLogicalProcessorInformation(syslogprocinfo, &p);
 			if (syslogprocinfo->ProcessorCore.Flags == 1)
 				HT = 1;
