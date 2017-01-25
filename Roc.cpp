@@ -821,6 +821,7 @@ INLINE void HistoryGood(uint16* hist, int inc)
 }
 INLINE void HistoryGood(int move, int depth)
 {
+	if (move & HistoryMask)
 	HistoryGood(&HistoryM(move), HistoryInc(depth));
 }
 INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags)
