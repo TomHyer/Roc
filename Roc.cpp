@@ -812,7 +812,8 @@ INLINE void HistoryBad(uint16* hist, int inc)
 }
 INLINE void HistoryBad(int move, int depth)
 {
-	HistoryBad(&HistoryM(move), HistoryInc(depth));
+	if (F(PieceAt(To(move))))
+		HistoryBad(&HistoryM(move), HistoryInc(depth));
 }
 INLINE void HistoryGood(uint16* hist, int inc)
 {
@@ -821,8 +822,8 @@ INLINE void HistoryGood(uint16* hist, int inc)
 }
 INLINE void HistoryGood(int move, int depth)
 {
-	if (move & HistoryMask)
-	HistoryGood(&HistoryM(move), HistoryInc(depth));
+	if (F(PieceAt(To(move))))
+		HistoryGood(&HistoryM(move), HistoryInc(depth));
 }
 INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags)
 {
@@ -1073,9 +1074,10 @@ enum
 	MatBBR,
 	MatBNR,
 	MatNNR,
-	MatM
+	MatM,
+	MatPawnOnly
 };
-const array<int, 40> MatSpecial = {  // tuner: type=array, var=120, active=0
+const array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
 	52, 0, -52, 0,
 	40, 2, -36, 0,
 	32, 40, 48, 0,
@@ -1085,7 +1087,8 @@ const array<int, 40> MatSpecial = {  // tuner: type=array, var=120, active=0
 	-16, 6, 28, 0,
 	8, 4, 0, 0,
 	0, -12, -24, 0,
-	4, 8, 12, 0 };
+	4, 8, 12, 0,
+	0, 0, 0, -100};
 
 // piece type (6) * direction (4: h center dist, v center dist, diag dist, rank) * phase (3)
 const array<int, 96> PstQuadWeights = {  // tuner: type=array, var=256, active=0
@@ -1426,16 +1429,20 @@ const array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 	-16, 14, 44, 0,
 	44, 16, -12, 0 };
 
-const array<int, 7> KingAttackWeight = {  // tuner: type=array, var=51, active=0
-	68, 56, 88, 180, 192, 256, 64 };
-static const uint32 KingNAttack = UPack(1, KingAttackWeight[0]);
-static const uint32 KingBAttack = UPack(1, KingAttackWeight[1]);
-static const uint32 KingRAttack = UPack(1, KingAttackWeight[2]);
-static const uint32 KingQAttack = UPack(1, KingAttackWeight[3]);
+const array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
+	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
+static const uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
+static const uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
+static const uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
+static const uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
+static const uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
+static const uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
+static const uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
+static const uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
 static const uint32 KingAttack = UPack(1, 0);
-static const uint32 KingAttackSquare = KingAttackWeight[4];
-static const uint32 KingNoMoves = KingAttackWeight[5];
-static const uint32 KingShelterQuad = KingAttackWeight[6];	// a scale factor, not a score amount
+static const uint32 KingAttackSquare = KingAttackWeight[8];
+static const uint32 KingNoMoves = KingAttackWeight[9];
+static const uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
 
 template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 {
@@ -1444,7 +1451,7 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-const array<uint16, 16> KingAttackScale = { 0, 1, 4, 9, 15, 25, 35, 49, 65, 65, 65, 65, 65, 65, 65, 65 };
+const array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 6, 9, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
 const array<uint16, 4> KingCenterScale = { 61, 58, 70, 71 };
 ;
 // tuner: stop
@@ -3823,8 +3830,13 @@ void calc_material(int index)
 				else if (bishops[opp] - bishops[me] == 1 && knights[opp] - knights[me] == 1)
 					DecV(special, Ca4(MatSpecial, MatBNR));
 			}
-			else if (rooks[me] == rooks[opp] && minor[me] - minor[opp] == 1)
-				IncV(special, Ca4(MatSpecial, MatM));
+			else if (rooks[me] == rooks[opp])
+			{
+				if (minor[me] - minor[opp] == 1)
+					IncV(special, Ca4(MatSpecial, MatM));
+				else if (minor[me] == minor[opp] && pawns[me] > pawns[opp])
+					IncV(special, Ca4(MatSpecial, MatPawnOnly));
+			}
 		}
 		else if (queens[me] - queens[opp] == 1)
 		{
@@ -5287,9 +5299,9 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 				else if (v == (v & Minor(opp)))
 					IncV(EI.score, Ca4(KingRay, QKingRay));
 
-		if (att & EI.area[opp])
+		if (uint64 a = att & EI.area[opp])
 		{
-			EI.king_att[me] += KingQAttack;
+			EI.king_att[me] += Single(a) ? KingQAttack1 : KingQAttack;
 			for (uint64 v = att & EI.area[opp]; T(v); Cut(v))
 				if (FullLine[sq][lsb(v)] & att & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq])))
 					EI.king_att[me]++;
@@ -5351,9 +5363,9 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 				else if (F(v & ~Minor(opp) & ~Queen(opp)))
 					IncV(EI.score, Ca4(KingRay, RKingRay));
 
-		if (att & EI.area[opp])
+		if (uint64 a = att & EI.area[opp])
 		{
-			EI.king_att[me] += KingRAttack;
+			EI.king_att[me] += Single(a) ? KingRAttack1 : KingRAttack;
 			for (uint64 v = att & EI.area[opp]; T(v); Cut(v))
 				if (FullLine[sq][lsb(v)] & att & Major(me))
 					EI.king_att[me]++;
@@ -5453,8 +5465,8 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 				else if (F(v & ~Knight(opp) & ~Major(opp)))
 					IncV(EI.score, Ca4(KingRay, BKingRay));
 
-		if (att & EI.area[opp])
-			EI.king_att[me] += KingBAttack;
+		if (uint64 a = att & EI.area[opp])
+			EI.king_att[me] += Single(a) ? KingBAttack1 : KingBAttack;
 		uint64 control = att & EI.free[me];
 		IncV(EI.score, MobBishop[0][pop(control)]);
 		IncV(EI.score, MobBishop[1][pop(control & KingLocus[EI.king[opp]])]);
@@ -5482,8 +5494,8 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		b = Bit(sq);
 		uint64 att = NAtt[sq];
 		Current->att[me] |= att;
-		if (att & EI.area[opp])
-			EI.king_att[me] += KingNAttack;
+		if (uint64 a = att & EI.area[opp])
+			EI.king_att[me] += Single(a) ? KingNAttack1 : KingNAttack;
 		Current->threat |= att & Major(opp);
 		uint64 control = att & EI.free[me];
 		IncV(EI.score, MobKnight[0][pop(control)]);
@@ -7011,13 +7023,19 @@ template <bool me> int* gen_quiet_moves(int* list)
 	}
 
 	uint64 free = ~occ;
+//	uint64 pTarget = NonPawn(opp) | Pawn(me);
+//	uint64 pMask = (~(ShiftW<opp>(Pawn(opp)) | ShiftE<opp>(Pawn(opp))) | (ShiftW<me>(Pawn(me)) | ShiftE<me>(Pawn(me))))
+//		& (ShiftW<opp>(pTarget) | ShiftE<opp>(pTarget));
+//	auto pFlag = [&](int to) {return HasBit(pMask, to) ? FlagCastling : 0; };
+#define pFlag(x) 0
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], 0);
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, 0);
+			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], pFlag(to + Push[me]));
+		list = AddHistoryP(list, IPawn[me], to - Push[me], to, pFlag(to));
 	}
+#undef pFlag
 
 	for (u = Knight(me); T(u); Cut(u))
 	{
@@ -7054,11 +7072,12 @@ template <bool me> int* gen_quiet_moves(int* list)
 	}
 	for (u = Queen(me); T(u); Cut(u))
 	{
+		//uint64 qTarget = NAtt[lsb(King(opp))];	// try to get next to this
 		int from = lsb(u);
 		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			list = AddHistoryP(list, IQueen[me], from, to, 0);
+			list = AddHistoryP(list, IQueen[me], from, to, 0);	// RangeK1[to] & qTarget ? FlagCastling : 0);
 		}
 	}
 	for (v = RangeK1[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v)) 
