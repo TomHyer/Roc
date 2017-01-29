@@ -812,8 +812,7 @@ INLINE void HistoryBad(uint16* hist, int inc)
 }
 INLINE void HistoryBad(int move, int depth)
 {
-	if (F(PieceAt(To(move))))
-		HistoryBad(&HistoryM(move), HistoryInc(depth));
+	HistoryBad(&HistoryM(move), HistoryInc(depth));
 }
 INLINE void HistoryGood(uint16* hist, int inc)
 {
@@ -822,8 +821,7 @@ INLINE void HistoryGood(uint16* hist, int inc)
 }
 INLINE void HistoryGood(int move, int depth)
 {
-	if (F(PieceAt(To(move))))
-		HistoryGood(&HistoryM(move), HistoryInc(depth));
+	HistoryGood(&HistoryM(move), HistoryInc(depth));
 }
 INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags)
 {
@@ -5819,18 +5817,10 @@ template<class POP, int me> int closure_x()
 	int np = pop(mine);
 	uint64 keep = ~(mine | Pawn(opp));	// hard stop if we run into a pawn
 	uint64 soft = (Current->patt[opp] | Piece(opp)) & ~mine;
-	if (me)
-		soft >>= 8;
-	else
-		soft <<= 8;	// if we run into a piece or pawn capture, count 1 then stop
-	keep &= ~soft;
+	keep &= ~Shift<me>(soft);// if we run into a piece or pawn capture, count 1 then stop
 	for (; ;)
 	{
-		if (me)
-			mine >>= 8;
-		else
-			mine <<= 8;
-		mine &= keep;
+		mine = keep & Shift<me>(mine);
 		if (F(mine))
 			break;
 		run += pop(mine);
@@ -7001,6 +6991,16 @@ void mark_evasions(int* list)
 	}
 }
 
+template<bool me> INLINE uint64 PawnJoins()
+{
+	auto upstream = [&](uint64 target) {return ShiftW<opp>(target) | ShiftE<opp>(target); };
+	uint64 target1 = upstream(Rook(opp) | Knight(opp) | Pawn(me));
+	uint64 target2 = upstream(Queen(opp) | Bishop(opp));
+	uint64 protect = ShiftW<me>(Pawn(me)) | ShiftE<me>(Pawn(me));
+	uint64 attack = upstream(Pawn(opp));
+	return (target1 & (protect | ~attack)) | (target2 & (protect & ~attack));
+}
+
 template <bool me> int* gen_quiet_moves(int* list)
 {
 	uint64 u, v;
@@ -7023,10 +7023,8 @@ template <bool me> int* gen_quiet_moves(int* list)
 	}
 
 	uint64 free = ~occ;
-//	uint64 pTarget = NonPawn(opp) | Pawn(me);
-//	uint64 pMask = (~(ShiftW<opp>(Pawn(opp)) | ShiftE<opp>(Pawn(opp))) | (ShiftW<me>(Pawn(me)) | ShiftE<me>(Pawn(me))))
-//		& (ShiftW<opp>(pTarget) | ShiftE<opp>(pTarget));
-//	auto pFlag = [&](int to) {return HasBit(pMask, to) ? FlagCastling : 0; };
+//	auto pTarget = PawnJoins<me>();
+//	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
 #define pFlag(x) 0
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
@@ -7798,7 +7796,10 @@ template<bool exclusion> int cut_search(int move, int hash_move, int score, int 
 			for (int jk = N_KILLER; jk > 1; --jk) Current->killer[jk] = Current->killer[jk - 1];
 			Current->killer[1] = move;
 		}
-		HistoryGood(move, depth);
+		if (Current->stage == s_quiet && (move & 0xFFFF) == (*(Current->current - 1) & 0xFFFF))
+			HistoryGood(*(Current->current - 1), depth);	// restore history information
+		else
+			HistoryGood(move, depth);
 		if (move != hash_move && Current->stage == s_quiet && !sp_init)
 			for (auto p = Current->start; p < (Current->current - 1); ++p)
 				HistoryBad(*p, depth);
