@@ -53,7 +53,7 @@ typedef unsigned int uint32;
 typedef int sint32;
 typedef unsigned long long uint64;
 typedef long long sint64;
-
+#define TEMPLATE_ME(f) (me ? f<1> : f<0>)
 template <class T> INLINE int Sgn(const T& x)
 {
 	return x == 0 ? 0 : (x > 0 ? 1 : -1);
@@ -622,13 +622,13 @@ sint64 hash_size = initial_hash_size;
 uint64 hash_mask = (initial_hash_size - 4);
 GEntry* Hash;
 
-typedef struct
+struct GPawnEntry
 {
 	uint64 key;
 	packed_t score;
 	array<sint16, 2> shelter;
 	array<uint8, 2> passer, draw;
-} GPawnEntry;
+};
 static const GPawnEntry NullPawnEntry = { 0, 0, {0, 0}, {0, 0}, {0, 0} };
 #ifndef TUNER
 static const int pawn_hash_size = 1 << 20;
@@ -715,17 +715,117 @@ uint64 QueenAttacks(int sq, const uint64& occ)
 }
 
 
-static const int MAGIC_SIZE = 107648;
-uint64* MagicAttacks;
-typedef struct
+#ifndef W32_BUILD
+INLINE int lsb(uint64 x)
+{
+	register unsigned long y;
+	_BitScanForward64(&y, x);
+	return y;
+}
+
+INLINE int msb(uint64 x)
+{
+	register unsigned long y;
+	_BitScanReverse64(&y, x);
+	return y;
+}
+
+INLINE int popcnt(uint64 x)
+{
+	x = x - ((x >> 1) & 0x5555555555555555);
+	x = (x & 0x3333333333333333) + ((x >> 2) & 0x3333333333333333);
+	x = (x + (x >> 4)) & 0x0f0f0f0f0f0f0f0f;
+	return (x * 0x0101010101010101) >> 56;
+}
+
+#else
+INLINE int lsb(uint64 x) {
+	_asm {
+		mov eax, dword ptr x[0]
+			test eax, eax
+			jz l_high
+			bsf eax, eax
+			jmp l_ret
+			l_high : bsf eax, dword ptr x[4]
+			add eax, 20h
+			l_ret :
+	}
+}
+
+INLINE int msb(uint64 x) {
+	_asm {
+		mov eax, dword ptr x[4]
+			test eax, eax
+			jz l_low
+			bsr eax, eax
+			add eax, 20h
+			jmp l_ret
+			l_low : bsr eax, dword ptr x[0]
+			l_ret :
+	}
+}
+
+INLINE int popcnt(uint64 x) {
+	unsigned int x1, x2;
+	x1 = (unsigned int)(x & 0xFFFFFFFF);
+	x1 -= (x1 >> 1) & 0x55555555;
+	x1 = (x1 & 0x33333333) + ((x1 >> 2) & 0x33333333);
+	x1 = (x1 + (x1 >> 4)) & 0x0F0F0F0F;
+	x2 = (unsigned int)(x >> 32);
+	x2 -= (x2 >> 1) & 0x55555555;
+	x2 = (x2 & 0x33333333) + ((x2 >> 2) & 0x33333333);
+	x2 = (x2 + (x2 >> 4)) & 0x0F0F0F0F;
+	return ((x1 * 0x01010101) >> 24) + ((x2 * 0x01010101) >> 24);
+}
+#endif
+
+
+typedef int(*pop_func_t)(const uint64&);
+int pop0(const uint64& b) { return popcnt(b); }
+struct pop0_
+{
+	INLINE int operator()(const uint64& b) const { return pop0(b); }
+	INLINE pop_func_t Imp() const { return pop0; }
+};
+#ifdef W32_BUILD
+#define pop1 pop0
+#define pop1_ pop0_
+#else
+int pop1(const uint64& b) { return static_cast<int>(_mm_popcnt_u64(b)); }
+struct pop1_
+{
+	INLINE int operator()(const uint64& b) const { return pop1(b); }
+	INLINE pop_func_t Imp() const { return pop1; }
+};
+#endif
+
+struct GMaterial;
+struct GPawnEntry;
+struct GEvalInfo
+{
+	uint64 occ, area[2], free[2], klocus[2];
+	GPawnEntry* PawnEntry;
+	GMaterial* material;
+	packed_t score;
+	uint32 king_att[2];
+	int king[2], mul;
+};
+
+// special calculators for specific material
+	// irritatingly, they need to be told what pop() to use
+typedef void(*eval_special_t)(GEvalInfo& EI, pop_func_t pop);
+
+
+struct GMaterial
 {
 	sint16 score, closed;
-	uint8 mul[2];
-	uint8 phase, flags;
+	array<eval_special_t, 2> eval;
+	array<uint8, 2> mul;
+	uint8 phase;
 #ifdef TUNER
 	uint32 generation;
 #endif
-} GMaterial;
+};
 GMaterial* Material;
 static const int FlagSingleBishop[2] = { 1, 2 };
 static const int FlagCallEvalEndgame[2] = { 4, 8 };
@@ -1520,6 +1620,9 @@ typedef struct
 	char tb_path[1024];
 #endif
 } GSMPI;
+
+static const int MAGIC_SIZE = 107648;
+uint64* MagicAttacks;
 
 #define SharedMaterialOffset (sizeof(GSMPI))
 #define SharedMagicOffset (SharedMaterialOffset + TotalMat * sizeof(GMaterial))
@@ -3059,70 +3162,6 @@ loop:
 }
 #endif
 
-#ifndef W32_BUILD
-INLINE int lsb(uint64 x)
-{
-	register unsigned long y;
-	_BitScanForward64(&y, x);
-	return y;
-}
-
-INLINE int msb(uint64 x)
-{
-	register unsigned long y;
-	_BitScanReverse64(&y, x);
-	return y;
-}
-
-INLINE int popcnt(uint64 x)
-{
-	x = x - ((x >> 1) & 0x5555555555555555);
-	x = (x & 0x3333333333333333) + ((x >> 2) & 0x3333333333333333);
-	x = (x + (x >> 4)) & 0x0f0f0f0f0f0f0f0f;
-	return (x * 0x0101010101010101) >> 56;
-}
-
-#else
-INLINE int lsb(uint64 x) {
-	_asm {
-		mov eax, dword ptr x[0]
-			test eax, eax
-			jz l_high
-			bsf eax, eax
-			jmp l_ret
-			l_high : bsf eax, dword ptr x[4]
-			add eax, 20h
-			l_ret :
-	}
-}
-
-INLINE int msb(uint64 x) {
-	_asm {
-		mov eax, dword ptr x[4]
-			test eax, eax
-			jz l_low
-			bsr eax, eax
-			add eax, 20h
-			jmp l_ret
-			l_low : bsr eax, dword ptr x[0]
-			l_ret :
-	}
-}
-
-INLINE int popcnt(uint64 x) {
-	unsigned int x1, x2;
-	x1 = (unsigned int)(x & 0xFFFFFFFF);
-	x1 -= (x1 >> 1) & 0x55555555;
-	x1 = (x1 & 0x33333333) + ((x1 >> 2) & 0x33333333);
-	x1 = (x1 + (x1 >> 4)) & 0x0F0F0F0F;
-	x2 = (unsigned int)(x >> 32);
-	x2 -= (x2 >> 1) & 0x55555555;
-	x2 = (x2 & 0x33333333) + ((x2 >> 2) & 0x33333333);
-	x2 = (x2 + (x2 >> 4)) & 0x0F0F0F0F;
-	return ((x1 * 0x01010101) >> 24) + ((x2 * 0x01010101) >> 24);
-}
-#endif
-
 uint64 BMagicAttacks(int i, uint64 occ)
 {
 	uint64 att = 0;
@@ -3757,6 +3796,201 @@ void init_eval()
 	}
 }
 
+template<bool me> void eval_stalemate(GEvalInfo& EI, pop_func_t pop)
+{
+	if (F(NonPawnKing(opp)) && Current->turn == opp && F(Current->att[me] & King(opp)) && F(RangeK1[EI.king[opp]] & (~(Current->att[me] | Piece(opp)))) &&
+		F(Current->patt[opp] & Piece(me)) && F(Shift<opp>(Pawn(opp)) & (~EI.occ)))
+		EI.mul = 0;
+}
+
+template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
+{
+	if (Pawn(me))
+	{
+		int sq = Board->bb[ILight[me]] ? (me ? 0 : 63) : (Board->bb[IDark[me]] ? (me ? 7 : 56) : (FileOf(lsb(King(opp))) <= 3 ? (me ? 0 : 56) : (me ? 7 : 63)));
+		if (!(Pawn(me) & (~PWay[opp][sq])))
+		{
+			if ((RangeK1[sq] | Bit(sq)) & King(opp))
+				EI.mul = 0;
+			else if ((RangeK1[sq] & RangeK1[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+				EI.mul = 0;
+		}
+		else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~PSupport[me][sq])) &&
+			(Pawn(me) & OwnLine(me, 5) & Shift<opp>(Pawn(opp))))
+			EI.mul = 0;
+		if (Single(Pawn(me)))
+		{
+			if (!Bishop(me))
+			{
+				EI.mul = Min(EI.mul, kpkx<me>());
+				if (Piece(opp) == King(opp) && EI.mul == 32)
+					IncV(Current->score, KpkValue);
+			}
+			else
+			{
+				sq = lsb(Pawn(me));
+				if ((Pawn(me) & (File[1] | File[6]) & OwnLine(me, 5)) && PieceAt(sq + Push[me]) == IPawn[opp] &&
+					((PAtt[me][sq + Push[me]] | PWay[me][sq + Push[me]]) & King(opp)))
+					EI.mul = 0;
+			}
+		}
+		if (Bishop(opp) && Single(Bishop(opp)) && T(Piece(ILight[me])) != T(Piece(ILight[opp])))
+		{
+			int pcnt = 0;
+			if (T(King(opp) & LightArea) == T(Bishop(opp) & LightArea))
+			{
+				uint64 u;
+				for (u = Pawn(me); u; Cut(u))
+				{
+					if (pcnt >= 2)
+						break;
+					++pcnt;
+					int sq = lsb(u);
+					if (!(PWay[me][sq] & (PAtt[me][EI.king[opp]] | PAtt[opp][EI.king[opp]])))
+					{
+						if (!(PWay[me][sq] & Pawn(opp)))
+							break;
+						int bsq = lsb(Bishop(opp));
+						uint64 att = BishopAttacks(bsq, EI.occ);
+						if (!(att & PWay[me][sq] & Pawn(opp)))
+							break;
+						if (!(BishopForward[me][bsq] & att & PWay[me][sq] & Pawn(opp)) && pop(FullLine[lsb(att & PWay[me][sq] & Pawn(opp))][bsq] & att) <= 2)
+							break;
+					}
+				}
+				if (!u)
+				{
+					EI.mul = 0;
+					return;
+				}
+			}
+
+			// check for partial block
+			if (pcnt <= 2 && Multiple(Pawn(me)) && !Pawn(opp) && !(Pawn(me) & Boundary) && EI.mul)
+			{
+				int sq1 = lsb(Pawn(me));
+				int sq2 = msb(Pawn(me));
+				int fd = abs(FileOf(sq2) - FileOf(sq1));
+				if (fd >= 5)
+					EI.mul = 32;
+				else if (fd >= 4)
+					EI.mul = 26;
+				else if (fd >= 3)
+					EI.mul = 20;
+			}
+			if ((RangeK1[EI.king[opp]] | Current->patt[opp]) & Bishop(opp))
+			{
+				uint64 push = Shift<me>(Pawn(me));
+				if (!(push & (~(Piece(opp) | Current->att[opp]))) && (King(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea)))
+				{
+					EI.mul = Min(EI.mul, 8);
+					int bsq = lsb(Bishop(opp));
+					uint64 att = BishopAttacks(bsq, EI.occ);
+					uint64 prp = (att | RangeK1[EI.king[opp]]) & Pawn(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea);
+					uint64 patt = ShiftW<opp>(prp) | ShiftE<opp>(prp);
+					if ((RangeK1[EI.king[opp]] | patt) & Bishop(opp))
+					{
+						uint64 double_att = (RangeK1[EI.king[opp]] & patt) | (patt & att) | (RangeK1[EI.king[opp]] & att);
+						if (!(push & (~(King(opp) | Bishop(opp) | prp | double_att))))
+						{
+							EI.mul = 0;
+							return;
+						}
+					}
+				}
+			}
+		}
+	}
+	if (T(Bishop(me)) && F(Knight(me)) && Single(Bishop(me)) && T(Pawn(me)))
+	{
+		int number = pop(Pawn(me));
+		if (number == 1)
+		{
+			if (Bishop(opp))
+				EI.mul = Min(EI.mul, kbpkbx<me>());
+			else if (Knight(opp))
+				EI.mul = Min(EI.mul, kbpknx<me>());
+		}
+		else if (number == 2 && T(Bishop(opp)))
+			EI.mul = Min(EI.mul, kbppkbx<me>());
+	}
+
+	eval_stalemate<me>(EI, pop);
+}
+template<bool me> void eval_endgame(GEvalInfo& EI, pop_func_t pop)
+{
+	if (F(Major(me)))
+	{
+		if (T(Bishop(me)) && F(Knight(me)) && Single(Bishop(me)) && T(Pawn(me)))
+		{
+			int number = pop(Pawn(me));
+			if (number == 1)
+			{
+				if (Bishop(opp))
+					EI.mul = Min(EI.mul, kbpkbx<me>());
+				else if (Knight(opp))
+					EI.mul = Min(EI.mul, kbpknx<me>());
+			}
+			else if (number == 2 && T(Bishop(opp)))
+				EI.mul = Min(EI.mul, kbppkbx<me>());
+		}
+		else if (!Bishop(me) && Knight(me) && Single(Knight(me)) && Pawn(me) && Single(Pawn(me)))
+			EI.mul = Min(EI.mul, knpkx<me>());
+	}
+	else if (F(Minor(me)))
+	{
+		if (F(Pawn(me)) && F(Rook(me)) && T(Queen(me)) && T(Pawn(opp)))
+		{
+			if (F(NonPawnKing(opp)) && Single(Pawn(opp)))
+				EI.mul = Min(EI.mul, kqkp<me>());
+			else if (Rook(opp))
+				EI.mul = Min(EI.mul, kqkrpx<me>());
+		}
+		else if (F(Queen(me)) && T(Rook(me)) && Single(Rook(me)))
+		{
+			int number = pop(Pawn(me));
+			if (number <= 3)
+			{
+				if (number == 0)
+				{
+					if (Pawn(opp))
+						EI.mul = Min(EI.mul, krkpx<me>());
+				}
+				else if (Rook(opp))
+				{
+					if (number == 1)
+					{
+						int new_mul = krpkrx<me>();
+						EI.mul = (new_mul <= 32 ? Min(EI.mul, new_mul) : new_mul);
+					}
+					else
+					{
+						if (number == 2)
+							EI.mul = Min(EI.mul, krppkrx<me>());
+						if (Pawn(opp))
+						{
+							if (number == 2)
+								EI.mul = Min(EI.mul, krppkrpx<me>());
+							else if (Multiple(Pawn(opp)))
+								EI.mul = Min(EI.mul, krpppkrppx<me>());
+						}
+					}
+				}
+				else if (number == 1 && Bishop(opp))
+					EI.mul = Min(EI.mul, krpkbx<me>());
+			}
+			//const int kw = lsb(King(0)), kb = lsb(King(1));
+			//const int df = FileOf(kw) - FileOf(kb), dr = RankOf(kw) - RankOf(kb);
+			//EI.mul += (EI.mul * dr) / (3 * (abs(dr) + abs(df)));	// the more kings are stuck on their own side, the more drawish
+		}
+	}
+	else if (!Pawn(me) && Single(Rook(me)) && !Queen(me) && Single(Bishop(me)) && !Knight(me) && Rook(opp))
+		EI.mul = Min(EI.mul, krbkrx<me>());
+
+	eval_stalemate<me>(EI, pop);
+}
+
+
 void calc_material(int index)
 {
 	array<int, 2> pawns, knights, light, dark, rooks, queens, bishops, major, minor, tot, count, mat, mul, closed;
@@ -3980,14 +4214,15 @@ void calc_material(int index)
 		Material[index].mul[me] = mul[me];
 	Material[index].score = (score * mat[score > 0 ? White : Black]) / 32;
 	Material[index].closed = closed[White] - closed[Black]; // *mat[score > 0 ? White : Black]) / 32;
+	Material[index].eval = { nullptr, nullptr };
 	for (int me = 0; me < 2; ++me)
 	{
 		if (F(major[me] + knights[me]) && minor[me] <= 1)
-			Material[index].flags |= FlagSingleBishop[me];
-		if (major[me] + minor[me] <= 1 
-				|| major[opp] + minor[opp] == 0 
-				|| (!pawns[me] && !queens[me] && rooks[me] == 1 && !knights[me] && bishops[me] == 1 && rooks[opp] == 1 && !minor[opp] && !queens[opp]))
-			Material[index].flags |= FlagCallEvalEndgame[me];
+			Material[index].eval[me] = TEMPLATE_ME(eval_single_bishop);
+		else if (major[me] + minor[me] <= 1
+			|| major[opp] + minor[opp] == 0
+			|| (!pawns[me] && !queens[me] && rooks[me] == 1 && !knights[me] && bishops[me] == 1 && rooks[opp] == 1 && !minor[opp] && !queens[opp]))
+			Material[index].eval[me] = TEMPLATE_ME(eval_endgame);
 	}
 }
 
@@ -4667,26 +4902,26 @@ BYE}
 
 template <bool me> void undo_move(int move)
 {MOVING 
-	int to, from, piece;
-	from = From(move);
-	to = To(move);
+	const int from = From(move), to = To(move);
+	uint64 bFrom = Bit(from), bTo = Bit(to);
+	int piece;
 	if (IsPromotion(move))
 	{
-		Piece(PieceAt(to)) ^= Bit(to);
+		Piece(PieceAt(to)) ^= bTo;
 		piece = IPawn[me];
 	}
 	else
 		piece = PieceAt(to);
 	PieceAt(from) = piece;
-	Piece(piece) |= Bit(from);
-	Piece(me) |= Bit(from);
-	Piece(piece) &= ~Bit(to);
-	Piece(me) ^= Bit(to);
+	Piece(piece) |= bFrom;
+	Piece(me) |= bFrom;
+	Piece(piece) &= ~bTo;
+	Piece(me) ^= bTo;
 	PieceAt(to) = Current->capture;
 	if (Current->capture)
 	{
-		Piece(Current->capture) |= Bit(to);
-		Piece(opp) |= Bit(to);
+		Piece(Current->capture) |= bTo;
+		Piece(opp) |= bTo;
 	}
 	else
 	{
@@ -4704,11 +4939,10 @@ template <bool me> void undo_move(int move)
 		}
 		else if (IsEP(move))
 		{
-			to = to ^ 8;
-			piece = IPawn[opp];
-			PieceAt(to) = piece;
-			Piece(opp) |= Bit(to);
-			Pawn(opp) |= Bit(to);
+			int xLoc = to ^ 8;
+			PieceAt(xLoc) = IPawn[opp];
+			Piece(opp) |= Bit(xLoc);
+			Pawn(opp) |= Bit(xLoc);
 		}
 	}
 	--Current;
@@ -5226,16 +5460,6 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 	PawnEntry->draw[me] = (7 - file_span) * Max(5 - pop(files), 0);
 }
 
-struct GEvalInfo
-{
-	uint64 occ, area[2], free[2], klocus[2];
-	GPawnEntry* PawnEntry;
-	GMaterial* material;
-	packed_t score;
-	uint32 king_att[2];
-	int king[2], mul;
-};
-
 template <class POP> INLINE void eval_pawn_structure(const GEvalInfo& EI, GPawnEntry* PawnEntry)
 {
 	GPawnEvalInfo PEI;
@@ -5539,6 +5763,20 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	adjusted = (adjusted * KingCenterScale[kf]) / 64;
 	if (!Queen(me))
 		adjusted = (adjusted * KingSafetyNoQueen) / 16;
+	// add a correction for defense-in-depth
+	if (adjusted > 1)
+	{
+		uint64 holes = KingLocus[EI.king[opp]] & ~Current->att[opp];
+		int nHoles = pop(holes);
+		int nIncursions = pop(holes & Current->att[me]);
+		uint64 personnel = NonPawnKing(opp);
+		uint64 guards = KingLocus[EI.king[opp]] & personnel;
+		uint64 awol = personnel ^ guards;
+		int nGuards = pop(guards) + pop(guards & Queen(opp));
+		int nAwol = pop(awol) + pop(awol & Queen(opp));
+		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
+	}
+
 	IncV(EI.score, Pack2(adjusted, 0));
 }
 
@@ -5621,174 +5859,6 @@ template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 	DecV(EI.score, eval_threat<POP>(Current->threat & Piece(me)));
 }
 
-template <bool me, class POP> void eval_endgame(GEvalInfo& EI)
-{
-	POP pop;
-	if ((EI.material->flags & FlagSingleBishop[me]) && Pawn(me))
-	{
-		int sq = Board->bb[ILight[me]] ? (me ? 0 : 63) : (Board->bb[IDark[me]] ? (me ? 7 : 56) : (FileOf(lsb(King(opp))) <= 3 ? (me ? 0 : 56) : (me ? 7 : 63)));
-		if (!(Pawn(me) & (~PWay[opp][sq])))
-		{
-			if ((RangeK1[sq] | Bit(sq)) & King(opp))
-				EI.mul = 0;
-			else if ((RangeK1[sq] & RangeK1[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
-				EI.mul = 0;
-		}
-		else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~PSupport[me][sq])) &&
-			(Pawn(me) & OwnLine(me, 5) & Shift<opp>(Pawn(opp))))
-			EI.mul = 0;
-		if (Single(Pawn(me)))
-		{
-			if (!Bishop(me))
-			{
-				EI.mul = Min(EI.mul, kpkx<me>());
-				if (Piece(opp) == King(opp) && EI.mul == 32)
-					IncV(Current->score, KpkValue);
-			}
-			else
-			{
-				sq = lsb(Pawn(me));
-				if ((Pawn(me) & (File[1] | File[6]) & OwnLine(me, 5)) && PieceAt(sq + Push[me]) == IPawn[opp] &&
-					((PAtt[me][sq + Push[me]] | PWay[me][sq + Push[me]]) & King(opp)))
-					EI.mul = 0;
-			}
-		}
-		if (Bishop(opp) && Single(Bishop(opp)) && T(Piece(ILight[me])) != T(Piece(ILight[opp])))
-		{
-			int pcnt = 0;
-			if (T(King(opp) & LightArea) == T(Bishop(opp) & LightArea))
-			{
-				uint64 u;
-				for (u = Pawn(me); u; Cut(u))
-				{
-					if (pcnt >= 2)
-						break;
-					++pcnt;
-					int sq = lsb(u);
-					if (!(PWay[me][sq] & (PAtt[me][EI.king[opp]] | PAtt[opp][EI.king[opp]])))
-					{
-						if (!(PWay[me][sq] & Pawn(opp)))
-							break;
-						int bsq = lsb(Bishop(opp));
-						uint64 att = BishopAttacks(bsq, EI.occ);
-						if (!(att & PWay[me][sq] & Pawn(opp)))
-							break;
-						if (!(BishopForward[me][bsq] & att & PWay[me][sq] & Pawn(opp)) && pop(FullLine[lsb(att & PWay[me][sq] & Pawn(opp))][bsq] & att) <= 2)
-							break;
-					}
-				}
-				if (!u)
-				{
-					EI.mul = 0;
-					return;
-				}
-			}
-
-			// check for partial block
-			if (pcnt <= 2 && Multiple(Pawn(me)) && !Pawn(opp) && !(Pawn(me) & Boundary) && EI.mul)
-			{
-				int sq1 = lsb(Pawn(me));
-				int sq2 = msb(Pawn(me));
-				int fd = abs(FileOf(sq2) - FileOf(sq1));
-				if (fd >= 5)
-					EI.mul = 32;
-				else if (fd >= 4)
-					EI.mul = 26;
-				else if (fd >= 3)
-					EI.mul = 20;
-			}
-			if ((RangeK1[EI.king[opp]] | Current->patt[opp]) & Bishop(opp))
-			{
-				uint64 push = Shift<me>(Pawn(me));
-				if (!(push & (~(Piece(opp) | Current->att[opp]))) && (King(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea)))
-				{
-					EI.mul = Min(EI.mul, 8);
-					int bsq = lsb(Bishop(opp));
-					uint64 att = BishopAttacks(bsq, EI.occ);
-					uint64 prp = (att | RangeK1[EI.king[opp]]) & Pawn(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea);
-					uint64 patt = ShiftW<opp>(prp) | ShiftE<opp>(prp);
-					if ((RangeK1[EI.king[opp]] | patt) & Bishop(opp))
-					{
-						uint64 double_att = (RangeK1[EI.king[opp]] & patt) | (patt & att) | (RangeK1[EI.king[opp]] & att);
-						if (!(push & (~(King(opp) | Bishop(opp) | prp | double_att))))
-						{
-							EI.mul = 0;
-							return;
-						}
-					}
-				}
-			}
-		}
-	}
-	if (F(Major(me)))
-	{
-		if (T(Bishop(me)) && F(Knight(me)) && Single(Bishop(me)) && T(Pawn(me)))
-		{
-			int number = pop(Pawn(me));
-			if (number == 1)
-			{
-				if (Bishop(opp))
-					EI.mul = Min(EI.mul, kbpkbx<me>());
-				else if (Knight(opp))
-					EI.mul = Min(EI.mul, kbpknx<me>());
-			}
-			else if (number == 2 && T(Bishop(opp)))
-				EI.mul = Min(EI.mul, kbppkbx<me>());
-		}
-		else if (!Bishop(me) && Knight(me) && Single(Knight(me)) && Pawn(me) && Single(Pawn(me)))
-			EI.mul = Min(EI.mul, knpkx<me>());
-	}
-	else if (F(Minor(me)))
-	{
-		if (F(Pawn(me)) && F(Rook(me)) && T(Queen(me)) && T(Pawn(opp)))
-		{
-			if (F(NonPawnKing(opp)) && Single(Pawn(opp)))
-				EI.mul = Min(EI.mul, kqkp<me>());
-			else if (Rook(opp))
-				EI.mul = Min(EI.mul, kqkrpx<me>());
-		}
-		else if (F(Queen(me)) && T(Rook(me)) && Single(Rook(me)))
-		{
-			int number = pop(Pawn(me));
-			if (number <= 3)
-			{
-				if (number == 0)
-				{
-					if (Pawn(opp))
-						EI.mul = Min(EI.mul, krkpx<me>());
-				}
-				else if (Rook(opp))
-				{
-					if (number == 1)
-					{
-						int new_mul = krpkrx<me>();
-						EI.mul = (new_mul <= 32 ? Min(EI.mul, new_mul) : new_mul);
-					}
-					else
-					{
-						if (number == 2)
-							EI.mul = Min(EI.mul, krppkrx<me>());
-						if (Pawn(opp))
-						{
-							if (number == 2)
-								EI.mul = Min(EI.mul, krppkrpx<me>());
-							else if (Multiple(Pawn(opp)))
-								EI.mul = Min(EI.mul, krpppkrppx<me>());
-						}
-					}
-				}
-				else if (number == 1 && Bishop(opp))
-					EI.mul = Min(EI.mul, krpkbx<me>());
-			}
-		}
-	}
-	else if (!Pawn(me) && Single(Rook(me)) && !Queen(me) && Single(Bishop(me)) && !Knight(me) && Rook(opp))
-		EI.mul = Min(EI.mul, krbkrx<me>());
-	// check stalemate
-	if (F(NonPawnKing(opp)) && Current->turn == opp && F(Current->att[me] & King(opp)) && F(RangeK1[EI.king[opp]] & (~(Current->att[me] | Piece(opp)))) &&
-		F(Current->patt[opp] & Piece(me)) && F(Shift<opp>(Pawn(opp)) & (~EI.occ)))
-		EI.mul = 0;
-}
 
 template <class POP> void eval_unusual_material(GEvalInfo& EI)
 {
@@ -5944,15 +6014,15 @@ template<class POP> void evaluation()
 		if (Current->score > 0)
 		{
 			EI.mul = EI.material->mul[White];
-			if (EI.material->flags & FlagCallEvalEndgame[White])
-				eval_endgame<White, POP>(EI);
+			if (EI.material->eval[White])
+				EI.material->eval[White](EI, pop.Imp());
 			Current->score -= (Min<int>(Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64;
 		}
 		else if (Current->score < 0)
 		{
 			EI.mul = EI.material->mul[Black];
-			if (EI.material->flags & FlagCallEvalEndgame[Black])
-				eval_endgame<Black, POP>(EI);
+			if (EI.material->eval[Black])
+				EI.material->eval[Black](EI, pop.Imp());
 			Current->score += (Min<int>(-Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64;
 		}
 		else
@@ -5971,25 +6041,6 @@ template<class POP> void evaluation()
 			delta -= DeltaDecrement;
 	}
 }
-
-struct pop0_
-{
-	INLINE int operator()(const uint64& b) const
-	{
-		return popcnt(b);
-	}
-};
-#ifdef W32_BUILD
-#define pop1_ pop0_
-#else
-struct pop1_
-{
-	INLINE int operator()(const uint64& b) const
-	{
-		return static_cast<int>(_mm_popcnt_u64(b));
-	}
-};
-#endif
 
 INLINE void evaluate()
 {HI
@@ -10406,7 +10457,7 @@ void Test1(const char* fen, int max_depth, const char* solution)
 		auto score = Current->turn
 			? pv_search<true, true>(-MateValue, MateValue, depth, FlagNeatSearch)
 			: pv_search<false, true>(-MateValue, MateValue, depth, FlagNeatSearch);
-		cout << WriteMove_(best_move) << ":  " << score << ", " << nodes << "nodes\n";
+		cout << WriteMove_(best_move) << ":  " << score << ", " << nodes << " nodes\n";
 	}
 }
 
@@ -10426,8 +10477,10 @@ void main(int argc, char *argv[])
 	init_eval();
 	Console = true;
 
+	Test1("4kbnr/2pr1ppp/p1Q5/4p3/4P3/2Pq1b1P/PP1P1PP1/RNB2RK1 w - - 0 1", 20, "f1-e1");	// why didn't Roc keep the rook pinned?
+
 //	Test1("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1", 20, "a7-a8");
-	Test1("4r1k1/4ppbp/r5p1/3Np3/2PnP3/3P2Pq/1R3P2/2BQ1RK1 w - - 0 1", 20, "b2-b1");
+//	Test1("4r1k1/4ppbp/r5p1/3Np3/2PnP3/3P2Pq/1R3P2/2BQ1RK1 w - - 0 1", 20, "b2-b1");
 	
 //	Test1("8/4p3/8/3P3p/P2pK3/6P1/7b/3k4 w - - 0 1", 24, "d5-d6");
 //	Test1("rq2r1k1/5pp1/p7/4bNP1/1p2P2P/5Q2/PP4K1/5R1R w - - 0 1", 4, "f5-g7");
