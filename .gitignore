@@ -1,3 +1,5 @@
 *.VC.opendb
 *.sdf
 *.vsp
+*.vspx
+*.psess
