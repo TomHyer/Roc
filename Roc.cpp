@@ -1010,7 +1010,7 @@ int best_move, best_score;
 int TimeLimit1, TimeLimit2, Console, HardwarePopCnt;
 int DepthLimit, LastDepth, LastTime, LastValue, LastExactValue, PrevMove, InstCnt;
 sint64 LastSpeed;
-int PVN, Contempt, Stop, Print, Input = 1, PVHashing = 1, Infinite, MoveTime, SearchMoves, SMPointer, Ponder, Searching, Previous;
+int PVN, Contempt, Wobble, Stop, Print, Input = 1, PVHashing = 1, Infinite, MoveTime, SearchMoves, SMPointer, Ponder, Searching, Previous;
 typedef struct
 {
 	int Bad, Change, Singular, Early, FailLow, FailHigh;
@@ -1750,7 +1750,7 @@ void hash_high(int value, int depth);
 int hash_low(int move, int value, int depth);	// returns input value
 void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int knodes);
 INLINE int pick_move();
-template <bool me, bool root> int get_move(bool depth_parity);
+template <bool me, bool root> int get_move(int depth);
 template <bool me> bool see(int move, int margin, const uint16* mat_value);
 template <bool me> void gen_root_moves();
 template <bool me> int* gen_captures(int* list);
@@ -3800,6 +3800,300 @@ void init_eval()
 	}
 }
 
+// all these special-purpose endgame evaluators
+
+template <bool me> int krbkrx()
+{
+	if (King(opp) & Interior)
+		return 1;
+	return 16;
+}
+
+template <bool me> int kpkx()
+{
+	uint64 u = me == White ? Kpk[Current->turn][lsb(Pawn(White))][lsb(King(White))] & Bit(lsb(King(Black)))
+		: Kpk[Current->turn ^ 1][63 - lsb(Pawn(Black))][63 - lsb(King(Black))] & Bit(63 - lsb(King(White)));
+	return T(u) ? 32 : T(Piece(opp) ^ King(opp));
+}
+
+template <bool me> int knpkx()
+{
+	if (Pawn(me) & OwnLine(me, 6) & (File[0] | File[7]))
+	{
+		int sq = lsb(Pawn(me));
+		if (RangeK1[sq] & King(opp) & (OwnLine(me, 6) | OwnLine(me, 7)))
+			return 0;
+		if (PieceAt(sq + Push[me]) == IKing[me] && (RangeK1[lsb(King(me))] && RangeK1[lsb(King(opp))] & OwnLine(me, 7)))
+			return 0;
+	}
+	else if (Pawn(me) & OwnLine(me, 5) & (File[0] | File[7]))
+	{
+		int sq = lsb(Pawn(me));
+		if (PieceAt(sq + Push[me]) == IPawn[opp])
+		{
+			if (RangeK1[sq + Push[me]] & King(opp) & OwnLine(me, 7))
+				return 0;
+			if ((RangeK1[sq + Push[me]] & RangeK1[lsb(King(opp))] & OwnLine(me, 7)) && (!(NAtt[sq + Push[me]] & Knight(me)) || Current->turn == opp))
+				return 0;
+		}
+	}
+	return 32;
+}
+
+template <bool me> int krpkrx()
+{
+	int mul = 32;
+	int sq = lsb(Pawn(me));
+	int rrank = OwnRank<me>(sq);
+	int o_king = lsb(King(opp));
+	int o_rook = lsb(Rook(opp));
+	int m_king = lsb(King(me));
+	int add_mat = T(Piece(opp) ^ King(opp) ^ Rook(opp));
+	int clear = F(add_mat) || F((PWay[opp][sq] | PIsolated[FileOf(sq)]) & Forward[opp][RankOf(sq + Push[me])] & (Piece(opp) ^ King(opp) ^ Rook(opp)));
+
+	if (!clear)
+		return 32;
+	if (!add_mat && !(Pawn(me) & (File[0] | File[7])))
+	{
+		int m_rook = lsb(Rook(me));
+		if (OwnRank<me>(o_king) < OwnRank<me>(m_rook) && OwnRank<me>(m_rook) < rrank && OwnRank<me>(m_king) >= rrank - 1 &&
+			OwnRank<me>(m_king) > OwnRank<me>(m_rook) &&
+			((RangeK1[m_king] & Pawn(me)) || (MY_TURN && abs(FileOf(sq) - FileOf(m_king)) <= 1 && abs(rrank - OwnRank<me>(m_king)) <= 2)))
+			return 127;
+		if (RangeK1[m_king] & Pawn(me))
+		{
+			if (rrank >= 4)
+			{
+				if ((FileOf(sq) < FileOf(m_rook) && FileOf(m_rook) < FileOf(o_king)) || (FileOf(sq) > FileOf(m_rook) && FileOf(m_rook) > FileOf(o_king)))
+					return 127;
+			}
+			else if (rrank >= 2)
+			{
+				if (!(Pawn(me) & (File[1] | File[6])) && rrank + abs(FileOf(sq) - FileOf(m_rook)) > 4 &&
+					((FileOf(sq) < FileOf(m_rook) && FileOf(m_rook) < FileOf(o_king)) || (FileOf(sq) > FileOf(m_rook) && FileOf(m_rook) > FileOf(o_king))))
+					return 127;
+			}
+		}
+	}
+
+	if (PWay[me][sq] & King(opp))
+	{
+		if (Pawn(me) & (File[0] | File[7]))
+			mul = Min(mul, add_mat << 3);
+		if (rrank <= 3)
+			mul = Min(mul, add_mat << 3);
+		if (rrank == 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5 && T(King(opp) & (OwnLine(me, 6) | OwnLine(me, 7))) &&
+			(!MY_TURN || F(PAtt[me][sq] & RookAttacks(lsb(Rook(me)), PieceAll()) & (~RangeK1[o_king]))))
+			mul = Min(mul, add_mat << 3);
+		if (rrank >= 5 && OwnRank<me>(o_rook) <= 1 && (!MY_TURN || IsCheck(me) || Dist(m_king, sq) >= 2))
+			mul = Min(mul, add_mat << 3);
+		if (T(King(opp) & (File[1] | File[2] | File[6] | File[7])) && T(Rook(opp) & OwnLine(me, 7)) && T(Between[o_king][o_rook] & (File[3] | File[4])) &&
+			F(Rook(me) & OwnLine(me, 7)))
+			mul = Min(mul, add_mat << 3);
+		return mul;
+	}
+	else if (rrank == 6 && (Pawn(me) & (File[0] | File[7])) && ((PSupport[me][sq] | PWay[opp][sq]) & Rook(opp)) && OwnRank<me>(o_king) >= 6)
+	{
+		int dist = abs(FileOf(sq) - FileOf(o_king));
+		if (dist <= 3)
+			mul = Min(mul, add_mat << 3);
+		if (dist == 4 && ((PSupport[me][o_king] & Rook(me)) || Current->turn == opp))
+			mul = Min(mul, add_mat << 3);
+	}
+
+	if (RangeK1[o_king] & PWay[me][sq] & OwnLine(me, 7))
+	{
+		if (rrank <= 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5)
+			mul = Min(mul, add_mat << 3);
+		if (rrank == 5 && OwnRank<me>(o_rook) <= 1 && !MY_TURN || (F(RangeK1[m_king] & PAtt[me][sq] & (~RangeK1[o_king])) && (IsCheck(me) || Dist(m_king, sq) >= 2)))
+			mul = Min(mul, add_mat << 3);
+	}
+
+	if (T(PWay[me][sq] & Rook(me)) && T(PWay[opp][sq] & Rook(opp)))
+	{
+		if (King(opp) & (File[0] | File[1] | File[6] | File[7]) & OwnLine(me, 6))
+			mul = Min(mul, add_mat << 3);
+		else if ((Pawn(me) & (File[0] | File[7])) && (King(opp) & (OwnLine(me, 5) | OwnLine(me, 6))) && abs(FileOf(sq) - FileOf(o_king)) <= 2 &&
+			FileOf(sq) != FileOf(o_king))
+			mul = Min(mul, add_mat << 3);
+	}
+
+	if (abs(FileOf(sq) - FileOf(o_king)) <= 1 && abs(FileOf(sq) - FileOf(o_rook)) <= 1 && OwnRank<me>(o_rook) > rrank && OwnRank<me>(o_king) > rrank)
+		mul = Min(mul, (Pawn(me) & (File[3] | File[4])) ? 12 : 16);
+
+	return mul;
+}
+
+template <bool me> int krpkbx()
+{
+	if (!(Pawn(me) & OwnLine(me, 5)))
+		return 32;
+	int sq = lsb(Pawn(me));
+	if (!(PWay[me][sq] & King(opp)))
+		return 32;
+	int diag_sq = NB<me>(BMask[sq + Push[me]]);
+	if (OwnRank<me>(diag_sq) > 1)
+		return 32;
+	uint64 mdiag = FullLine[sq + Push[me]][diag_sq] | Bit(sq + Push[me]) | Bit(diag_sq);
+	int check_sq = NB<me>(BMask[sq - Push[me]]);
+	uint64 cdiag = FullLine[sq - Push[me]][check_sq] | Bit(sq - Push[me]) | Bit(check_sq);
+	if ((mdiag | cdiag) & (Piece(opp) ^ King(opp) ^ Bishop(opp)))
+		return 32;
+	if (cdiag & Bishop(opp))
+		return 0;
+	if ((mdiag & Bishop(opp)) && (Current->turn == opp || !(King(me) & PAtt[opp][sq + Push[me]])))
+		return 0;
+	return 32;
+}
+
+template <bool me> int kqkp()
+{
+	if (F(RangeK1[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1) & (File[0] | File[2] | File[5] | File[7])))
+		return 32;
+	if (PWay[opp][lsb(Pawn(opp))] & (King(me) | Queen(me)))
+		return 32;
+	if (Pawn(opp) & (File[0] | File[7]))
+		return 1;
+	else
+		return 4;
+}
+
+template <bool me> int kqkrpx()
+{
+	int rsq = lsb(Rook(opp));
+	uint64 pawns = RangeK1[lsb(King(opp))] & PAtt[me][rsq] & Pawn(opp) & Interior & OwnLine(me, 6);
+	if (pawns && OwnRank<me>(lsb(King(me))) <= 4)
+		return 0;
+	return 32;
+}
+
+template <bool me> int krkpx()
+{
+	if (T(RangeK1[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1)) & F(PWay[opp][NB<me>(Pawn(opp))] & King(me)))
+		return 0;
+	return 32;
+}
+
+template <bool me> int krppkrpx()
+{
+	if (Current->passer & Pawn(me))
+	{
+		if (Single(Current->passer & Pawn(me)))
+		{
+			int sq = lsb(Current->passer & Pawn(me));
+			if (PWay[me][sq] & King(opp) & (File[0] | File[1] | File[6] | File[7]))
+			{
+				int opp_king = lsb(King(opp));
+				if (RangeK1[opp_king] & Pawn(opp))
+				{
+					int king_file = FileOf(opp_king);
+					if (!((~(File[king_file] | PIsolated[king_file])) & Pawn(me)))
+						return 1;
+				}
+			}
+		}
+		return 32;
+	}
+	if (F((~(PWay[opp][lsb(King(opp))] | PSupport[me][lsb(King(opp))])) & Pawn(me)))
+		return 0;
+	return 32;
+}
+
+template <bool me> int krpppkrppx()
+{
+	if (T(Current->passer & Pawn(me)) || F((RangeK1[lsb(Pawn(opp))] | RangeK1[msb(Pawn(opp))]) & Pawn(opp)))
+		return 32;
+	if (F((~(PWay[opp][lsb(King(opp))] | PSupport[me][lsb(King(opp))])) & Pawn(me)))
+		return 0;
+	return 32;
+}
+
+template <bool me> int kbpkbx()
+{
+	int sq = lsb(Pawn(me));
+	uint64 u;
+	if ((T(Board->bb[ILight[me]]) && T(Board->bb[IDark[opp]])) || (T(Board->bb[IDark[me]]) && T(Board->bb[ILight[opp]])))
+	{
+		if (OwnRank<me>(sq) <= 4)
+			return 0;
+		if (T(PWay[me][sq] & King(opp)) && OwnRank<me>(sq) <= 5)
+			return 0;
+		for (u = Bishop(opp); T(u); Cut(u))
+		{
+			if (OwnRank<me>(lsb(u)) <= 4 && T(BishopAttacks(lsb(u), PieceAll()) & PWay[me][sq]))
+				return 0;
+			if (Current->turn == opp && T(BishopAttacks(lsb(u), PieceAll()) & Pawn(me)))
+				return 0;
+		}
+	}
+	else if (T(PWay[me][sq] & King(opp)) && T(King(opp) & LightArea) != T(Bishop(me) & LightArea))
+		return 0;
+	return 32;
+}
+
+template <bool me> int kbpknx()
+{
+	uint64 u;
+	if (T(PWay[me][lsb(Pawn(me))] & King(opp)) && T(King(opp) & LightArea) != T(Bishop(me) & LightArea))
+		return 0;
+	if (Current->turn == opp)
+		for (u = Knight(opp); T(u); Cut(u))
+			if (NAtt[lsb(u)] & Pawn(me))
+				return 0;
+	return 32;
+}
+
+template <bool me> int kbppkbx()
+{
+	int sq1 = NB<me>(Pawn(me));
+	int sq2 = NB<opp>(Pawn(me));
+	int o_king = lsb(King(opp));
+	int o_bishop = lsb(Bishop(opp));
+
+	if (FileOf(sq1) == FileOf(sq2))
+	{
+		if (OwnRank<me>(sq2) <= 3)
+			return 0;
+		if (T(PWay[me][sq2] & King(opp)) && OwnRank<me>(sq2) <= 5)
+			return 0;
+	}
+	else if (PIsolated[FileOf(sq1)] & Pawn(me))
+	{
+		if (T(King(opp) & LightArea) != T(Bishop(me) & LightArea))
+		{
+			if (HasBit(RangeK1[o_king] | King(opp), sq2 + Push[me]) && HasBit(BishopAttacks(o_bishop, PieceAll()), sq2 + Push[me]) &&
+				HasBit(RangeK1[o_king] | King(opp), (sq2 & 0xF8) | FileOf(sq1)) && HasBit(BishopAttacks(o_bishop, PieceAll()), (sq2 & 0xFFFFFFF8) | FileOf(sq1)))
+				return 0;
+		}
+	}
+	return 32;
+}
+
+template <bool me> int krppkrx()
+{
+	int sq1 = NB<me>(Pawn(me));
+	int sq2 = NB<opp>(Pawn(me));
+
+	if ((Piece(opp) ^ King(opp) ^ Rook(opp)) & Forward[me][RankOf(sq1 - Push[me])])
+		return 32;
+	if (FileOf(sq1) == FileOf(sq2))
+	{
+		if (T(PWay[me][sq2] & King(opp)))
+			return 16;
+		return 32;
+	}
+	if (T(PIsolated[FileOf(sq2)] & Pawn(me)) && T((File[0] | File[7]) & Pawn(me)) && T(King(opp) & Shift<me>(Pawn(me))))
+	{
+		if (OwnRank<me>(sq2) == 5 && OwnRank<me>(sq1) == 4 && T(Rook(opp) & (OwnLine(me, 5) | OwnLine(me, 6))))
+			return 10;
+		else if (OwnRank<me>(sq2) < 5)
+			return 16;
+	}
+	return 32;
+}
+
+
+
 template<bool me> bool eval_stalemate(GEvalInfo& EI)
 {
 	bool retval = (F(NonPawnKing(opp)) && Current->turn == opp && F(Current->att[me] & King(opp)) && F(RangeK1[EI.king[opp]] & (~(Current->att[me] | Piece(opp)))) &&
@@ -3933,58 +4227,52 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 
 template<bool me> void eval_np(GEvalInfo& EI, pop_func_t)
 {
+	assert(Knight(me) && Single(Knight(me)) && Pawn(me) && Single(Pawn(me)));
 	EI.mul = Min(EI.mul, knpkx<me>());
 }
 template<bool me> void eval_krbkrx(GEvalInfo& EI, pop_func_t)
 {
+	assert(Rook(me) && Single(Rook(me)) && Bishop(me) && Single(Bishop(me)) && Rook(opp) && Single(Rook(opp)));
 	EI.mul = Min(EI.mul, krbkrx<me>());
 }
-
-template<bool me> void eval_one_piece(GEvalInfo& EI, pop_func_t pop)
+template<bool me> void eval_krkpx(GEvalInfo& EI, pop_func_t)
 {
-	if (F(Pawn(me)) && F(Rook(me)) && T(Queen(me)) && T(Pawn(opp)))
-	{
-		if (F(NonPawnKing(opp)) && Single(Pawn(opp)))
-			EI.mul = Min(EI.mul, kqkp<me>());
-		else if (Rook(opp))
-			EI.mul = Min(EI.mul, kqkrpx<me>());
-	}
-	else if (F(Queen(me)) && T(Rook(me)) && Single(Rook(me)))
-	{
-		int number = pop(Pawn(me));
-		if (number <= 3)
-		{
-			if (number == 0)
-			{
-				if (Pawn(opp))
-					EI.mul = Min(EI.mul, krkpx<me>());
-			}
-			else if (Rook(opp))
-			{
-				if (number == 1)
-				{
-					int new_mul = krpkrx<me>();
-					EI.mul = (new_mul <= 32 ? Min(EI.mul, new_mul) : new_mul);
-				}
-				else
-				{
-					if (number == 2)
-						EI.mul = Min(EI.mul, krppkrx<me>());
-					if (Pawn(opp))
-					{
-						if (number == 2)
-							EI.mul = Min(EI.mul, krppkrpx<me>());
-						else if (Multiple(Pawn(opp)))
-							EI.mul = Min(EI.mul, krpppkrppx<me>());
-					}
-				}
-			}
-			else if (number == 1 && Bishop(opp))
-				EI.mul = Min(EI.mul, krpkbx<me>());
-		}
-	}
+	assert(Rook(me) && Single(Rook(me)) && F(Pawn(me)) && Pawn(opp));
+	EI.mul = Min(EI.mul, krkpx<me>());
+}
+template<bool me> void eval_krpkrx(GEvalInfo& EI, pop_func_t pop)
+{
+	assert(Rook(me) && Single(Rook(me)) && Pawn(me) && Single(Pawn(me)) && Rook(opp) && Single(Rook(opp)));
+	int new_mul = krpkrx<me>();
+	EI.mul = (new_mul <= 32 ? Min(EI.mul, new_mul) : new_mul);
+}
+template<bool me> void eval_krpkbx(GEvalInfo& EI, pop_func_t pop)
+{
+	assert(Rook(me) && Single(Rook(me)) && Pawn(me) && Single(Pawn(me)) && Bishop(opp));
+	EI.mul = Min(EI.mul, krpkbx<me>());
+}
+template<bool me> void eval_krppkrx(GEvalInfo& EI, pop_func_t pop)
+{
+	EI.mul = Min(EI.mul, krppkrx<me>());
+}
+template<bool me> void eval_krppkrpx(GEvalInfo& EI, pop_func_t pop)
+{
+	eval_krppkrx<me>(EI, pop);
+	EI.mul = Min(EI.mul, krppkrpx<me>());
+}
+template<bool me> void eval_krpppkrppx(GEvalInfo& EI, pop_func_t pop)
+{
+	EI.mul = Min(EI.mul, krpppkrppx<me>());
 }
 
+template<bool me> void eval_kqkpx(GEvalInfo& EI, pop_func_t pop)
+{
+	EI.mul = Min(EI.mul, kqkp<me>());
+}
+template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
+{
+	EI.mul = Min(EI.mul, kqkrpx<me>());
+}
 
 
 void calc_material(int index)
@@ -4225,7 +4513,31 @@ void calc_material(int index)
 		else if (!pawns[me] && !queens[me] && rooks[me] == 1 && !knights[me] && bishops[me] == 1 && rooks[opp] == 1 && !minor[opp] && !queens[opp])
 			Material[index].eval[me] = TEMPLATE_ME(eval_krbkrx);
 		else if (F(minor[me]) && major[me] == 1)
-			Material[index].eval[me] = TEMPLATE_ME(eval_one_piece);
+		{
+			if (rooks[me])
+			{
+				if (F(pawns[me]) && T(pawns[opp]))
+					Material[index].eval[me] = TEMPLATE_ME(eval_krkpx);
+				else if (rooks[opp] == 1)
+				{
+					if (pawns[me] == 1)
+						Material[index].eval[me] = TEMPLATE_ME(eval_krpkrx);
+					else if (pawns[me] == 2)
+						Material[index].eval[me] = F(pawns[opp]) ? TEMPLATE_ME(eval_krppkrx) : TEMPLATE_ME(eval_krppkrpx);
+					else if (pawns[me] == 3 && T(pawns[opp]))
+						Material[index].eval[me] = TEMPLATE_ME(eval_krpppkrppx);
+				}
+				else if (pawns[me] == 1 && T(bishops[opp]))
+					Material[index].eval[me] = TEMPLATE_ME(eval_krpkbx);
+			}
+			else if (F(pawns[me]) && T(pawns[opp]))
+			{
+				if (F(NonPawnKing(opp)) && Single(Pawn(opp)))
+					Material[index].eval[me] = TEMPLATE_ME(eval_kqkpx);
+				else if (Rook(opp))
+					Material[index].eval[me] = TEMPLATE_ME(eval_kqkrpx);
+			}
+		}
 		else if (major[opp] + minor[opp] == 0)
 			Material[index].eval[me] = eval_null;	// just force the stalemate check
 	}
@@ -4425,6 +4737,7 @@ void init_search(int clear_hash)
 	LastSpeed = 0;
 	PVN = 1;
 	Contempt = 8;
+	Wobble = 0;
 	Infinite = 1;
 	SearchMoves = 0;
 	TimeLimit1 = TimeLimit2 = 0;
@@ -4995,296 +5308,6 @@ void undo_null()
 {
 	--Current;
 	--sp;
-}
-
-template <bool me> int krbkrx()
-{
-	if (King(opp) & Interior)
-		return 1;
-	return 16;
-}
-
-template <bool me> int kpkx()
-{
-	uint64 u = me == White ? Kpk[Current->turn][lsb(Pawn(White))][lsb(King(White))] & Bit(lsb(King(Black)))
-		: Kpk[Current->turn ^ 1][63 - lsb(Pawn(Black))][63 - lsb(King(Black))] & Bit(63 - lsb(King(White)));
-	return T(u) ? 32 : T(Piece(opp) ^ King(opp));
-}
-
-template <bool me> int knpkx()
-{
-	if (Pawn(me) & OwnLine(me, 6) & (File[0] | File[7]))
-	{
-		int sq = lsb(Pawn(me));
-		if (RangeK1[sq] & King(opp) & (OwnLine(me, 6) | OwnLine(me, 7)))
-			return 0;
-		if (PieceAt(sq + Push[me]) == IKing[me] && (RangeK1[lsb(King(me))] && RangeK1[lsb(King(opp))] & OwnLine(me, 7)))
-			return 0;
-	}
-	else if (Pawn(me) & OwnLine(me, 5) & (File[0] | File[7]))
-	{
-		int sq = lsb(Pawn(me));
-		if (PieceAt(sq + Push[me]) == IPawn[opp])
-		{
-			if (RangeK1[sq + Push[me]] & King(opp) & OwnLine(me, 7))
-				return 0;
-			if ((RangeK1[sq + Push[me]] & RangeK1[lsb(King(opp))] & OwnLine(me, 7)) && (!(NAtt[sq + Push[me]] & Knight(me)) || Current->turn == opp))
-				return 0;
-		}
-	}
-	return 32;
-}
-
-template <bool me> int krpkrx()
-{
-	int mul = 32;
-	int sq = lsb(Pawn(me));
-	int rrank = OwnRank<me>(sq);
-	int o_king = lsb(King(opp));
-	int o_rook = lsb(Rook(opp));
-	int m_king = lsb(King(me));
-	int add_mat = T(Piece(opp) ^ King(opp) ^ Rook(opp));
-	int clear = F(add_mat) || F((PWay[opp][sq] | PIsolated[FileOf(sq)]) & Forward[opp][RankOf(sq + Push[me])] & (Piece(opp) ^ King(opp) ^ Rook(opp)));
-
-	if (!clear)
-		return 32;
-	if (!add_mat && !(Pawn(me) & (File[0] | File[7])))
-	{
-		int m_rook = lsb(Rook(me));
-		if (OwnRank<me>(o_king) < OwnRank<me>(m_rook) && OwnRank<me>(m_rook) < rrank && OwnRank<me>(m_king) >= rrank - 1 &&
-			OwnRank<me>(m_king) > OwnRank<me>(m_rook) &&
-			((RangeK1[m_king] & Pawn(me)) || (MY_TURN && abs(FileOf(sq) - FileOf(m_king)) <= 1 && abs(rrank - OwnRank<me>(m_king)) <= 2)))
-			return 127;
-		if (RangeK1[m_king] & Pawn(me))
-		{
-			if (rrank >= 4)
-			{
-				if ((FileOf(sq) < FileOf(m_rook) && FileOf(m_rook) < FileOf(o_king)) || (FileOf(sq) > FileOf(m_rook) && FileOf(m_rook) > FileOf(o_king)))
-					return 127;
-			}
-			else if (rrank >= 2)
-			{
-				if (!(Pawn(me) & (File[1] | File[6])) && rrank + abs(FileOf(sq) - FileOf(m_rook)) > 4 &&
-					((FileOf(sq) < FileOf(m_rook) && FileOf(m_rook) < FileOf(o_king)) || (FileOf(sq) > FileOf(m_rook) && FileOf(m_rook) > FileOf(o_king))))
-					return 127;
-			}
-		}
-	}
-
-	if (PWay[me][sq] & King(opp))
-	{
-		if (Pawn(me) & (File[0] | File[7]))
-			mul = Min(mul, add_mat << 3);
-		if (rrank <= 3)
-			mul = Min(mul, add_mat << 3);
-		if (rrank == 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5 && T(King(opp) & (OwnLine(me, 6) | OwnLine(me, 7))) &&
-			(!MY_TURN || F(PAtt[me][sq] & RookAttacks(lsb(Rook(me)), PieceAll()) & (~RangeK1[o_king]))))
-			mul = Min(mul, add_mat << 3);
-		if (rrank >= 5 && OwnRank<me>(o_rook) <= 1 && (!MY_TURN || IsCheck(me) || Dist(m_king, sq) >= 2))
-			mul = Min(mul, add_mat << 3);
-		if (T(King(opp) & (File[1] | File[2] | File[6] | File[7])) && T(Rook(opp) & OwnLine(me, 7)) && T(Between[o_king][o_rook] & (File[3] | File[4])) &&
-			F(Rook(me) & OwnLine(me, 7)))
-			mul = Min(mul, add_mat << 3);
-		return mul;
-	}
-	else if (rrank == 6 && (Pawn(me) & (File[0] | File[7])) && ((PSupport[me][sq] | PWay[opp][sq]) & Rook(opp)) && OwnRank<me>(o_king) >= 6)
-	{
-		int dist = abs(FileOf(sq) - FileOf(o_king));
-		if (dist <= 3)
-			mul = Min(mul, add_mat << 3);
-		if (dist == 4 && ((PSupport[me][o_king] & Rook(me)) || Current->turn == opp))
-			mul = Min(mul, add_mat << 3);
-	}
-
-	if (RangeK1[o_king] & PWay[me][sq] & OwnLine(me, 7))
-	{
-		if (rrank <= 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5)
-			mul = Min(mul, add_mat << 3);
-		if (rrank == 5 && OwnRank<me>(o_rook) <= 1 && !MY_TURN || (F(RangeK1[m_king] & PAtt[me][sq] & (~RangeK1[o_king])) && (IsCheck(me) || Dist(m_king, sq) >= 2)))
-			mul = Min(mul, add_mat << 3);
-	}
-
-	if (T(PWay[me][sq] & Rook(me)) && T(PWay[opp][sq] & Rook(opp)))
-	{
-		if (King(opp) & (File[0] | File[1] | File[6] | File[7]) & OwnLine(me, 6))
-			mul = Min(mul, add_mat << 3);
-		else if ((Pawn(me) & (File[0] | File[7])) && (King(opp) & (OwnLine(me, 5) | OwnLine(me, 6))) && abs(FileOf(sq) - FileOf(o_king)) <= 2 &&
-			FileOf(sq) != FileOf(o_king))
-			mul = Min(mul, add_mat << 3);
-	}
-
-	if (abs(FileOf(sq) - FileOf(o_king)) <= 1 && abs(FileOf(sq) - FileOf(o_rook)) <= 1 && OwnRank<me>(o_rook) > rrank && OwnRank<me>(o_king) > rrank)
-		mul = Min(mul, (Pawn(me) & (File[3] | File[4])) ? 12 : 16);
-
-	return mul;
-}
-
-template <bool me> int krpkbx()
-{
-	if (!(Pawn(me) & OwnLine(me, 5)))
-		return 32;
-	int sq = lsb(Pawn(me));
-	if (!(PWay[me][sq] & King(opp)))
-		return 32;
-	int diag_sq = NB<me>(BMask[sq + Push[me]]);
-	if (OwnRank<me>(diag_sq) > 1)
-		return 32;
-	uint64 mdiag = FullLine[sq + Push[me]][diag_sq] | Bit(sq + Push[me]) | Bit(diag_sq);
-	int check_sq = NB<me>(BMask[sq - Push[me]]);
-	uint64 cdiag = FullLine[sq - Push[me]][check_sq] | Bit(sq - Push[me]) | Bit(check_sq);
-	if ((mdiag | cdiag) & (Piece(opp) ^ King(opp) ^ Bishop(opp)))
-		return 32;
-	if (cdiag & Bishop(opp))
-		return 0;
-	if ((mdiag & Bishop(opp)) && (Current->turn == opp || !(King(me) & PAtt[opp][sq + Push[me]])))
-		return 0;
-	return 32;
-}
-
-template <bool me> int kqkp()
-{
-	if (F(RangeK1[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1) & (File[0] | File[2] | File[5] | File[7])))
-		return 32;
-	if (PWay[opp][lsb(Pawn(opp))] & (King(me) | Queen(me)))
-		return 32;
-	if (Pawn(opp) & (File[0] | File[7]))
-		return 1;
-	else
-		return 4;
-}
-
-template <bool me> int kqkrpx()
-{
-	int rsq = lsb(Rook(opp));
-	uint64 pawns = RangeK1[lsb(King(opp))] & PAtt[me][rsq] & Pawn(opp) & Interior & OwnLine(me, 6);
-	if (pawns && OwnRank<me>(lsb(King(me))) <= 4)
-		return 0;
-	return 32;
-}
-
-template <bool me> int krkpx()
-{
-	if (T(RangeK1[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1)) & F(PWay[opp][NB<me>(Pawn(opp))] & King(me)))
-		return 0;
-	return 32;
-}
-
-template <bool me> int krppkrpx()
-{
-	if (Current->passer & Pawn(me))
-	{
-		if (Single(Current->passer & Pawn(me)))
-		{
-			int sq = lsb(Current->passer & Pawn(me));
-			if (PWay[me][sq] & King(opp) & (File[0] | File[1] | File[6] | File[7]))
-			{
-				int opp_king = lsb(King(opp));
-				if (RangeK1[opp_king] & Pawn(opp))
-				{
-					int king_file = FileOf(opp_king);
-					if (!((~(File[king_file] | PIsolated[king_file])) & Pawn(me)))
-						return 1;
-				}
-			}
-		}
-		return 32;
-	}
-	if (F((~(PWay[opp][lsb(King(opp))] | PSupport[me][lsb(King(opp))])) & Pawn(me)))
-		return 0;
-	return 32;
-}
-
-template <bool me> int krpppkrppx()
-{
-	if (T(Current->passer & Pawn(me)) || F((RangeK1[lsb(Pawn(opp))] | RangeK1[msb(Pawn(opp))]) & Pawn(opp)))
-		return 32;
-	if (F((~(PWay[opp][lsb(King(opp))] | PSupport[me][lsb(King(opp))])) & Pawn(me)))
-		return 0;
-	return 32;
-}
-
-template <bool me> int kbpkbx()
-{
-	int sq = lsb(Pawn(me));
-	uint64 u;
-	if ((T(Board->bb[ILight[me]]) && T(Board->bb[IDark[opp]])) || (T(Board->bb[IDark[me]]) && T(Board->bb[ILight[opp]])))
-	{
-		if (OwnRank<me>(sq) <= 4)
-			return 0;
-		if (T(PWay[me][sq] & King(opp)) && OwnRank<me>(sq) <= 5)
-			return 0;
-		for (u = Bishop(opp); T(u); Cut(u))
-		{
-			if (OwnRank<me>(lsb(u)) <= 4 && T(BishopAttacks(lsb(u), PieceAll()) & PWay[me][sq]))
-				return 0;
-			if (Current->turn == opp && T(BishopAttacks(lsb(u), PieceAll()) & Pawn(me)))
-				return 0;
-		}
-	}
-	else if (T(PWay[me][sq] & King(opp)) && T(King(opp) & LightArea) != T(Bishop(me) & LightArea))
-		return 0;
-	return 32;
-}
-
-template <bool me> int kbpknx()
-{
-	uint64 u;
-	if (T(PWay[me][lsb(Pawn(me))] & King(opp)) && T(King(opp) & LightArea) != T(Bishop(me) & LightArea))
-		return 0;
-	if (Current->turn == opp)
-		for (u = Knight(opp); T(u); Cut(u))
-			if (NAtt[lsb(u)] & Pawn(me))
-				return 0;
-	return 32;
-}
-
-template <bool me> int kbppkbx()
-{
-	int sq1 = NB<me>(Pawn(me));
-	int sq2 = NB<opp>(Pawn(me));
-	int o_king = lsb(King(opp));
-	int o_bishop = lsb(Bishop(opp));
-
-	if (FileOf(sq1) == FileOf(sq2))
-	{
-		if (OwnRank<me>(sq2) <= 3)
-			return 0;
-		if (T(PWay[me][sq2] & King(opp)) && OwnRank<me>(sq2) <= 5)
-			return 0;
-	}
-	else if (PIsolated[FileOf(sq1)] & Pawn(me))
-	{
-		if (T(King(opp) & LightArea) != T(Bishop(me) & LightArea))
-		{
-			if (HasBit(RangeK1[o_king] | King(opp), sq2 + Push[me]) && HasBit(BishopAttacks(o_bishop, PieceAll()), sq2 + Push[me]) &&
-				HasBit(RangeK1[o_king] | King(opp), (sq2 & 0xF8) | FileOf(sq1)) && HasBit(BishopAttacks(o_bishop, PieceAll()), (sq2 & 0xFFFFFFF8) | FileOf(sq1)))
-				return 0;
-		}
-	}
-	return 32;
-}
-
-template <bool me> int krppkrx()
-{
-	int sq1 = NB<me>(Pawn(me));
-	int sq2 = NB<opp>(Pawn(me));
-
-	if ((Piece(opp) ^ King(opp) ^ Rook(opp)) & Forward[me][RankOf(sq1 - Push[me])])
-		return 32;
-	if (FileOf(sq1) == FileOf(sq2))
-	{
-		if (T(PWay[me][sq2] & King(opp)))
-			return 16;
-		return 32;
-	}
-	if (T(PIsolated[FileOf(sq2)] & Pawn(me)) && T((File[0] | File[7]) & Pawn(me)) && T(King(opp) & Shift<me>(Pawn(me))))
-	{
-		if (OwnRank<me>(sq2) == 5 && OwnRank<me>(sq1) == 4 && T(Rook(opp) & (OwnLine(me, 5) | OwnLine(me, 6))))
-			return 10;
-		else if (OwnRank<me>(sq2) < 5)
-			return 16;
-	}
-	return 32;
 }
 
 typedef struct
@@ -6448,11 +6471,10 @@ INLINE int pick_move()
 	return move & 0xFFFF;
 }
 
-INLINE void apply_parity(int* move, bool p)
+INLINE void apply_wobble(int* move, int depth)
 {
 	int mp = (((*move & 0xFFFF) * 529) >> 9) & 1;
-	if (F(mp) ^ p)
-		*move += 1 << 16;  // (minimal) bonus for right parity
+	*move += (mp + depth) % (Wobble + 1);	// (minimal) bonus for right parity
 }
 
 INLINE bool is_killer(uint16 move)
@@ -6463,7 +6485,7 @@ INLINE bool is_killer(uint16 move)
 	return false;
 }
 
-template <bool me> void gen_next_moves(bool depth_parity)
+template <bool me> void gen_next_moves(int depth)
 {
 	int* p, *q, *r;
 	Current->gen_flags &= ~FlagSort;
@@ -6514,7 +6536,7 @@ template <bool me> void gen_next_moves(bool depth_parity)
 		Current->gen_flags |= FlagSort;
 		Current->current = Current->start;
 		for (auto q = Current->start; *q; ++q)
-			apply_parity(&*q, depth_parity);
+			apply_wobble(&*q, depth % (Wobble + 1));
 		return;
 	case s_bad_cap:
 		*(Current->start) = 0;
@@ -6542,7 +6564,7 @@ template <bool me> void gen_next_moves(bool depth_parity)
 	}
 }
 
-template <bool me, bool root> int get_move(bool depth_parity)
+template <bool me, bool root> int get_move(int depth)
 {
 	int move;
 
@@ -6559,7 +6581,7 @@ template <bool me, bool root> int get_move(bool depth_parity)
 			Current->stage++;
 			if ((1 << Current->stage) & StageNone)
 				return 0;
-			gen_next_moves<me>(depth_parity);
+			gen_next_moves<me>(depth);
 			continue;
 		}
 		if (Current->gen_flags & FlagSort)
@@ -10016,6 +10038,7 @@ void uci()
 		fprintf(stdout, "option name Clear Hash type button\n");
 		fprintf(stdout, "option name PV Hash type check default true\n");
 		fprintf(stdout, "option name Contempt type spin min 0 max 64 default 8\n");
+		fprintf(stdout, "option name Wobble type spin min 0 max 3 default 0\n");
 		fprintf(stdout, "option name Aspiration window type check default true\n");
 #ifdef TB
 		fprintf(stdout, "option name SyzygyPath type string default <empty>\n");
@@ -10098,6 +10121,12 @@ void uci()
 			{
 				ptr += 15;
 				Contempt = atoi(ptr);
+				Stop = 1;
+			}
+			else if (!memcmp(ptr, "Wobble", 6))
+			{
+				ptr += 13;
+				Wobble = atoi(ptr);
 				Stop = 1;
 			}
 			else if (!memcmp(ptr, "Ponder", 6))
@@ -10452,6 +10481,8 @@ ostream& operator<<(ostream& dst, const WriteMove_& m)
 
 void Test1(const char* fen, int max_depth, const char* solution)
 {
+	static const int DEPTH_LIMIT = 32;
+	max_depth = Min(max_depth, DEPTH_LIMIT);
 	init_search(1);
 	get_board(fen);
 	auto cmd = _strdup("go infinite");
@@ -10482,42 +10513,44 @@ void main(int argc, char *argv[])
 	init_eval();
 	Console = true;
 
+	Test1("kr6/p7/8/8/8/8/8/BBK5 w - - 0 1", 24, "g4-g5");
+
 	Test1("4kbnr/2pr1ppp/p1Q5/4p3/4P3/2Pq1b1P/PP1P1PP1/RNB2RK1 w - - 0 1", 20, "f1-e1");	// why didn't Roc keep the rook pinned?
 
-//	Test1("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1", 20, "a7-a8");
-//	Test1("4r1k1/4ppbp/r5p1/3Np3/2PnP3/3P2Pq/1R3P2/2BQ1RK1 w - - 0 1", 20, "b2-b1");
-	
-//	Test1("8/4p3/8/3P3p/P2pK3/6P1/7b/3k4 w - - 0 1", 24, "d5-d6");
-//	Test1("rq2r1k1/5pp1/p7/4bNP1/1p2P2P/5Q2/PP4K1/5R1R w - - 0 1", 4, "f5-g7");
-//	Test1("R7/6k1/8/8/6P1/6K1/8/7r w - - 0 1", 24, "g4-g5");
-//	Test1("6k1/2b2p1p/ppP3p1/4p3/PP1B4/5PP1/7P/7K w - - 0 1", 31, "d4-b6");			// Slizzard fails
-//	Test1("5r1k/p1q2pp1/1pb4p/n3R1NQ/7P/3B1P2/2P3P1/7K w - - 0 1", 26, "e5-e6");	// Slizzard finds at depth 21
-//	Test1("5r1k/1P4pp/3P1p2/4p3/1P5P/3q2P1/Q2b2K1/B3R3 w - - 0 1", 36, "a2-f7");	// Slizzard finds at depth 35
-//	Test1("3B4/8/2B5/1K6/8/8/3p4/3k4 w - - 0 1", 15, "b5-a6");						// Slizzard fails until depth 17
-//	Test1("1k1r4/1pp4p/2n5/P6R/2R1p1r1/2P2p2/1PP2B1P/4K3 b - - 0 1", 18, "e4-e3");
-//	Test1("6k1/p3q2p/1nr3pB/8/3Q1P2/6P1/PP5P/3R2K1 b - - 0 1", 12, "c6-d6");
-//	Test1("2krr3/1p4pp/p1bRpp1n/2p5/P1B1PP2/8/1PP3PP/R1K3B1 w - - 0 1", 15, "d6-c6");
-//	Test1("r5k1/pp2p1bp/6p1/n1p1P3/2qP1NP1/2PQB3/P5PP/R4K2 b - - 0 1", 18, "g6-g5");
-//	Test1("2r3k1/1qr1b1p1/p2pPn2/nppPp3/8/1PP1B2P/P1BQ1P2/5KRR w - - 0 1", 25, "g1-g7");
-//	Test1("1br3k1/p4p2/2p1r3/3p1b2/3Bn1p1/1P2P1Pq/P3Q1BP/2R1NRK1 b - - 0 1", 20, "h3-h2");
-//	Test1("8/pp3k2/2p1qp2/2P5/5P2/1R2p1rp/PP2R3/4K2Q b - - 0 1", 11, "e6-e4");
-//	Test1("3b2k1/1pp2rpp/r2n1p1B/p2N1q2/3Q4/6R1/PPP2PPP/4R1K1 w - - 0 1", 15, "d5-b4");
-//	Test1("3r1rk1/1p3pnp/p3pBp1/1qPpP3/1P1P2R1/P2Q3R/6PP/6K1 w - - 0 1", 24, "h3-h7");
-//	Test1("4k1rr/ppp5/3b1p1p/4pP1P/3pP2N/3P3P/PPP5/2KR2R1 w kq - 0 1", 16, "g1-g6");
-//	Test1("r1b3k1/ppp3pp/2qpp3/2r3N1/2R5/8/P1Q2PPP/2B3K1 b - - 0 1", 4, "g7-g6");
-//	Test1("4r1k1/p1qr1p2/2pb1Bp1/1p5p/3P1n1R/3B1P2/PP3PK1/2Q4R w - - 0 1", 20, "c1-f4");
-//	Test1("3r2k1/pp4B1/6pp/PP1Np2n/2Pp1p2/3P2Pq/3QPPbP/R4RK1 b - - 0 1", 42, "g3-f3");	// fails to find f3
-//	Test1("r4rk1/5p2/1n4pQ/2p5/p5P1/P4N2/1qb1BP1P/R3R1K1 w - - 0 1", 23, "a1-a2");
-//	Test1("r4rk1/pb3p2/1pp4p/2qn2p1/2B5/6BP/PPQ2PP1/3RR1K1 w - - 0 1", 15, "e1-e6");
-//	Test1("rnb1k2r/pp2qppp/3p1n2/2pp2B1/1bP5/2N1P3/PP2NPPP/R2QKB1R w KQkq - 0 1", 4, "a2-a3");
-//	Test1("r1b2rk1/pp1p1pBp/6p1/8/2PQ4/8/PP1KBP1P/q7 w - - 0 1", 30, "d4-f6");
-//	Test1("R7/3p3p/8/3P2P1/3k4/1p5p/1P1NKP1P/7q w - - 0 1", 31, "g5-g6");
-//	Test1("8/8/3k1p2/p2BnP2/4PN2/1P2K1p1/8/5b2 b - - 0 1", 57, "f4-d3");	// fails to find Nd3 (finds at 58 in about 1800 seconds)
-//	Test1("2r3k1/pbr1q2p/1p2pnp1/3p4/3P1P2/1P1BR3/PB1Q2PP/5RK1 w - - 0 1", 31, "f4-f5");
-//	Test1("3r2k1/p2r2p1/1p1B2Pp/4PQ1P/2b1p3/P3P3/7K/8 w - - 0 1", 39, "d6-b4");
-//	Test1("b2r1rk1/2q2ppp/p1nbpn2/1p6/1P6/P1N1PN2/1B2QPPP/1BR2RK1 w - - 0 1", 4, "c3-e4");
-//	Test1("r1b4Q/p4k1p/1pp1ppqn/8/1nP5/8/PP1KBPPP/3R2NR w - - 0 1", 4, "e5-e6");
-//	Test1("2k5/2p3Rp/p1pb4/1p2p3/4P3/PN1P1P2/1P2KP1r/8 w - - 0 1", 25, "f3-f4");
+	Test1("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1", 20, "a7-a8");
+	Test1("4r1k1/4ppbp/r5p1/3Np3/2PnP3/3P2Pq/1R3P2/2BQ1RK1 w - - 0 1", 20, "b2-b1");
+	Test1("R7/6k1/8/8/6P1/6K1/8/7r w - - 0 1", 24, "g4-g5");
+
+	Test1("8/4p3/8/3P3p/P2pK3/6P1/7b/3k4 w - - 0 1", 24, "d5-d6");
+	Test1("rq2r1k1/5pp1/p7/4bNP1/1p2P2P/5Q2/PP4K1/5R1R w - - 0 1", 4, "f5-g7");
+	Test1("6k1/2b2p1p/ppP3p1/4p3/PP1B4/5PP1/7P/7K w - - 0 1", 31, "d4-b6");			// Slizzard fails
+	Test1("5r1k/p1q2pp1/1pb4p/n3R1NQ/7P/3B1P2/2P3P1/7K w - - 0 1", 26, "e5-e6");	// Slizzard finds at depth 21
+	Test1("5r1k/1P4pp/3P1p2/4p3/1P5P/3q2P1/Q2b2K1/B3R3 w - - 0 1", 36, "a2-f7");	// Slizzard finds at depth 35
+	Test1("3B4/8/2B5/1K6/8/8/3p4/3k4 w - - 0 1", 15, "b5-a6");						// Slizzard fails until depth 17
+	Test1("1k1r4/1pp4p/2n5/P6R/2R1p1r1/2P2p2/1PP2B1P/4K3 b - - 0 1", 18, "e4-e3");
+	Test1("6k1/p3q2p/1nr3pB/8/3Q1P2/6P1/PP5P/3R2K1 b - - 0 1", 12, "c6-d6");
+	Test1("2krr3/1p4pp/p1bRpp1n/2p5/P1B1PP2/8/1PP3PP/R1K3B1 w - - 0 1", 15, "d6-c6");
+	Test1("r5k1/pp2p1bp/6p1/n1p1P3/2qP1NP1/2PQB3/P5PP/R4K2 b - - 0 1", 18, "g6-g5");
+	Test1("2r3k1/1qr1b1p1/p2pPn2/nppPp3/8/1PP1B2P/P1BQ1P2/5KRR w - - 0 1", 25, "g1-g7");
+	Test1("1br3k1/p4p2/2p1r3/3p1b2/3Bn1p1/1P2P1Pq/P3Q1BP/2R1NRK1 b - - 0 1", 20, "h3-h2");
+	Test1("8/pp3k2/2p1qp2/2P5/5P2/1R2p1rp/PP2R3/4K2Q b - - 0 1", 11, "e6-e4");
+	Test1("3b2k1/1pp2rpp/r2n1p1B/p2N1q2/3Q4/6R1/PPP2PPP/4R1K1 w - - 0 1", 15, "d5-b4");
+	Test1("3r1rk1/1p3pnp/p3pBp1/1qPpP3/1P1P2R1/P2Q3R/6PP/6K1 w - - 0 1", 24, "h3-h7");
+	Test1("4k1rr/ppp5/3b1p1p/4pP1P/3pP2N/3P3P/PPP5/2KR2R1 w kq - 0 1", 16, "g1-g6");
+	Test1("r1b3k1/ppp3pp/2qpp3/2r3N1/2R5/8/P1Q2PPP/2B3K1 b - - 0 1", 4, "g7-g6");
+	Test1("4r1k1/p1qr1p2/2pb1Bp1/1p5p/3P1n1R/3B1P2/PP3PK1/2Q4R w - - 0 1", 20, "c1-f4");
+	Test1("3r2k1/pp4B1/6pp/PP1Np2n/2Pp1p2/3P2Pq/3QPPbP/R4RK1 b - - 0 1", 42, "g3-f3");	// fails to find f3
+	Test1("r4rk1/5p2/1n4pQ/2p5/p5P1/P4N2/1qb1BP1P/R3R1K1 w - - 0 1", 23, "a1-a2");
+	Test1("r4rk1/pb3p2/1pp4p/2qn2p1/2B5/6BP/PPQ2PP1/3RR1K1 w - - 0 1", 15, "e1-e6");
+	Test1("rnb1k2r/pp2qppp/3p1n2/2pp2B1/1bP5/2N1P3/PP2NPPP/R2QKB1R w KQkq - 0 1", 4, "a2-a3");
+	Test1("r1b2rk1/pp1p1pBp/6p1/8/2PQ4/8/PP1KBP1P/q7 w - - 0 1", 30, "d4-f6");
+	Test1("R7/3p3p/8/3P2P1/3k4/1p5p/1P1NKP1P/7q w - - 0 1", 31, "g5-g6");
+	Test1("8/8/3k1p2/p2BnP2/4PN2/1P2K1p1/8/5b2 b - - 0 1", 57, "f4-d3");	// fails to find Nd3 (finds at 58 in about 1800 seconds)
+	Test1("2r3k1/pbr1q2p/1p2pnp1/3p4/3P1P2/1P1BR3/PB1Q2PP/5RK1 w - - 0 1", 31, "f4-f5");
+	Test1("3r2k1/p2r2p1/1p1B2Pp/4PQ1P/2b1p3/P3P3/7K/8 w - - 0 1", 39, "d6-b4");
+	Test1("b2r1rk1/2q2ppp/p1nbpn2/1p6/1P6/P1N1PN2/1B2QPPP/1BR2RK1 w - - 0 1", 4, "c3-e4");
+	Test1("r1b4Q/p4k1p/1pp1ppqn/8/1nP5/8/PP1KBPPP/3R2NR w - - 0 1", 4, "e5-e6");
+	Test1("2k5/2p3Rp/p1pb4/1p2p3/4P3/PN1P1P2/1P2KP1r/8 w - - 0 1", 25, "f3-f4");
 
 	cin.ignore();
 }
