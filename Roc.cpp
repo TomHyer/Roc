@@ -7999,7 +7999,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		}
 
 #if TB
-		if (hash_depth < 0 && TB_LARGEST > 0 && depth >= TBMinDepth && popcnt(PieceAll) <= TB_LARGEST) {
+		if (hash_depth < 0 && TB_LARGEST > 0 && depth >= TBMinDepth && popcnt(PieceAll()) <= TB_LARGEST) {
 			unsigned res = tb_probe_wdl(Piece(White), Piece(Black),
 				King(White) | King(Black),
 				Queen(White) | Queen(Black),
@@ -8363,7 +8363,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 				}
 			}
 #if TB
-		if (hash_depth < 0 && TB_LARGEST > 0 && depth >= TBMinDepth && popcnt(PieceAll) <= TB_LARGEST) {
+		if (hash_depth < 0 && TB_LARGEST > 0 && depth >= TBMinDepth && popcnt(PieceAll()) <= TB_LARGEST) {
 			unsigned res = tb_probe_wdl(Piece(White), Piece(Black),
 				King(White) | King(Black),
 				Queen(White) | Queen(Black),
@@ -8537,7 +8537,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 	}
 
 #if TB
-	if (!root && hash_depth < 0 && TB_LARGEST > 0 && depth >= TBMinDepth && popcnt(PieceAll) <= TB_LARGEST) 
+	if (!root && hash_depth < 0 && TB_LARGEST > 0 && depth >= TBMinDepth && popcnt(PieceAll()) <= TB_LARGEST)
 	{
 		unsigned res = tb_probe_wdl(Piece(White), Piece(Black),
 			King(White) | King(Black),
