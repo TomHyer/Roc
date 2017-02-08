@@ -27,9 +27,11 @@
 #include <assert.h>
 
 #ifdef TB
-#include "..\..\Fathom\src\tbconfig.h"
-#include "..\..\Fathom\src\tbcore.h"
-#include "..\..\Fathom\src\tbprobe.h"
+#include "src\tbconfig.h"
+#include "src\tbcore.h"
+#include "src\tbprobe.h"
+#undef LOCK
+#undef UNLOCK
 #endif
 
 //#include "TunerParams.inc"
@@ -719,7 +721,7 @@ uint64 QueenAttacks(int sq, const uint64& occ)
 INLINE int lsb(uint64 x)
 {
 	register unsigned long y;
-	_BitScanForward64(&y, x);
+	_BitScanForward64(&y, x); 
 	return y;
 }
 
@@ -874,6 +876,10 @@ INLINE int* AddCapturePP(int* list, int att, int vic, int from, int to, int flag
 INLINE int* AddCaptureP(int* list, int piece, int from, int to, int flags)
 {
 	return AddCapturePP(list, piece, PieceAt(to), from, to, flags);
+}
+INLINE int* AddCaptureP(int* list, int piece, int from, int to, int flags, uint8 min_vic)
+{
+	return AddCapturePP(list, piece, Max(min_vic, PieceAt(to)), from, to, flags);
 }
 INLINE int* AddCapture(int* list, int from, int to, int flags)
 {
@@ -1282,6 +1288,15 @@ const array<int, 15> ShelterValue = {  // tuner: type=array, var=26, active=0
 	96, 28, 32, 0, 0	// f
 };
 array<array<sint16, 8>, 3> Shelter;
+
+enum
+{
+	StormHofValue,
+	StormHofScale,
+	StormOfValue,
+	StormOfScale
+};
+const array<int, 4> ShelterMod = { 0, 0, 88, 0 };
 
 enum
 {
@@ -5319,6 +5334,7 @@ typedef struct
 
 template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawnEvalInfo& PEI)
 {
+	static const array<array<uint64, 2>, 2> RFileBlockMask = {array<uint64, 2>({0x0202000000000000, 0x8080000000000000}), array<uint64, 2>({0x0202, 0x8080}) };
 	POP pop;
 	int kf = FileOf(PEI.king[me]);
 	int kr = RankOf(PEI.king[me]);
@@ -5333,49 +5349,60 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 		start = Min(kf + 1, 7);
 		inc = -1;
 	}
-	int shelter = 0;
+	int shelter = 0, sScale = 0;
 	uint64 mpawns = Pawn(me) & Forward[me][me ? Min(kr + 1, 7) : Max(kr - 1, 0)];
 	for (int file = start, i = 0; i < 3; file += inc, ++i)
 	{
 		shelter += Shelter[i][OwnRank<me>(NBZ<me>(mpawns & File[file]))];
-		int rank;
 		if (Pawn(opp) & File[file])
 		{
-			int sq = NB<me>(Pawn(opp) & File[file]);
-			if ((rank = OwnRank<opp>(sq)) < 6)
+			int oppP = NB<me>(Pawn(opp) & File[file]);
+			int rank = OwnRank<opp>(oppP);
+			if (rank < 6)
 			{
 				if (rank >= 3)
 					shelter += StormBlocked[rank - 3];
-				if (uint64 u = (PIsolated[FileOf(sq)] & Forward[opp][RankOf(sq)] & Pawn(me)))
+				if (uint64 u = (PIsolated[FileOf(oppP)] & Forward[opp][RankOf(oppP)] & Pawn(me)))
 				{
-					int square = NB<opp>(u);
-					uint64 att_sq = PAtt[me][square] & PWay[opp][sq];  // may be zero
-					if ((VLine[square] | PIsolated[FileOf(square)]) & King(me))
-						if (!(PEI.double_att[me] & att_sq) || (Current->patt[opp] & att_sq))
+					int meP = NB<opp>(u);
+					uint64 att_sq = PAtt[me][meP] & PWay[opp][oppP];  // may be zero
+					if (abs(kf - FileOf(meP)) <= 1
+						&& (!(PEI.double_att[me] & att_sq) || (Current->patt[opp] & att_sq))
+						&& F(PWay[opp][meP] & Pawn(me))
+						&& (!(PawnAll() & PWay[opp][oppP] & Forward[me][RankOf(meP)])))
+					{
+						if (rank >= 3)
 						{
-							if (PWay[opp][square] & Pawn(me))
-								continue;
-							if (!(PawnAll() & PWay[opp][sq] & Forward[me][RankOf(square)]))
-							{
-								if (rank >= 3)
-								{
-									shelter += StormShelterAtt[rank - 3];
-									if (HasBit(PEI.patt[opp], sq + Push[opp]))
-										shelter += StormConnected[rank - 3];
-									if (!(PWay[opp][sq] & PawnAll()))
-										shelter += StormOpen[rank - 3];
-								}
-								if (!((VLine[sq] | PIsolated[FileOf(sq)]) & King(opp)) && rank <= 4)
-									shelter += StormFree[rank - 1];
-							}
+							shelter += StormShelterAtt[rank - 3];
+							if (HasBit(PEI.patt[opp], oppP + Push[opp]))
+								shelter += StormConnected[rank - 3];
+							if (!(PWay[opp][oppP] & PawnAll()))
+								shelter += StormOpen[rank - 3];
 						}
+						if (rank <= 4 && !(PCone[me][oppP] & King(opp)))
+							shelter += StormFree[rank - 1];
+					}
 				}
 			}
 		}
-		else if (F(Pawn(me) & File[file]))
-			shelter += 22 * CP_EVAL;	// Gull StormOfValue
+		else
+		{
+			if (i > 0 || T((File[file]|File[file+inc]) & (Rook(opp)|Queen(opp))) || T(RFileBlockMask[me][inc > 0] & ~(Pawn(opp) | King(opp))))
+			{
+				if (F(Pawn(me) & File[file]))
+				{
+					shelter += ShelterMod[StormOfValue];
+					sScale += ShelterMod[StormOfScale];
+				}
+				else
+				{
+					shelter += ShelterMod[StormHofValue];
+					sScale += ShelterMod[StormHofScale];
+				}
+			}
+		}
 	}
-	PawnEntry->shelter[me] = shelter;
+	PawnEntry->shelter[me] = shelter + (shelter * sScale) / 64;
 
 	PawnEntry->passer[me] = 0;
 	uint64 b;
@@ -5805,7 +5832,12 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	IncV(EI.score, Pack2(adjusted, 0));
+	static const array<int, 4> PHASE = { 13, 10, 1, 0 };
+	int op = (PHASE[0] * adjusted) / 16;
+	int md = (PHASE[1] * adjusted) / 16;
+	int eg = (PHASE[2] * adjusted) / 16;
+	int cl = (PHASE[3] * adjusted) / 16;
+	IncV(EI.score, Pack4(op, md, eg, cl));
 }
 
 template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
@@ -6022,7 +6054,8 @@ template<class POP> void evaluation()
 		else
 			Current->score += (md * phase + eg * (MIDDLE_PHASE - phase)) / MIDDLE_PHASE;
 #ifndef THREE_PHASE
-		Current->score += static_cast<sint16>((closure<POP>() * (Min<int>(phase, MIDDLE_PHASE) * cl + MIDDLE_PHASE * EI.material->closed)) / 8192);	// closure is capped at 128, phase at 64
+		int clx = closure<POP>();
+		Current->score += static_cast<sint16>((clx * (Min<int>(phase, MIDDLE_PHASE) * cl + MIDDLE_PHASE * EI.material->closed)) / 8192);	// closure is capped at 128, phase at 64
 #endif
 #endif
 		// apply contempt before drawishness
@@ -7231,8 +7264,18 @@ template <bool me> int* gen_checks(int* list)
 		for (v = RookAttacks(lsb(u), PieceAll()) & r_target; T(v); Cut(v))
 			list = AddCaptureP(list, IRook[me], lsb(u), lsb(v), 0);
 	for (u = Queen(me) & nonDiscover; T(u); Cut(u))
-		for (v = QueenAttacks(lsb(u), PieceAll()) & (b_target | r_target); T(v); Cut(v))
-			list = AddCaptureP(list, IQueen[me], lsb(u), lsb(v), 0);
+	{
+		//uint64 contact = RangeK1[king];
+		int from = lsb(u);
+		for (v = QueenAttacks(from, PieceAll()) & (b_target | r_target); T(v); Cut(v))
+		{
+			int to = lsb(v);
+			//if (HasBit(contact, to))
+			//	list = AddCaptureP(list, IQueen[me], from, to, 0, T(Boundary & King(opp)) || OwnRank<me>(to) == 7 ? IPawn[opp] : IRook[opp]);
+			//else
+			list = AddCaptureP(list, IQueen[me], from, to, 0);
+		}
+	}
 
 	if (OwnRank<me>(king) == 4)
 	{	  // check for double-push checks	
@@ -7906,7 +7949,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		if (nodes > check_node + 0x4000 && parent)
 		{
 #ifdef TB
-			builtin_sync_fetch_and_add(&Smpi->tb_hits, tb_hits);
+			InterlockedAdd64(&Smpi->tb_hits, tb_hits);
 			tb_hits = 0;
 #endif
 			check_node = nodes;
