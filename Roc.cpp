@@ -9,7 +9,7 @@
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
-//#define TB 0
+#define TB 1
 
 #ifdef W32_BUILD
 #define NTDDI_VERSION 0x05010200
@@ -32,6 +32,21 @@
 #include "src\tbprobe.h"
 #undef LOCK
 #undef UNLOCK
+
+template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
+{
+	return func(Piece(White), Piece(Black),
+		King(White) | King(Black),
+		Queen(White) | Queen(Black),
+		Rook(White) | Rook(Black),
+		Bishop(White) | Bishop(Black),
+		Knight(White) | Knight(Black),
+		Pawn(White) | Pawn(Black),
+		Current->ply,
+		Current->castle_flags,
+		Current->ep_square,
+		(me == White), std::forward<Args_>(args)...);
+}
 #endif
 
 //#include "TunerParams.inc"
@@ -420,6 +435,7 @@ static const int SeeThreshold = 40 * CP_EVAL;
 static const int DrawCapConstant = 100 * CP_EVAL;
 static const int DrawCapLinear = 0;	// numerator; denominator is 64
 static const int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
+static const int TBMinDepth = 7;
 
 inline int MapPositive(int scale, int param)
 {
@@ -458,7 +474,8 @@ static const sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
 #define TBMateValue 31380
 #define TBCursedMateValue 3
 const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
-inline int TbDepth(int depth) { return Min(depth + 6, 127); }
+static const int NominalTbDepth = 33;
+inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 127); }
 #endif
 
 
@@ -8042,18 +8059,8 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		}
 
 #if TB
-		if (hash_depth < 0 && TB_LARGEST > 0 && depth >= TBMinDepth && popcnt(PieceAll()) <= TB_LARGEST) {
-			unsigned res = tb_probe_wdl(Piece(White), Piece(Black),
-				King(White) | King(Black),
-				Queen(White) | Queen(Black),
-				Rook(White) | Rook(Black),
-				Bishop(White) | Bishop(Black),
-				Knight(White) | Knight(Black),
-				Pawn(White) | Pawn(Black),
-				Current->ply,
-				Current->castle_flags,
-				Current->ep_square,
-				(me == White));
+		if (hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
+			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				tb_hits++;
 				hash_high(TbValues[res], TbDepth(depth));
@@ -8406,18 +8413,8 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 				}
 			}
 #if TB
-		if (hash_depth < 0 && TB_LARGEST > 0 && depth >= TBMinDepth && popcnt(PieceAll()) <= TB_LARGEST) {
-			unsigned res = tb_probe_wdl(Piece(White), Piece(Black),
-				King(White) | King(Black),
-				Queen(White) | Queen(Black),
-				Rook(White) | Rook(Black),
-				Bishop(White) | Bishop(Black),
-				Knight(White) | Knight(Black),
-				Pawn(White) | Pawn(Black),
-				Current->ply,
-				Current->castle_flags,
-				Current->ep_square,
-				(me == White));
+		if (hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
+			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				tb_hits++;
 				hash_high(TbValues[res], TbDepth(depth));
@@ -8579,28 +8576,6 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		halt_check;
 	}
 
-#if TB
-	if (!root && hash_depth < 0 && TB_LARGEST > 0 && depth >= TBMinDepth && popcnt(PieceAll()) <= TB_LARGEST)
-	{
-		unsigned res = tb_probe_wdl(Piece(White), Piece(Black),
-			King(White) | King(Black),
-			Queen(White) | Queen(Black),
-			Rook(White) | Rook(Black),
-			Bishop(White) | Bishop(Black),
-			Knight(White) | Knight(Black),
-			Pawn(White) | Pawn(Black),
-			Current->ply,
-			Current->castle_flags,
-			Current->ep_square,
-			(me == White));
-		if (res != TB_RESULT_FAILED) {
-			tb_hits++;
-			hash_high(TbValues[res], TbDepth(depth));
-			hash_low(0, TbValues[res], TbDepth(depth));
-		}
-	}
-#endif
-
 	// check hash
 	hash_depth = -1;
 	Current->best = hash_move = 0;
@@ -8633,6 +8608,17 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 				hash_value = Entry->low;
 		}
 	}
+#if TB
+	if (!root && hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST)
+	{
+		auto res = TBProbe(tb_probe_wdl, me);
+		if (res != TB_RESULT_FAILED) {
+			tb_hits++;
+			hash_high(TbValues[res], TbDepth(depth));
+			hash_low(0, TbValues[res], TbDepth(depth));
+		}
+	}
+#endif
 
 	if (root)
 	{
@@ -8923,17 +8909,7 @@ template <bool me> void root()
 #ifdef TB
 	if (popcnt(PieceAll()) <= int(TB_LARGEST)) 
 	{
-		unsigned res = tb_probe_root(Piece(White), Piece(Black),
-			King(White) | King(Black),
-			Queen(White) | Queen(Black),
-			Rook(White) | Rook(Black),
-			Bishop(White) | Bishop(Black),
-			Knight(White) | Knight(Black),
-			Pawn(White) | Pawn(Black),
-			Current->ply,
-			Current->castle_flags,
-			Current->ep_square,
-			(me == White), NULL);
+		auto res = TBProbe(tb_probe_root, me);
 		if (res != TB_RESULT_FAILED) {
 			best_score = TbValues[TB_GET_WDL(res)];
 			int flags = 0;
@@ -8944,7 +8920,7 @@ template <bool me> void root()
 			case TB_PROMOTES_ROOK:
 				flags |= FlagPRook; break;
 			case TB_PROMOTES_BISHOP:
-				flags |= FlagPBishop;
+				flags |= FlagPBishop; break;
 			case TB_PROMOTES_KNIGHT:
 				flags |= FlagPKnight; break;
 			default:
