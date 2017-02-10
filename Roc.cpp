@@ -26,6 +26,8 @@
 #include <windows.h>
 #include <assert.h>
 
+//#include "TunerParams.inc"
+
 #ifdef TB
 #include "src\tbconfig.h"
 #include "src\tbcore.h"
@@ -48,8 +50,6 @@ template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&
 		(me == White), std::forward<Args_>(args)...);
 }
 #endif
-
-//#include "TunerParams.inc"
 
 #ifdef TUNER
 #include "time.h"
@@ -471,8 +471,8 @@ static const sint16 KpkValue = 300 * CP_EVAL;
 static const sint16 EvalValue = 30000;
 static const sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
 #ifdef TB
-#define TBMateValue 31380
-#define TBCursedMateValue 3
+static const sint16 TBMateValue = 31380;
+static const sint16 TBCursedMateValue = 13;
 const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
 static const int NominalTbDepth = 33;
 inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 127); }
@@ -1169,8 +1169,8 @@ enum
 	IKingAttackWeight = IKingRay + 6
 };
 
-const array<int, 6> MatLinear = { 29, -5, -12, 88, 1, -3 };
-// pawn, knight, bishop, rook, queen
+const array<int, 6> MatLinear = { 29, -5, -12, 88, -19, -3 };
+// pawn, knight, bishop, rook, queen, pair
 const int MatQuadMe[14] = { // tuner: type=array, var=1000, active=0
 	-33, 17, -23, -155, -247,
 	15, 296, -105, -83,
@@ -1413,12 +1413,9 @@ enum
 	IsolatedDoubledOpen,
 	IsolatedDoubledClosed
 };
-const array<int, 20> Isolated = {  // tuner: type=array, var=26, active=0
-	24, 24, 24, 0,
-	32, 20, 8, 0,
-	-32, -16, 0, 0,
-	-4, 18, 40, 0,
-	28, 32, 36, 0 };
+const array<int, 20> Isolated = TunerParams1;
+//{	24, 24, 24, 0,	32, 20, 8, 0,	-32, -16, 0, 0,	-4, 18, 40, 0,	28, 32, 36, 0 };
+
 enum
 {
 	UpBlocked,
@@ -1478,15 +1475,18 @@ enum
 	TacticalMajorMinor,
 	TacticalMinorMinor,
 	TacticalThreat,
-	TacticalDoubleThreat
+	TacticalDoubleThreat,
+	TacticalUnguardedQ
 };
-const array<int, 24> Tactical = {  // tuner: type=array, var=51, active=0
+const array<int, 28> Tactical = {  // tuner: type=array, var=51, active=0
 	-4, 8, 20, 0,
 	0, 10, 20, 0,
 	44, 80, 116, 0,
 	92, 110, 128, 0,
 	76, 60, 44, 0,
-	164, 106, 48, 0 };
+	164, 106, 48, 0,
+	0,	10,	40,	-10
+};
 
 enum
 {
@@ -4112,16 +4112,19 @@ template <bool me> int krppkrx()
 	{
 		if (T(PWay[me][sq2] & King(opp)))
 			return 16;
-		return 32;
 	}
-	if (T(PIsolated[FileOf(sq2)] & Pawn(me)) && T((File[0] | File[7]) & Pawn(me)) && T(King(opp) & Shift<me>(Pawn(me))))
+	else if (T(PIsolated[FileOf(sq2)] & Pawn(me)) && T((File[0] | File[7]) & Pawn(me)) && T(King(opp) & Shift<me>(Pawn(me))))
 	{
 		if (OwnRank<me>(sq2) == 5 && OwnRank<me>(sq1) == 4 && T(Rook(opp) & (OwnLine(me, 5) | OwnLine(me, 6))))
 			return 10;
 		else if (OwnRank<me>(sq2) < 5)
 			return 16;
 	}
-	return 32;
+	int r2 = lsb(Rook(opp)), rf = FileOf(r2);
+	const uint64 mask = West[rf] & King(me) ? West[rf] : East[rf];
+	if (mask & (Rook(me) | Pawn(me)))
+		return 32;
+	return 16;
 }
 
 
@@ -5932,8 +5935,11 @@ template<class POP> INLINE packed_t eval_threat(const uint64& threat)
 
 template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 {
+	POP pop;
 	Current->threat |= Current->att[opp] & (~Current->att[me]) & Piece(me);
 	DecV(EI.score, eval_threat<POP>(Current->threat & Piece(me)));
+	if (T(Queen(me)) && F(Queen(opp)))
+		IncV(EI.score, pop((Piece(opp) ^ King(opp)) & ~Current->att[opp]) * Ca4(Tactical, TacticalUnguardedQ));
 }
 
 
@@ -8929,7 +8935,8 @@ template <bool me> void root()
 			best_move = (TB_GET_FROM(res) << 6) | to | flags;
 			char str[32];
 			move_to_string(best_move, str);
-			printf("info depth 1 seldepth 1 score cp %d nodes 1 nps 0 tbhits 1 pv %s\n", best_score, str);   // Fake PV
+			// TODO -- if TB mate, find # of moves to mate
+			printf("info depth 1 seldepth 1 score cp %d nodes 1 nps 0 tbhits 1 pv %s\n", best_score / CP_SEARCH, str);   // Fake PV
 			send_best_move();
 			Searching = 0;
 			if (MaxPrN > 1) ZERO_BIT_64(Smpi->searching, 0);

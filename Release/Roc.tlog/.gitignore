@@ -2,3 +2,4 @@
 *.read.1.tlog
 *.tlog
 *.lastbuildstate
+/unsuccessfulbuild

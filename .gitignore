@@ -3,3 +3,6 @@
 *.vsp
 *.vspx
 *.psess
+*.zip
+/RocTuning.csv
+/TunerParams.inc
