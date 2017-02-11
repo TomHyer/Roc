@@ -1,4 +1,4 @@
-//#define REGRESSION
+#define REGRESSION
 //#define W32_BUILD
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
@@ -10,6 +10,7 @@
 #define MP_NPS
 //#define TIME_TO_DEPTH
 #define TB 1
+#define HNI
 
 #ifdef W32_BUILD
 #define NTDDI_VERSION 0x05010200
@@ -26,7 +27,7 @@
 #include <windows.h>
 #include <assert.h>
 
-//#include "TunerParams.inc"
+#include "TunerParams.inc"
 
 #ifdef TB
 #include "src\tbconfig.h"
@@ -1413,8 +1414,12 @@ enum
 	IsolatedDoubledOpen,
 	IsolatedDoubledClosed
 };
-const array<int, 20> Isolated = TunerParams1;
-//{	24, 24, 24, 0,	32, 20, 8, 0,	-32, -16, 0, 0,	-4, 18, 40, 0,	28, 32, 36, 0 };
+const array<int, 20> Isolated = {	
+	36, 28, 19, 1,
+	40, 21, 1, 12,
+	-40, -20, -3, -3,
+	0, 10, 45, 3,
+	27, 27, 36, 8 };
 
 enum
 {
@@ -3500,7 +3505,7 @@ void init_magic()
 #ifndef HNI
 			int index = static_cast<int>(BOffset[i] + ((BMagic[i] * u) >> BShift[i]));
 #else
-			index = static_cast<int>(BOffset[i] + _pext_u64(u, BMagicMask[i]));
+			int index = static_cast<int>(BOffset[i] + _pext_u64(u, BMagicMask[i]));
 #endif
 			MagicAttacks[index] = BMagicAttacks(i, u);
 		}
@@ -3517,7 +3522,7 @@ void init_magic()
 #ifndef HNI
 			int index = static_cast<int>(ROffset[i] + ((RMagic[i] * u) >> RShift[i]));
 #else
-			index = static_cast<int>(ROffset[i] + _pext_u64(u, RMagicMask[i]));
+			int index = static_cast<int>(ROffset[i] + _pext_u64(u, RMagicMask[i]));
 #endif
 			MagicAttacks[index] = RMagicAttacks(i, u);
 		}

@@ -6,3 +6,6 @@
 *.zip
 /RocTuning.csv
 /TunerParams.inc
+/RocTuning.txt
+/Tuner_SortOf.xlsm
+/~$Tuner_SortOf.xlsm
