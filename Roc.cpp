@@ -1,4 +1,4 @@
-#define REGRESSION
+//#define REGRESSION
 //#define W32_BUILD
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
@@ -9,8 +9,8 @@
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
-#define TB 1
-#define HNI
+//#define TB 1
+//#define HNI
 
 #ifdef W32_BUILD
 #define NTDDI_VERSION 0x05010200
@@ -27,7 +27,7 @@
 #include <windows.h>
 #include <assert.h>
 
-#include "TunerParams.inc"
+//#include "TunerParams.inc"
 
 #ifdef TB
 #include "src\tbconfig.h"
