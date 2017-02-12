@@ -9,7 +9,7 @@
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
-//#define TB 1
+#define TB 1
 //#define HNI
 
 #ifdef W32_BUILD
@@ -5854,7 +5854,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		uint64 awol = personnel ^ guards;
 		int nGuards = pop(guards) + pop(guards & Queen(opp));
 		int nAwol = pop(awol) + pop(awol & Queen(opp));
-		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
+		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
 	static const array<int, 4> PHASE = { 13, 10, 1, 0 };
