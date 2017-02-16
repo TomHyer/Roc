@@ -449,6 +449,7 @@ static const int FailLoGrowth = 37;	// numerator; denominator is 64
 static const int FailHiGrowth = 26;	// numerator; denominator is 64
 static const int FailLoDelta = 27;
 static const int FailHiDelta = 24;
+static const int AspirationEpsilon = 10;
 static const int InitiativeConst = 3 * CP_SEARCH;
 static const int InitiativePhase = 0 * CP_SEARCH;
 static const int FutilityThreshold = 50 * CP_SEARCH;
@@ -1287,10 +1288,10 @@ const array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256, act
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-const array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 18, 2000, 891, 89, -215, 257, 289, -47, 178 };
-const array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 137, 1687, 1644, 1594, -580, -96, 437, 136, 502 };
-const array<int, 12> MobCoeffsRook = { 1096, 887, 678, 22, -565, 248, 1251, 7, 64, 59, 53, -15 };
-const array<int, 12> MobCoeffsQueen = { 597, 876, 1152, 16, 1755, 324, -1091, 8, 65, 89, 20, -18 };
+const array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 36, 2000, 891, 89, -134, 257, 289, -47, 149 };
+const array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 117, 1687, 1644, 1594, -550, -96, 437, 136, 502 };
+const array<int, 12> MobCoeffsRook = { 1096, 887, 678, -2, -565, 248, 1251, -17, 64, 59, 53, -15 };
+const array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -29, 1755, 324, -1091, -27, 65, 89, 20, -13 };
 
 static const int N_LOCUS = 22;
 
@@ -5826,7 +5827,7 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	POP pop;
-	uint16 cnt = Min<uint16>(10, UUnpack1(EI.king_att[me]));
+	uint16 cnt = Min<uint16>(15, UUnpack1(EI.king_att[me]));
 	uint16 score = UUnpack2(EI.king_att[me]);
 	if (cnt >= 2 && T(Queen(me)))
 	{
@@ -7436,7 +7437,7 @@ template<bool me> INLINE uint64 capture_margin_mask(int alpha, int* score)
 
 template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int flags)
 {
-	int i, value, score, move, hash_move, hash_depth, cnt;
+	int i, value, score, move, hash_move, hash_depth;
 	GEntry* Entry;
 	auto finish = [&](int score)
 	{
@@ -7508,7 +7509,7 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 
 	Current->mask = capture_margin_mask<me>(alpha, &score);
 
-	cnt = 0;
+	int nTried = 0;
 	if (T(hash_move))
 	{
 		if (HasBit(Current->mask, To(hash_move))
@@ -7519,7 +7520,7 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				if (SeeValue[PieceAt(To(move))] > SeeValue[PieceAt(From(move))])
-					++cnt;
+					++nTried;
 				do_move<me>(move);
 				value = -q_search<opp, pv>(-beta, -alpha, depth - 1, FlagNeatSearch);
 				undo_move<me>(move);
@@ -7551,7 +7552,7 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 		if (move != hash_move && !IsIllegal(me, move) && see<me>(move, -SeeThreshold, SeeValue))
 		{
 			if (SeeValue[PieceAt(To(move))] > SeeValue[PieceAt(From(move))])
-				++cnt;
+				++nTried;
 			do_move<me>(move);
 			value = -q_search<opp, pv>(-beta, -alpha, depth - 1, FlagNeatSearch);
 			undo_move<me>(move);
@@ -7592,7 +7593,7 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 		}
 	}
 
-	if (T(cnt) || Current->score + 30 * CP_SEARCH < alpha || T(Current->threat & Piece(me)) || T(Current->xray[opp] & NonPawn(opp)) ||
+	if (T(nTried) || Current->score + 30 * CP_SEARCH < alpha || T(Current->threat & Piece(me)) || T(Current->xray[opp] & NonPawn(opp)) ||
 		T(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())))
 		return finish(score);
 	int margin = alpha - Current->score + 6 * CP_SEARCH;
@@ -7602,7 +7603,7 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 	{
 		if (move != hash_move && !IsIllegal(me, move) && !IsRepetition(alpha + 1, move) && see<me>(move, -SeeThreshold, SeeValue))
 		{
-			++cnt;
+			++nTried;
 			do_move<me>(move);
 			value = -q_search<opp, pv>(-beta, -alpha, depth - 1, FlagNeatSearch);
 			undo_move<me>(move);
@@ -7623,7 +7624,7 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 					alpha = score;
 				}
 			}
-			if (cnt >= 3)
+			if (nTried >= 3)
 				break;
 		}
 	}
@@ -9105,8 +9106,12 @@ template <bool me> void root()
 		{
 			int deltaLo = FailLoInit, deltaHi = FailHiInit;
 			alpha = Previous - deltaLo;
+			if (alpha >= 0 && alpha < AspirationEpsilon)
+				alpha = -1;
 			beta = Previous + deltaHi;
-			for (; ; )	// loop:
+			if (beta <= 0 && -beta < AspirationEpsilon)
+				beta = 1;
+			for ( ; ; )	// loop:
 			{
 				if (Max(deltaLo, deltaHi) >= 1300)
 				{
