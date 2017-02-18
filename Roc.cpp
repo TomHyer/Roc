@@ -1,5 +1,5 @@
 //#define REGRESSION
-//#define W32_BUILD
+#define W32_BUILD
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
 //#define TUNER
@@ -9,7 +9,7 @@
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
-#define TB 1
+//#define TB 1
 //#define HNI
 
 #ifdef W32_BUILD
@@ -29,7 +29,7 @@
 
 //#include "TunerParams.inc"
 
-#ifdef TB
+#if TB
 #include "src\tbconfig.h"
 #include "src\tbcore.h"
 #include "src\tbprobe.h"
@@ -436,7 +436,7 @@ static const int SeeThreshold = 40 * CP_EVAL;
 static const int DrawCapConstant = 100 * CP_EVAL;
 static const int DrawCapLinear = 0;	// numerator; denominator is 64
 static const int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
-static const int TBMinDepth = 7;
+static const int TBMinDepth = 5;
 
 inline int MapPositive(int scale, int param)
 {
@@ -472,7 +472,7 @@ char GullCppFile[16384][256];
 static const sint16 KpkValue = 300 * CP_EVAL;
 static const sint16 EvalValue = 30000;
 static const sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
-#ifdef TB
+#if TB
 static const sint16 TBMateValue = 31380;
 static const sint16 TBCursedMateValue = 13;
 const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
@@ -590,7 +590,7 @@ typedef struct
 	array<uint16, N_KILLER + 1> killer;
 	array<uint16, 2> ref;
 	uint16 move;
-	uint8 turn, castle_flags, ply, ep_square, capture, gen_flags, piece, stage, mul, dummy;
+	uint8 turn, castle_flags, ply, ep_square, capture, gen_flags, piece, stage, mul, piece_nb;
 	sint32 moves[230];
 } GData;
 __declspec(align(64)) GData Data[MAX_HEIGHT];
@@ -1814,6 +1814,28 @@ int time_to_stop(GSearchInfo* SI, int time, int searching);
 void check_time(const int* time, int searching);
 int input();
 void uci();
+
+#if TB_SEAGULL
+#include "tbcore.h"
+#include "tbprobe.h"
+#include "tbcore.cpp"
+//#include "tbprobe.cpp"
+
+template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
+{
+	return func(Piece(White), Piece(Black),
+		King(White) | King(Black),
+		Queen(White) | Queen(Black),
+		Rook(White) | Rook(Black),
+		Bishop(White) | Bishop(Black),
+		Knight(White) | Knight(Black),
+		Pawn(White) | Pawn(Black),
+		Current->ply,
+		Current->castle_flags,
+		Current->ep_square,
+		(me == White), std::forward<Args_>(args)...);
+}
+#endif
 
 bool IsIllegal(bool me, int move)
 {
@@ -3720,10 +3742,13 @@ void init_pst()
 			Pst(j, i) = Pack4(-Opening(src), -Middle(src), -Endgame(src), -Closed(src));
 		}
 
-	Current->pst = 0;
+	Current->pst = Current->piece_nb = 0;
 	for (int i = 0; i < 64; ++i)
 		if (PieceAt(i))
+		{
 			Current->pst += Pst(PieceAt(i), i);
+			++Current->piece_nb;
+		}
 }
 
 double KingLocusDist(int x, int y)
@@ -4107,10 +4132,10 @@ template <bool me> int kbppkbx()
 	return 32;
 }
 
-template <bool me> int krppkrx()
+template<bool me> int krppkrx()
 {
-	int sq1 = NB<me>(Pawn(me));
-	int sq2 = NB<opp>(Pawn(me));
+	int sq1 = NB<me>(Pawn(me));	// trailing pawn
+	int sq2 = NB<opp>(Pawn(me));	// leading pawn
 
 	if ((Piece(opp) ^ King(opp) ^ Rook(opp)) & Forward[me][RankOf(sq1 - Push[me])])
 		return 32;
@@ -4814,6 +4839,7 @@ void setup_board()
 	}
 	Current->material = 0;
 	Current->pst = 0;
+	Current->piece_nb = 0;
 	Current->key = PieceKey[0][0];
 	if (Current->turn)
 		Current->key ^= TurnKey;
@@ -4838,6 +4864,7 @@ void setup_board()
 			else
 				Current->pawn_key ^= PieceKey[PieceAt(i)][i];
 			Current->pst += Pst(PieceAt(i), i);
+			++Current->piece_nb;
 		}
 	}
 	if (popcnt(Piece(WhiteKnight)) > 2 || popcnt(Piece(WhiteLight)) > 1 || popcnt(Piece(WhiteDark)) > 1 || popcnt(Piece(WhiteRook)) > 2 || popcnt(Piece(WhiteQueen)) > 2 ||
@@ -5113,19 +5140,21 @@ template <bool me> void do_move(int move)
 	Piece(me) ^= mask_from;
 	Piece(piece) |= mask_to;
 	Piece(me) |= mask_to;
-	Next->castle_flags = Current->castle_flags & UpdateCastling[to] & UpdateCastling[from];
+	Next->castle_flags = Current->castle_flags;
 	Next->turn = opp;
 	const auto& pKey = PieceKey[piece];
 	Next->capture = capture;
 	Next->pst = Current->pst + Pst(piece, to) - Pst(piece, from);
-	Next->key = Current->key ^ pKey[to] ^ pKey[from] ^ CastleKey[Current->castle_flags] ^ CastleKey[Next->castle_flags];
-	Next->pawn_key = Current->pawn_key ^ CastleKey[Current->castle_flags] ^ CastleKey[Next->castle_flags];
+	Next->piece_nb = Current->piece_nb;
+	Next->key = Current->key ^ pKey[to] ^ pKey[from];
+	Next->pawn_key = Current->pawn_key;
 
 	if (T(capture))
 	{
 		Piece(capture) ^= mask_to;
 		Piece(opp) ^= mask_to;
 		Next->pst -= Pst(capture, to);
+		--Next->piece_nb;
 		Next->key ^= PieceKey[capture][to];
 		if (capture == IPawn[opp])
 			Next->pawn_key ^= PieceKey[IPawn[opp]][to];
@@ -5168,6 +5197,13 @@ template <bool me> void do_move(int move)
 			PawnEntry = &PawnHash[Next->pawn_key & pawn_hash_mask];
 			prefetch(PawnEntry);
 		}
+		
+		if (Current->castle_flags && (piece >= WhiteRook || capture >= WhiteRook))
+		{
+			Next->castle_flags &= UpdateCastling[to] & UpdateCastling[from];
+			Next->key ^= CastleKey[Current->castle_flags] ^ CastleKey[Next->castle_flags];
+			Next->pawn_key ^= CastleKey[Current->castle_flags] ^ CastleKey[Next->castle_flags];
+		}
 		if (F(Next->material & FlagUnusualMaterial))
 			prefetch(Material + Next->material);
 		if (Current->ep_square)
@@ -5189,6 +5225,7 @@ template <bool me> void do_move(int move)
 				Next->key ^= PieceKey[IPawn[opp]][to ^ 8];
 				Next->pawn_key ^= PieceKey[IPawn[opp]][to ^ 8];
 				Next->pst -= Pst(IPawn[opp], to ^ 8);
+				--Next->piece_nb;
 				Pawn(opp) &= ~u;
 				Piece(opp) &= ~u;
 				Next->material -= MatCode[IPawn[opp]];
@@ -5219,11 +5256,20 @@ template <bool me> void do_move(int move)
 		}
 		else
 		{
-			if (piece >= WhiteKing)
+			if (piece >= WhiteRook)
 			{
-				Next->pawn_key ^= pKey[to] ^ pKey[from];
-				PawnEntry = &PawnHash[Next->pawn_key & pawn_hash_mask];
-				prefetch(PawnEntry);
+				if (Current->castle_flags)
+				{
+					Next->castle_flags &= UpdateCastling[to] & UpdateCastling[from];
+					Next->key ^= CastleKey[Current->castle_flags] ^ CastleKey[Next->castle_flags];
+					Next->pawn_key ^= CastleKey[Current->castle_flags] ^ CastleKey[Next->castle_flags];
+				}
+				if (piece >= WhiteKing)
+				{
+					Next->pawn_key ^= pKey[to] ^ pKey[from];
+					PawnEntry = &PawnHash[Next->pawn_key & pawn_hash_mask];
+					prefetch(PawnEntry);
+				}
 			}
 
 			if (IsCastling(piece, move))
@@ -5322,6 +5368,7 @@ void do_null()
 	Next->turn = Current->turn ^ 1;
 	Next->material = Current->material;
 	Next->pst = Current->pst;
+	Next->piece_nb = Current->piece_nb;
 	Next->ply = 0;
 	Next->castle_flags = Current->castle_flags;
 	Next->ep_square = 0;
@@ -8071,7 +8118,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		}
 
 #if TB
-		if (hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
+		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && Current->piece_nb <= TB_LARGEST) {
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				tb_hits++;
@@ -8425,7 +8472,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 				}
 			}
 #if TB
-		if (hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
+		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && Current->piece_nb <= TB_LARGEST) {
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				tb_hits++;
@@ -8621,7 +8668,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		}
 	}
 #if TB
-	if (!root && hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST)
+	if (!root && hash_depth < NominalTbDepth && depth >= TBMinDepth && Current->piece_nb <= TB_LARGEST)
 	{
 		auto res = TBProbe(tb_probe_wdl, me);
 		if (res != TB_RESULT_FAILED) {
@@ -10517,7 +10564,7 @@ ostream& operator<<(ostream& dst, const WriteMove_& m)
 
 void Test1(const char* fen, int max_depth, const char* solution)
 {
-	static const int DEPTH_LIMIT = 32;
+	static const int DEPTH_LIMIT = 24;
 	max_depth = Min(max_depth, DEPTH_LIMIT);
 	init_search(1);
 	get_board(fen);
