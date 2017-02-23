@@ -1171,7 +1171,7 @@ enum
 	IKingAttackWeight = IKingRay + 6
 };
 
-const array<int, 6> MatLinear = { 29, -5, -12, 88, -19, -3 };
+const array<int, 6> MatLinear = { 39, -11, -14, 86, -15, -1 };
 // pawn, knight, bishop, rook, queen, pair
 const int MatQuadMe[14] = { // tuner: type=array, var=1000, active=0
 	-33, 17, -23, -155, -247,
@@ -1188,7 +1188,7 @@ const int MatQuadOpp[10] = { // tuner: type=array, var=1000, active=0
 const int BishopPairQuad[9] = { // tuner: type=array, var=1000, active=0
 	-38, 164, 99, 246, -84, -57, -184, 88, -186
 };
-const array<int, 6> MatClosed = { -17, 26, -27, 17, -4, 20 };
+const array<int, 6> MatClosed = { -20, 22, -33, 18, -2, 26 };
 
 enum
 {
@@ -1482,17 +1482,19 @@ enum
 	TacticalMinorMinor,
 	TacticalThreat,
 	TacticalDoubleThreat,
+	TacticalColdFork,
 	TacticalUnguardedQ
 };
-const array<int, 28> Tactical = {  // tuner: type=array, var=51, active=0
-	-4, 8, 20, 0,
-	0, 10, 20, 0,
-	44, 80, 116, 0,
-	92, 110, 128, 0,
-	76, 60, 44, 0,
-	164, 106, 48, 0,
-	0,	10,	40,	-10
-};
+const array<int, 32> Tactical = {  // tuner: type=array, var=51, active=0
+	-6, 12, 23, 0,
+	-1, 10, 22, -1,
+	34, 81, 112, 5,
+	76, 105, 133, -1,
+	79, 64, 45, -3,
+	135, 90, 41, 0,
+	191, 120, 54, 3,
+	-1,	9,	39,	-10
+}; 
 
 enum
 {
@@ -1579,6 +1581,7 @@ static const uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
 static const uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
 static const uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
 static const uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
+static const uint32 KingPAttack = UPack(2, 0);
 static const uint32 KingAttack = UPack(1, 0);
 static const uint32 KingAttackSquare = KingAttackWeight[8];
 static const uint32 KingNoMoves = KingAttackWeight[9];
@@ -5983,7 +5986,8 @@ template<class POP> INLINE packed_t eval_threat(const uint64& threat)
 	if (Single(threat))
 		return threat ? Ca4(Tactical, TacticalThreat) : 0;
 	// according to Gull, second threat is extra DoubleThreat, third and after are simple Threat again
-	return Ca4(Tactical, TacticalDoubleThreat) + pop(threat) * Ca4(Tactical, TacticalThreat);
+	auto dt = T((Current->threat & PieceAll()) ^ threat) ? Ca4(Tactical, TacticalDoubleThreat) : Ca4(Tactical, TacticalColdFork);
+	return dt + pop(threat) * Ca4(Tactical, TacticalThreat);
 }
 
 template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
@@ -6070,7 +6074,7 @@ template<class POP> void evaluation()
 	Current->xray[me] = 0;
 	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
 	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingAttack : 0;
+	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingPAttack : 0;
 	eval_queens<me, POP>(EI);
 	EI.free[me] |= Rook(opp);
 	eval_rooks<me, POP>(EI);
@@ -6082,7 +6086,7 @@ template<class POP> void evaluation()
 	Current->xray[me] = 0;
 	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
 	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingAttack : 0;
+	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingPAttack : 0;
 	eval_queens<me, POP>(EI);
 	EI.free[me] |= Rook(opp);
 	eval_rooks<me, POP>(EI);
