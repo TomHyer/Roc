@@ -27,7 +27,7 @@
 #include <windows.h>
 #include <assert.h>
 
-//#include "TunerParams.inc"
+#include "TunerParams.inc"
 
 #if TB
 #include "src\tbconfig.h"
