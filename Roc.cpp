@@ -1,5 +1,5 @@
 //#define REGRESSION
-#define W32_BUILD
+//#define W32_BUILD
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
 //#define TUNER
@@ -9,7 +9,7 @@
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
-//#define TB 1
+#define TB 1
 //#define HNI
 
 #ifdef W32_BUILD
@@ -1217,75 +1217,49 @@ const array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
 	4, 8, 12, 0,
 	0, 0, 0, -100};
 
-// piece type (6) * direction (4: h center dist, v center dist, diag dist, rank) * phase (3)
-const array<int, 96> PstQuadWeights = {  // tuner: type=array, var=256, active=0
-	-60, -68, -76, 0,
-	-280, -166, -52, 0,
-	132, 26, -80, 0,
-	0, 394, 788, 0,
-	-144, -316, -488, 0,
-	0, -120, -240, 0,
-	-32, -22, -12, 0,
-	-68, -90, -112, 0,
-	-108, -180, -252, 0,
-	-68, -48, -28, 0,
-	56, 28, 0, 0,
-	-96, -58, -20, 0,
-	-256, -132, -8, 0,
-	0, -76, -152, 0,
-	-32, -16, 0, 0,
-	308, 176, 44, 0,
-	-268, -128, 12, 0,
-	-16, -192, -368, 0,
-	-8, 20, 48, 0,
-	-52, -110, -168, 0,
-	-252, -294, -336, 0,
-	-700, -434, -168, 0,
-	-8, -38, -68, 0,
-	160, 42, -76, 0
-};
+namespace PstW
+{
+	struct Weights_
+	{
+		struct Phase_
+		{
+			array<int, 4> quad_;
+			array<int, 4> linear_;
+			array<int, 2> quadMixed_;
+		} op_, md_, eg_, cl_;
+	};
 
-const array<int, 96> PstLinearWeights = {  // tuner: type=array, var=1280, active=0
-	-428, -80, 268, 0,
-	-460, -64, 332, 0,
-	-220, 24, 268,  0,
-	368, 1070, 1772,  0,
-	-708, -344, 20,  0,
-	-328, -286, -244,  0,
-	-424, -420, -416,  0,
-	1092, 806, 520, 0,
-	0, -290, -580,  0,
-	-420, -326, -232, 0,
-	-396, -272, -148,  0,
-	-532, -188, 56,  0,
-	-740, -456, -172,  0,
-	-268, -240, -212,  0,
-	212, -24, -260,  0,
-	696, 616, 536, 0,
-	-516, -244, 28,  0,
-	392, -266, -924,  0,
-	428, 134, -160,  0,
-	-108, 568, 1244,  0,
-	1024, 278, -468,  0,
-	3252, 1264, -724,  0,
-	8, -426, -860,  0,
-	-176, 600, 1376, 0 };
-
-// piece type (6) * type (2: h * v, h * rank) * phase (3)
-const array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256, active=0
-	56, 16, -24,  0,
-	4, -6, -16,  0,
-	-32, -20, -8,  0,
-	16, 0, -16, 0,
-	4, -12, -28,  0,
-	-48, -24, 0,  0,
-	-8, -6, -4,  0,
-	-20, -2, 16, 0,
-	20, -10, -40,  0,
-	0, 8, 16,  0,
-	-8, 6, 20,  0,
-	16, 4, -8, 0
-};
+	Weights_ Pawn = {
+		{ { -48, -275, 165, 0 },{ -460, -357, -359, 437 },{ 69, -28 } },
+		{ {-85, -171, 27, 400},{ -160, -133, 93, 1079 },{ 13, -6 }},
+		{ {-80, -41, -85, 782},{ 336, 303, 295, 1667 },{ -35, 13 }},
+		{ {2, 13, 11, 23},{ 6, 14, 37, -88 },{ 14, -2 }} };
+	Weights_ Knight = {
+		{ { -134, 6, -12, -72 },{ -680, -343, -557, 1128 },{ -32, 14 } },
+		{ { -315, -123, -12, -90 },{ -449, -257, -390, 777 },{ -24, -3 } },
+		{ { -501, -246, -12, -107 },{ 61, -274, -357, 469 },{ -1, -16 } },
+		{ { -12, -5, -2, -22 },{ 96, 69, -64, -23 },{ -5, -8 } } };
+	Weights_ Bishop = {
+		{ { -123, -62, 54, -116 },{ 24, -486, -350, -510 },{ 8, -58 } },
+		{ { -168, -49, 24, -48 },{ -323, -289, -305, -254 },{ -7, -21 } },
+		{ { -249, -33, 4, -14 },{ -529, -232, -135, 31 },{ -32, 0 } },
+		{ { 4, -10, 9, -13 },{ 91, -43, -34, 29 },{ -13, -10 } } };
+	Weights_ Rook = {
+		{ { -260, 12, -49, 324 },{ -777, -223, 245, 670 },{ -7, -25 } },
+		{ { -148, -88, -9, 165 },{ -448, -278, -63, 580 },{ -7, 0 } },
+		{ { 13, -149, 14, 46 },{ -153, -225, -246, 578 },{ -6, 16 } },
+		{ { 0, 8, -15, 8 },{ -32, -29, 10, -51 },{ -6, -23 } } };
+	Weights_ Queen = {
+		{ { -270, -18, -19, -68 },{ -520, 444, 474, -186 },{ 18, -6 } },
+		{ { -114, -209, 21, -103 },{ -224, -300, 73, 529 },{ -13, 1 } },
+		{ { 2, -341, 58, -160 },{ 40, -943, -171, 1328 },{ -34, 27 } },
+		{ { -3, -26, 9, 5 },{ -43, -18, -107, 60 },{ 5, 12 } } };
+	Weights_ King = {
+		{ { -266, -694, -12, 170 },{ 1077, 3258, 20, -186 },{ -18, 3 } },
+		{ { -284, -451, -31, 43 },{ 230, 1219, -425, 577 },{ -1, 5 } },
+		{ { -334, -157, -67, -93 },{ -510, -701, -863, 1402 },{ 37, -8 } },
+		{ { 22, 14, -16, 0 },{ 7, 70, 40,  78 } ,{ 9, -3 } } };
+}
 
 // coefficient (Linear, Log, Locus) * phase (4)
 const array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 36, 2000, 891, 89, -134, 257, 289, -47, 149 };
@@ -1558,7 +1532,7 @@ const array<int, 20> Pin = {  // tuner: type=array, var=51, active=0
 	24, 172, 320, 0,
 	180, 148, 116, 0,
 	32, 34, 36, 0,
-	192, 150, 108, 0 };
+	288, 225, 162, 0 };
 
 enum
 {
@@ -1594,7 +1568,7 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-const array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 6, 9, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
+const array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 7, 10, 15, 21, 28, 34, 43, 52, 62, 72, 72, 72 };
 const array<uint16, 4> KingCenterScale = { 61, 58, 70, 71 };
 ;
 // tuner: stop
@@ -1738,7 +1712,7 @@ template <bool me> int NBZ(const uint64& x)
 }
 
 array<int, 256> SpanWidth;
-inline int FileSpan(uint64* occ)
+INLINE int FileSpan(uint64* occ)
 {
 	*occ |= *occ >> 32;
 	*occ |= *occ >> 16;
@@ -1746,7 +1720,7 @@ inline int FileSpan(uint64* occ)
 	*occ &= 0xFF;	// now it is the file population
 	return SpanWidth[static_cast<size_t>(*occ)];
 }
-inline int FileSpan(const uint64& occ)
+INLINE int FileSpan(const uint64& occ)
 {
 	uint64 temp = occ;
 	return FileSpan(&temp);
@@ -3708,27 +3682,25 @@ void init_pst()
 		array<int, 4> distL = { DistC[f], DistC[r],  RankR[d] + RankR[e], RankR[r] };
 		array<int, 4> distQ = { DistC[f] * DistC[f], DistC[r] * DistC[r], RankR[d] * RankR[d] + RankR[e] * RankR[e], RankR[r] * RankR[r] };
 		array<int, 2> distM = { DistC[f] * DistC[r], DistC[f] * RankR[r] };
+		array<const PstW::Weights_*, 6> weights = { &PstW::Pawn, &PstW::Knight, &PstW::Bishop, &PstW::Rook, &PstW::Queen, &PstW::King };
 		for (int j = 2; j < 16; j += 2)
 		{
 			int index = PieceType[j];
+			const PstW::Weights_& src = *weights[index];
 			int op = 0, md = 0, eg = 0, cl = 0;
 			for (int k = 0; k < 2; ++k)
 			{
-				op += Av(PstQuadMixedWeights, 8, index, (k * 4)) * distM[k];
-				md += Av(PstQuadMixedWeights, 8, index, (k * 4) + 1) * distM[k];
-				eg += Av(PstQuadMixedWeights, 8, index, (k * 4) + 2) * distM[k];
-				cl += Av(PstQuadMixedWeights, 8, index, (k * 4) + 3) * distM[k];
+				op += src.op_.quadMixed_[k] * distM[k];
+				md += src.md_.quadMixed_[k] * distM[k];
+				eg += src.eg_.quadMixed_[k] * distM[k];
+				cl += src.cl_.quadMixed_[k] * distM[k];
 			}
 			for (int k = 0; k < 4; ++k)
 			{
-				op += Av(PstQuadWeights, 16, index, (k * 4)) * distQ[k];
-				md += Av(PstQuadWeights, 16, index, (k * 4) + 1) * distQ[k];
-				eg += Av(PstQuadWeights, 16, index, (k * 4) + 2) * distQ[k];
-				cl += Av(PstQuadWeights, 16, index, (k * 4) + 3) * distQ[k];
-				op += Av(PstLinearWeights, 16, index, (k * 4)) * distL[k];
-				md += Av(PstLinearWeights, 16, index, (k * 4) + 1) * distL[k];
-				eg += Av(PstLinearWeights, 16, index, (k * 4) + 2) * distL[k];
-				cl += Av(PstLinearWeights, 16, index, (k * 4) + 3) * distL[k];
+				op += src.op_.quad_[k] * distQ[k] + src.op_.linear_[k] * distL[k];
+				md += src.md_.quad_[k] * distQ[k] + src.md_.linear_[k] * distL[k];
+				eg += src.eg_.quad_[k] * distQ[k] + src.eg_.linear_[k] * distL[k];
+				cl += src.cl_.quad_[k] * distQ[k] + src.cl_.linear_[k] * distL[k];
 			}
 			// Regularize(&op, &md, &eg);
 			Pst(j, i) = Pack4(op / 64, md / 64, eg / 64, cl / 64);
@@ -3889,7 +3861,7 @@ template <bool me> int knpkx()
 		int sq = lsb(Pawn(me));
 		if (RangeK1[sq] & King(opp) & (OwnLine(me, 6) | OwnLine(me, 7)))
 			return 0;
-		if (PieceAt(sq + Push[me]) == IKing[me] && (RangeK1[lsb(King(me))] && RangeK1[lsb(King(opp))] & OwnLine(me, 7)))
+		if (PieceAt(sq + Push[me]) == IKing[me] && (RangeK1[lsb(King(me))] & RangeK1[lsb(King(opp))] & OwnLine(me, 7)))
 			return 0;
 	}
 	else if (Pawn(me) & OwnLine(me, 5) & (File[0] | File[7]))
@@ -5637,8 +5609,11 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-						IncV(EI.score, Ca4(Pin, SelfPiecePin));
-						katt = 1;
+						if (piece < WhiteRook)	// double major attack is handled elsewhere
+						{
+							IncV(EI.score, Ca4(Pin, SelfPiecePin));
+							katt = 1;
+						}
 					}
 					else if (piece != IPawn[opp] && !(((BMask[sq] & Bishop(opp)) | (RMask[sq] & Rook(opp)) | Queen(opp)) & v))
 					{
@@ -5696,8 +5671,11 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-						IncV(EI.score, Ca4(Pin, SelfPiecePin));
-						katt = 1;
+						if (piece < WhiteRook)	// double major attack is handled elsewhere
+						{
+							IncV(EI.score, Ca4(Pin, SelfPiecePin));
+							katt = 1;
+						}
 					}
 					else if (piece != IPawn[opp])
 					{
@@ -6157,6 +6135,10 @@ template<class POP> void evaluation()
 			EI.mul = EI.material->mul[White];
 			if (EI.material->eval[White] && !eval_stalemate<White>(EI))
 				EI.material->eval[White](EI, pop.Imp());
+#ifndef THREE_PHASE
+			else if (EI.mul <= 32)
+				EI.mul = Min(EI.mul, 35 - clx / 4);
+#endif
 			Current->score -= (Min<int>(Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64;
 		}
 		else if (Current->score < 0)
@@ -6164,6 +6146,10 @@ template<class POP> void evaluation()
 			EI.mul = EI.material->mul[Black];
 			if (EI.material->eval[Black] && !eval_stalemate<Black>(EI))
 				EI.material->eval[Black](EI, pop.Imp());
+#ifndef THREE_PHASE
+			else if (EI.mul <= 32)
+				EI.mul = Min(EI.mul, 35 - clx / 4);
+#endif
 			Current->score += (Min<int>(-Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64;
 		}
 		else
