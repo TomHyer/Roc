@@ -436,7 +436,7 @@ static const int SeeThreshold = 40 * CP_EVAL;
 static const int DrawCapConstant = 100 * CP_EVAL;
 static const int DrawCapLinear = 0;	// numerator; denominator is 64
 static const int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
-static const int TBMinDepth = 5;
+static const int TBMinDepth = 7;
 
 inline int MapPositive(int scale, int param)
 {
@@ -1473,10 +1473,9 @@ enum
 	KingDefBishop,
 	KingDefQueen
 };
-const array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
+const array<int, 12> KingDefence = {  // tuner: type=array, var=13, active=0
 	8, 4, 0, 0,
 	0, 2, 4, 0,
-	0, 0, 0, 0,
 	16, 8, 0, 0 };
 
 enum
@@ -1526,7 +1525,7 @@ const array<int, 20> Pin = {  // tuner: type=array, var=51, active=0
 	24, 172, 320, 0,
 	180, 148, 116, 0,
 	32, 34, 36, 0,
-	288, 225, 162, 0 };
+	245, 191, 138, 0 };
 
 enum
 {
@@ -1562,7 +1561,7 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-const array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 7, 10, 15, 21, 28, 34, 43, 52, 62, 72, 72, 72 };
+const array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 6, 9, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
 const array<uint16, 4> KingCenterScale = { 61, 58, 70, 71 };
 ;
 // tuner: stop
@@ -5532,22 +5531,6 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 				IncV(PEI.score, PasserOutside[rrank]);
 		}
 	}
-	if (!((kf * kr) % 7))
-	{
-		const uint64 kAdj = RangeK1[PEI.king[me]];
-		// look for opp pawns restricting K mobility
-		if (PEI.patt[opp] & kAdj)
-		{
-			// find out which one it is
-			for (uint64 u = Pawn(opp); T(u); u ^= b)
-			{
-				int sq = lsb(u);
-				b = Bit(sq);
-				if ((PAtt[opp][sq] & kAdj) && HasBit(Pawn(me), sq + Push[opp]))
-					DecV(PEI.score, Ca4(PawnSpecial, PawnRestrictsK));
-			}
-		}
-	}
 
 	uint64 files = Pawn(me) | (Pawn(me) >> 32);
 	files |= files >> 16;
@@ -5770,8 +5753,11 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-						IncV(EI.score, Ca4(Pin, SelfPiecePin));
-						katt = 1;
+						if (piece < WhiteQueen)
+						{
+							IncV(EI.score, Ca4(Pin, SelfPiecePin));
+							katt = 1;
+						}
 					}
 					else if (piece != IPawn[opp])
 					{
