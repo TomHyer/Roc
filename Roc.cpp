@@ -1355,9 +1355,6 @@ const array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=
 enum { PasserOnePiece, PasserOpKingControl, PasserOpMinorControl, PasserOpRookBlock };
 // case(4) * phase(3 -- no opening)
 const array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active=0
-	0, 0, 0,
-	0, 0, 0,
-	0, 0, 0,
 	26, 52, 0
 };
 namespace Values
@@ -1474,7 +1471,6 @@ enum
 {
 	KingDefKnight,
 	KingDefBishop,
-	KingDefRook,
 	KingDefQueen
 };
 const array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
@@ -1488,15 +1484,13 @@ enum
 	PawnChainLinear,
 	PawnChain,
 	PawnBlocked,
-	PawnFileSpan,
-	PawnRestrictsK
+	PawnFileSpan
 };
 const array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
 	44, 40, 36, 0, 
 	36, 26, 16, 0, 
 	0, 18, 36, 0, 
 	4, 4, 4, 0, 
-	0, 0, 0, 0
 };
 
 enum { BishopNonForwardPawn, BishopPawnBlock };
