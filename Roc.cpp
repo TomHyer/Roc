@@ -1,4 +1,4 @@
-// This code is protected neither by license nor by copyright
+// This code is public domain, as defined by the "CC0" Creative Commons license
 
 //#define REGRESSION
 //#define W32_BUILD
@@ -511,17 +511,11 @@ const int MvvLvaAttackerKB[16] = { 0, 0, 9, 9, 7, 7, 5, 5, 5, 5, 3, 3, 1, 1, 11,
 static const int RefOneScore = (0xFF << 16) | (3 << 24);
 static const int RefTwoScore = (0xFF << 16) | (2 << 24);
 
-#define halt_check                         \
-    if ((Current - Data) >= 126)           \
-    {                                      \
-        evaluate();                        \
-        return Current->score;             \
-    }                                      \
-    if (Current->ply >= 100)               \
-        return 0;                          \
-    for (int i = 4; i <= Current->ply; i += 2) \
-        if (Stack[sp - i] == Current->key) \
-    return 0
+#define HALT_CHECK \
+    if (Current->ply >= 100) return 0; \
+    for (int i = 4; i <= Current->ply; i += 2) if (Stack[sp - i] == Current->key) return 0; \
+	if ((Current - Data) >= 126) {evaluate(); return Current->score; }
+
 INLINE int ExtToFlag(int ext)
 {
 	return ext << 16;
@@ -683,6 +677,7 @@ uint64 NAtt[64];
 uint64 RangeK1[64];
 uint64 RangeK2[64];
 uint64 NArea[64];
+uint64 OneIn[64];	// for boundary squares, the file/rank one away from their boundary
 uint64 BishopForward[2][64];
 uint64 PAtt[2][64];
 uint64 PMove[2][64];
@@ -1024,14 +1019,6 @@ INLINE int ExclSingle(int depth)
 	return 8 * CP_SEARCH;
 }
 INLINE int ExclDouble(int depth)
-{
-	return 16 * CP_SEARCH;
-}
-INLINE int ExclSinglePV(int depth)
-{
-	return 8 * CP_SEARCH;
-}
-INLINE int ExclDoublePV(int depth)
 {
 	return 16 * CP_SEARCH;
 }
@@ -1862,7 +1849,7 @@ void init_misc()
 	for (int i = 0; i < 64; ++i)
 	{
 		HLine[i] = VLine[i] = NDiag[i] = SDiag[i] = RMask[i] = BMask[i] = QMask[i] = 0;
-		BMagicMask[i] = RMagicMask[i] = NAtt[i] = RangeK1[i] = RangeK2[i] = NArea[i] = 0;
+		BMagicMask[i] = RMagicMask[i] = NAtt[i] = RangeK1[i] = RangeK2[i] = NArea[i] = OneIn[i] = 0;
 		PAtt[0][i] = PAtt[1][i] = PMove[0][i] = PMove[1][i] = PWay[0][i] = PWay[1][i] = PCone[0][i] = PCone[1][i] 
 				= PSupport[0][i] = PSupport[1][i] = BishopForward[0][i] = BishopForward[1][i] = 0;
 		for (int j = 0; j < 64; ++j) 
@@ -1920,6 +1907,14 @@ void init_misc()
 			}
 		}
 
+		if (FileOf(i) == 0)
+			OneIn[i] |= File[1];
+		if (FileOf(i) == 7)
+			OneIn[i] |= File[6];
+		if (RankOf(i) == 0)
+			OneIn[i] |= Line[1];
+		if (RankOf(i) == 7)
+			OneIn[i] |= Line[6];
 		RMask[i] = HLine[i] | VLine[i];
 		BMask[i] = NDiag[i] | SDiag[i];
 		QMask[i] = RMask[i] | BMask[i];
@@ -2841,6 +2836,8 @@ template<bool me> void eval_krkpx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Rook(me) && Single(Rook(me)) && F(Pawn(me)) && Pawn(opp));
 	EI.mul = Min(EI.mul, krkpx<me>());
+	if (T(Minor(opp)))
+		EI.mul = Min(EI.mul, OneIn[lsb(King(opp))] & Rook(me) ? 6 : 0);
 }
 template<bool me> void eval_krpkrx(GEvalInfo& EI, pop_func_t pop)
 {
@@ -2874,6 +2871,8 @@ template<bool me> void eval_kqkpx(GEvalInfo& EI, pop_func_t pop)
 template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, kqkrpx<me>());
+	if (T(Minor(opp)))
+		EI.mul = Min(EI.mul, OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
 }
 
 
@@ -5953,7 +5952,7 @@ template <bool me> int* gen_delta_moves(int margin, int* list)
 	return NullTerminate(list);
 }
 
-template<bool me> int singular_extension(int ext, int prev_ext, int margin_one, int margin_two, int depth, int killer)
+template<bool me> int SingularExtension(int ext, int prev_ext, int margin_one, int margin_two, int depth, int killer)
 {
 	int value = -MateValue;
 	int singular = 0;
@@ -6012,7 +6011,9 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 	};
 
 	if (flags & FlagHaltCheck)
-		halt_check;
+	{
+		HALT_CHECK;
+	}
 #ifdef CPU_TIMING
 #ifndef TIMING
 	if (nodes > check_node + 0x4000)
@@ -6177,7 +6178,8 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 					{
 						if (N_KILLER >= 1 && Current->killer[1] != move)
 						{
-							for (int jk = N_KILLER; jk > 1; --jk) Current->killer[jk] = Current->killer[jk - 1];
+							for (int jk = N_KILLER; jk > 1; --jk) 
+								Current->killer[jk] = Current->killer[jk - 1];
 							Current->killer[1] = move;
 						}
 						return hash_low(move, Max(score, beta), 1);
@@ -6200,7 +6202,9 @@ template <bool me, bool pv> int q_evasion(int alpha, int beta, int depth, int fl
 
 	score = static_cast<int>(Current - Data) - MateValue;
 	if (flags & FlagHaltCheck)
-		halt_check;
+	{
+		HALT_CHECK;
+	}
 
 	hash_move = hash_depth = 0;
 	if (flags & FlagHashCheck)
@@ -6504,7 +6508,8 @@ template<bool exclusion> int cut_search(int move, int hash_move, int score, int 
 	{
 		if (Current->killer[1] != move && F(flags & FlagNoKillerUpdate))
 		{
-			for (int jk = N_KILLER; jk > 1; --jk) Current->killer[jk] = Current->killer[jk - 1];
+			for (int jk = N_KILLER; jk > 1; --jk) 
+				Current->killer[jk] = Current->killer[jk - 1];
 			Current->killer[1] = move;
 		}
 		if (Current->stage == s_quiet && (move & 0xFFFF) == (*(Current->current - 1) & 0xFFFF))
@@ -6558,7 +6563,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			return beta;
 		if (MateValue - height < beta)
 			return beta - 1;
-		halt_check;
+		HALT_CHECK;
 	}
 
 	if (exclusion)
@@ -6701,7 +6706,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 					int margin_one = beta - ExclSingle(depth);
 					int margin_two = beta - ExclDouble(depth);
 					int prev_ext = ExtFromFlag(flags);
-					singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
+					singular = SingularExtension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
 					if (singular)
 						ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
 				}
@@ -6737,9 +6742,9 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		if (PieceAt(To(move_back)))
 			move_back = 0;
 	}
-	moves_to_play = 3 + (depth * depth) / 6;
-	value = margin = Current->score + (70 + depth * 8 + Max(depth - 7, 0) * 32) * CP_SEARCH;
-	if (value < beta && depth <= 19)
+	moves_to_play = 3 + Square(depth) / 6;
+	value = margin = Current->score + (70 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
+	if (value < beta)
 	{
 		flag = 1;
 		score = Max(value, score);
@@ -6912,7 +6917,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			return beta;
 		if (MateValue - height < beta)
 			return beta - 1;
-		halt_check;
+		HALT_CHECK;
 	}
 
 	auto cut = [&](int move, int score)
@@ -7026,7 +7031,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 					int margin_one = beta - ExclSingle(depth);
 					int margin_two = beta - ExclDouble(depth);
 					int prev_ext = ExtFromFlag(flags);
-					int singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
+					int singular = SingularExtension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
 					if (singular)
 						ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
 				}
@@ -7144,7 +7149,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 			return beta;
 		if (MateValue - static_cast<int>(Current - Data) <= alpha)
 			return alpha;
-		halt_check;
+		HALT_CHECK;
 	}
 
 	// check hash
@@ -7250,10 +7255,10 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		ext = is_check<me>(move) ? 2 : Max(pext, extension<1>(move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
-			int margin_one = hash_value - ExclSinglePV(depth);
-			int margin_two = hash_value - ExclDoublePV(depth);
+			int margin_one = hash_value - ExclSingle(depth);
+			int margin_two = hash_value - ExclDouble(depth);
 			int prev_ext = ExtFromFlag(flags);
-			singular = singular_extension<me>(root ? 0 : ext, root ? 0 : prev_ext, margin_one, margin_two, new_depth, hash_move);
+			singular = SingularExtension<me>(root ? 0 : ext, root ? 0 : prev_ext, margin_one, margin_two, new_depth, hash_move);
 			if (singular)
 			{
 				ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
@@ -7558,11 +7563,11 @@ template <bool me> void root()
 		if ((depth >= LastDepth - 8 || T(store_time)) && LastValue >= LastExactValue && hash_value >= LastExactValue && T(LastTime) && T(LastSpeed))
 		{
 			time = TimeLimit1;
-			if (ex_depth >= depth - Min(12, depth / 2) && ex_value <= hash_value - ExclSinglePV(depth))
+			if (ex_depth >= depth - Min(12, depth / 2) && ex_value <= hash_value - ExclSingle(depth))
 			{
 				BaseSI->Early = 1;
 				BaseSI->Singular = 1;
-				if (ex_value <= hash_value - ExclDoublePV(depth))
+				if (ex_value <= hash_value - ExclDouble(depth))
 				{
 					time = (time * TimeSingTwoMargin) / 100;
 					BaseSI->Singular = 2;
