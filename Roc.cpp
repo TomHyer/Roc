@@ -1603,9 +1603,9 @@ enum
 	BKingRay
 };
 const array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
-	16, 24, 32, 0,
-	-16, 14, 44, 0,
-	44, 16, -12, 0 };
+	17, 26, 33, -2,
+	-14, 15, 42, 0,
+	43, 14, -9, -1 };
 
 const array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
@@ -1630,8 +1630,8 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 	return retval;
 }
 const array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 6, 9, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
-const array<uint16, 4> KingCenterScale = { 61, 58, 70, 71 };
-;
+const array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
+
 // tuner: stop
 
 // END EVAL WEIGHTS
@@ -7996,9 +7996,14 @@ template<bool exclusion> int cut_search(int move, int hash_move, int score, int 
 	return score;
 };
 
+INLINE int RazoringThreshold(int score, int depth, int height)
+{
+	return score + (70 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
+}
+
 template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 {
-	int i, value, cnt, flag, moves_to_play, score, move, ext, margin, hash_move, do_split, sp_init, singular, played, high_depth, high_value, hash_value,
+	int i, value, cnt, flag, moves_to_play, score, move, ext, hash_move, do_split, sp_init, singular, played, high_depth, high_value, hash_value,
 		new_depth, move_back, hash_depth;
 	int height = (int)(Current - Data);
 	GSP* Sp = nullptr;
@@ -8216,15 +8221,15 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		if (PieceAt(To(move_back)))
 			move_back = 0;
 	}
-	moves_to_play = 3 + (depth * depth) / 6;
-	value = margin = Current->score + (70 + depth * 8 + Max(depth - 7, 0) * 32) * CP_SEARCH;
-	if (value < beta && depth <= 19)
+	moves_to_play = 3 + Square(depth) / 6;
+	int margin = RazoringThreshold(Current->score, depth, height);
+	if (margin < beta)
 	{
 		flag = 1;
-		score = Max(value, score);
+		score = Max(margin, score);
 		Current->stage = stage_razoring;
 		Current->mask = Piece(opp);
-		value = Current->score + (200 + 32 * depth) * CP_SEARCH;
+		value = margin + 200 * CP_SEARCH;
 		if (value < beta)
 		{
 			score = Max(value, score);
