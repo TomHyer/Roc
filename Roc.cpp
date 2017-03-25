@@ -1466,7 +1466,7 @@ const array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 	17, 26, 33, -2,
 	-14, 15, 42, 0,
 	43, 14, -9, -1 };
-*/
+
 const array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
 static const uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
@@ -6526,7 +6526,8 @@ template<bool exclusion> int cut_search(int move, int hash_move, int score, int 
 
 INLINE int RazoringThreshold(int score, int depth, int height)
 {
-	return score + (70 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
+	int shift = (70 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
+	return score + shift;
 }
 
 template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
