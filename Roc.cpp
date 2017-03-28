@@ -10,12 +10,14 @@
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
-#define TB 1
+//#define TB 1
 //#define HNI
 
 #ifdef W32_BUILD
 #define NTDDI_VERSION 0x05010200
 #define _WIN32_WINNT 0x0501
+#else
+#define _WIN32_WINNT 0x0600
 #endif
 
 #include <iostream>
@@ -24,6 +26,8 @@
 #include <numeric>
 #include <string>
 #include <thread>
+#include <cmath>
+#include <algorithm>
 #include "setjmp.h"
 #include <windows.h>
 #undef min
@@ -32,29 +36,6 @@
 #include <assert.h>
 
 //#include "TunerParams.inc"
-
-#if TB
-#include "src\tbconfig.h"
-#include "src\tbcore.h"
-#include "src\tbprobe.h"
-#undef LOCK
-#undef UNLOCK
-
-template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
-{
-	return func(Piece(White), Piece(Black),
-		King(White) | King(Black),
-		Queen(White) | Queen(Black),
-		Rook(White) | Rook(Black),
-		Bishop(White) | Bishop(Black),
-		Knight(White) | Knight(Black),
-		Pawn(White) | Pawn(Black),
-		Current->ply,
-		Current->castle_flags,
-		Current->ep_square,
-		(me == White), std::forward<Args_>(args)...);
-}
-#endif
 
 using namespace std;
 #define INLINE __forceinline
@@ -1712,10 +1693,9 @@ void check_time(const int* time, int searching);
 int input();
 void uci();
 
-#if TB_SEAGULL
+#if TB
 #include "tbcore.h"
 #include "tbprobe.h"
-#include "tbcore.cpp"
 //#include "tbprobe.cpp"
 
 template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
@@ -8861,7 +8841,7 @@ HANDLE CreateChildProcess(int child_id)
 }
 
 #ifndef REGRESSION
-void main(int argc, char* argv[])
+int main(int argc, char* argv[])
 {
 	DWORD p;
 	int i, HT = 0;
@@ -8985,6 +8965,7 @@ reset_jump:
 #endif
 
 	while (true) uci();
+	return 0;
 }
 #else
 // regression tester
@@ -9022,7 +9003,7 @@ void Test1(const char* fen, int max_depth, const char* solution)
 	cout << KA_N << " samples; mean " << KA_E << "\n";
 }
 
-void main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
 	int CPUInfo[4] = { -1, 0, 0, 0};
 	__cpuid(CPUInfo, 1);
@@ -9078,6 +9059,7 @@ void main(int argc, char *argv[])
 	Test1("2k5/2p3Rp/p1pb4/1p2p3/4P3/PN1P1P2/1P2KP1r/8 w - - 0 1", 25, "f3-f4");
 
 	cin.ignore();
+	return 0;
 }
 #endif
 
