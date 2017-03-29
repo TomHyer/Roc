@@ -16,6 +16,8 @@
 #ifdef W32_BUILD
 #define NTDDI_VERSION 0x05010200
 #define _WIN32_WINNT 0x0501
+#else
+#define _WIN32_WINNT 0x0600
 #endif
 
 #include <iostream>
@@ -24,6 +26,8 @@
 #include <numeric>
 #include <string>
 #include <thread>
+#include <cmath>
+#include <algorithm>
 #include "setjmp.h"
 #include <windows.h>
 #undef min
@@ -445,8 +449,8 @@ static const int FailHiGrowth = 26;	// numerator; denominator is 64
 static const int FailLoDelta = 27;
 static const int FailHiDelta = 24;
 static const int AspirationEpsilon = 10;
-static const int InitiativeConst = 3 * CP_SEARCH;
-static const int InitiativePhase = 0 * CP_SEARCH;
+static const int InitiativeConst = 1 * CP_SEARCH;
+static const int InitiativePhase = 6 * CP_SEARCH;
 static const int FutilityThreshold = 50 * CP_SEARCH;
 
 #ifdef EXPLAIN_EVAL
@@ -6035,8 +6039,8 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 		return q_evasion<me, pv>(alpha, beta, depth, FlagHashCheck);
 
 	int initiative = InitiativeConst;
-//	if (F(Current->material & FlagUnusualMaterial) && Current->material < TotalMat)
-//		initiative += (InitiativePhase * Material[Current->material].phase) / MAX_PHASE;
+	if (F(Current->material & FlagUnusualMaterial) && Current->material < TotalMat)
+		initiative += (InitiativePhase * Material[Current->material].phase) / MAX_PHASE;
 	score = Current->score + initiative;
 	if (score > alpha)
 	{
@@ -6526,8 +6530,8 @@ template<bool exclusion> int cut_search(int move, int hash_move, int score, int 
 
 INLINE int RazoringThreshold(int score, int depth, int height)
 {
-	int shift = (70 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
-	return score + shift;
+	int shift = (20 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
+	return score + shift + FutilityThreshold;
 }
 
 template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
@@ -8861,7 +8865,7 @@ HANDLE CreateChildProcess(int child_id)
 }
 
 #ifndef REGRESSION
-void main(int argc, char* argv[])
+int main(int argc, char* argv[])
 {
 	DWORD p;
 	int i, HT = 0;
@@ -8985,6 +8989,7 @@ reset_jump:
 #endif
 
 	while (true) uci();
+	return 0;
 }
 #else
 // regression tester
@@ -9022,7 +9027,7 @@ void Test1(const char* fen, int max_depth, const char* solution)
 	cout << KA_N << " samples; mean " << KA_E << "\n";
 }
 
-void main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
 	int CPUInfo[4] = { -1, 0, 0, 0};
 	__cpuid(CPUInfo, 1);
@@ -9078,6 +9083,7 @@ void main(int argc, char *argv[])
 	Test1("2k5/2p3Rp/p1pb4/1p2p3/4P3/PN1P1P2/1P2KP1r/8 w - - 0 1", 25, "f3-f4");
 
 	cin.ignore();
+	return 0;
 }
 #endif
 
