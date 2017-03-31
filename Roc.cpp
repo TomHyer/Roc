@@ -1113,7 +1113,7 @@ const int MatQuadMe[14] = { // tuner: type=array, var=1000, active=0
 	-861, -1013
 };
 const int MatQuadOpp[10] = { // tuner: type=array, var=1000, active=0
-	-14, 47, -20, -278,
+	-14, -96, -20, -278,
 	35, 39, 49,
 	9, -2,
 	75
@@ -1425,11 +1425,12 @@ const array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
 	4, 4, 4, 0, 
 };
 
-enum { BishopNonForwardPawn, BishopPawnBlock };
-const array<int, 8> BishopSpecial = { // tuner: type=array, var=20, active=0
-	0, 0, 0, 0,
-	0, 6, 12, 0
-};
+enum { BishopPawnBlock, BishopOppPawnOffColor, BishopOppPawnBlock };
+const array<int, 12> BishopSpecial = { // tuner: type=array, var=20, active=0
+	0, 6, 14, 6,
+	12, 4, 12, 0,
+	8, 10, 8, 2
+}; 
 
 const array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
 enum
@@ -4349,8 +4350,10 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		Current->threat |= att & Major(opp);
 		const uint64& myArea = (b & LightArea) ? LightArea : DarkArea;
 		uint64 v = BishopForward[me][sq] & Pawn(me) & myArea;
-		v |= (v & (File[2] | File[3] | File[4] | File[5] | BMask[sq])) >> 8;
+		v |= (v & (File[2] | File[3] | File[4] | File[5] | BMask[sq])) >> 8;	// the ">>8" is just a trick to double-count these without two calls to pop()
 		DecV(EI.score, Ca4(BishopSpecial, BishopPawnBlock) * pop(v));
+		DecV(EI.score, Ca4(BishopSpecial, BishopOppPawnOffColor) * pop(Pawn(opp) & ~myArea));
+		DecV(EI.score, Ca4(BishopSpecial, BishopOppPawnBlock) * pop(Pawn(opp) & myArea & ~EI.free[me]));
 	}
 }
 
