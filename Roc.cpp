@@ -10,7 +10,7 @@
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
-#define TB 1
+//#define TB 1
 //#define HNI
 
 #ifdef W32_BUILD
@@ -36,29 +36,6 @@
 #include <assert.h>
 
 //#include "TunerParams.inc"
-
-#if TB
-#include "src\tbconfig.h"
-#include "src\tbcore.h"
-#include "src\tbprobe.h"
-#undef LOCK
-#undef UNLOCK
-
-template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
-{
-	return func(Piece(White), Piece(Black),
-		King(White) | King(Black),
-		Queen(White) | Queen(Black),
-		Rook(White) | Rook(Black),
-		Bishop(White) | Bishop(Black),
-		Knight(White) | Knight(Black),
-		Pawn(White) | Pawn(Black),
-		Current->ply,
-		Current->castle_flags,
-		Current->ep_square,
-		(me == White), std::forward<Args_>(args)...);
-}
-#endif
 
 using namespace std;
 #define INLINE __forceinline
@@ -1717,10 +1694,9 @@ void check_time(const int* time, int searching);
 int input();
 void uci();
 
-#if TB_SEAGULL
+#if TB
 #include "tbcore.h"
 #include "tbprobe.h"
-#include "tbcore.cpp"
 //#include "tbprobe.cpp"
 
 template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
