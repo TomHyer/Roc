@@ -2832,6 +2832,25 @@ template<bool me> void eval_np(GEvalInfo& EI, pop_func_t)
 	assert(Knight(me) && Single(Knight(me)) && Pawn(me) && Single(Pawn(me)));
 	EI.mul = Min(EI.mul, knpkx<me>());
 }
+template<bool me> void eval_knppkbx(GEvalInfo& EI, pop_func_t)
+{
+	assert(Knight(me) && Single(Knight(me)) && Multiple(Pawn(me)) && Bishop(opp) && Single(Bishop(opp)));
+	static const uint64 AB = File[0] | File[1], ABC = AB | File[2];
+	static const uint64 GH = File[6] | File[7], FGH = GH | File[5];
+	if (F(Pawn(me) & ~AB) && T(King(opp) & ABC))
+	{
+		uint64 back = Forward[opp][RankOf(lsb(King(opp)))];
+		if (T(back & Pawn(me)))
+			EI.mul = Min(EI.mul, T(King(me) & AB & ~back) ? 24 : 8);
+	}
+	if (F(Pawn(me) & ~GH) && T(King(opp) & FGH))
+	{
+		uint64 back = Forward[opp][RankOf(lsb(King(opp)))];
+		if (T(back & Pawn(me)))
+			EI.mul = Min(EI.mul, T(King(me) & GH & ~back) ? 24 : 8);
+	}
+}
+
 template<bool me> void eval_krbkrx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Rook(me) && Single(Rook(me)) && Bishop(me) && Single(Bishop(me)) && Rook(opp) && Single(Rook(opp)));
@@ -3110,6 +3129,8 @@ void calc_material(int index)
 		{
 			if (bishops[me])
 				Material[index].eval[me] = pawns[me] ? TEMPLATE_ME(eval_single_bishop) : eval_unwinnable;
+			else if (pawns[me] == 2 && bishops[opp] == 1)
+				Material[index].eval[me] = TEMPLATE_ME(eval_knppkbx);
 			else if (pawns[me] <= 1)
 				Material[index].eval[me] = pawns[me] ? TEMPLATE_ME(eval_np) : eval_unwinnable;
 		}
@@ -5053,8 +5074,13 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 
 template <bool pv> INLINE int extension(int move, int depth)
 {
-	if (HasBit(Current->passer, From(move)) && OwnRank(T(Current->turn), From(move)) >= 5 && depth < 16)
-		return pv ? 2 : 1;
+	int from = From(move);
+	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
+	{
+		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][from] & Pawn(Current->turn))))
+			return pv ? 2 : 1;
+	}
+
 	return 0;
 }
 
