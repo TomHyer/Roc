@@ -797,7 +797,7 @@ INLINE packed_t Pst(int piece, int sq)
 };
 
 uint16 date;
-uint16 HistoryVals[2 * 16 * 64];
+array<array<array<uint16, 2>, 64>, 16> HistoryVals;
 
 INLINE int* AddMove(int* list, int from, int to, int flags, int score)
 {
@@ -827,9 +827,9 @@ INLINE uint16 JoinFlag(uint16 move)
 }
 INLINE uint16& HistoryScore(int join, int piece, int from, int to)
 {
-	return HistoryVals[((join) << 10) | ((piece) << 6) | (to)];
+	return HistoryVals[piece][to][join];
 }
-INLINE int HistoryMerit(int hs)
+INLINE int HistoryMerit(uint16 hs)
 {
 	return hs / (hs & 0x00FF);	// differs by 1 from Gull convention
 }
@@ -3363,8 +3363,9 @@ void get_board(const char fen[])
 
 void init_search(int clear_hash)
 {
-	for (int ih = 0; ih < 16 * 64; ++ih)
-		HistoryVals[ih] = HistoryVals[ih + 16 * 64] = (1 << 8) | 2;	// Leave memory for joins, etc, in History
+	for (int ip = 0; ip < 16; ++ip)
+		for (int it = 0; it < 64; ++it)
+			HistoryVals[ip][it][0] = HistoryVals[ip][it][1] = (1 << 8) | 2;	
 
 	memset(DeltaVals, 0, 16 * 4096 * sizeof(sint16));
 	memset(Ref, 0, 16 * 64 * sizeof(GRef));
@@ -4994,7 +4995,7 @@ template<bool pv> INLINE int extension(int move, int depth)
 	int from = From(move);
 	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
 	{
-		if (depth < 14 || (depth < 18 && F(Current->passer & RO->Forward[Current->turn][from] & Pawn(Current->turn))))
+		if (depth < 14 || (depth < 18 && F(Current->passer & RO->Forward[Current->turn][RankOf(from)] & Pawn(Current->turn))))
 			return 1;
 	}
 
