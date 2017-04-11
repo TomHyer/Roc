@@ -1093,8 +1093,8 @@ const array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
 	16, 20, 24, 0,
 	20, 28, 36, 0,
 	-12, -22, -32, 0,
-	-16, 6, 28, 0,
-	8, 4, 0, 0,
+	-10, 0, 34, 0,
+	6, 6, -2, 0,
 	0, -12, -24, 0,
 	4, 8, 12, 0,
 	0, 0, 0, -100};
@@ -4990,8 +4990,14 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 	best->ply = Current->ply;
 }
 
-template<bool pv> INLINE int extension(int move, int depth)
+template<bool me> int extension(int move, int depth, bool* check = nullptr)
 {
+	if (is_check<me>(move))
+	{
+		if (check) *check = true;
+		return see<me>(move, -SeeThreshold, SeeValue) + T(depth < 20);
+	}
+	if (check) *check = false;
 	int from = From(move);
 	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
 	{
@@ -6653,7 +6659,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = is_check<me>(move) ? 1 + (depth < 16) : extension<0>(move, depth);
+				ext = extension<me>(move, depth);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -6731,11 +6737,8 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			score = Max(0, score);
 			continue;
 		}
-		bool check = Current->stage == r_checks || is_check<me>(move);
-		if (check && see<me>(move, 0, SeeValue))
-			ext = 1 + (depth < 16);
-		else
-			ext = extension<0>(move, depth);
+		bool check;
+		ext = extension<me>(move, depth, &check);
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -6978,7 +6981,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = is_check<me>(move) ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<0>(move, depth));
+				ext = Max(pext, extension<me>(move, depth));
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -7030,8 +7033,8 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			score = Max(0, score);
 			continue;
 		}
-		bool check = is_check<me>(move);
-		ext = check ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<0>(move, depth));
+		bool check;
+		ext = Max(pext, extension<me>(move, depth, &check));
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -7205,7 +7208,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			if (Print)
 				sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt);
 		}
-		ext = is_check<me>(move) ? 2 : Max(pext, extension<1>(move, depth));
+		ext = Max(pext, extension<me>(move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
 			int margin_one = hash_value - ExclSingle(depth);
@@ -7304,7 +7307,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		if (IsRepetition(alpha + 1, move))
 			continue;
 		bool check = is_check<me>(move);
-		ext = check ? 2 : Max(pext, extension<1>(move, depth));
+		ext = Max(pext, extension<me>(move, depth));
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
@@ -7700,7 +7703,7 @@ template<bool me> int multipv(int depth)
 		move_to_string(move, score_string);
 		if (T(Print))
 			sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt + 1);
-		new_depth = depth - 2 + (ext = extension<1>(move, depth));
+		new_depth = depth - 2 + (ext = extension<me>(move, depth));
 		do_move<me>(move);
 		value = -pv_search<opp, 0>(-MateValue, MateValue, new_depth, ExtToFlag(ext));
 		MultiPV[cnt] |= value << 16;
@@ -7725,7 +7728,7 @@ template<bool me> int multipv(int depth)
 		move_to_string(move, score_string);
 		if (T(Print))
 			sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt + 1);
-		new_depth = depth - 2 + (ext = extension<1>(move, depth));
+		new_depth = depth - 2 + (ext = extension<me>(move, depth));
 		do_move<me>(move);
 		value = -scout<opp, 0>(-low, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value > low)
