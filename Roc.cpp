@@ -3038,6 +3038,9 @@ void calc_material(int index, GMaterial& material)
 			else if (!pawns[me] && knights[me] == 2 && !bishops[me])
 				mat[me] = (!tot[opp] && pawns[opp]) ? 6 : 0;
 		}
+		else if (F(queens[me] + queens[opp] + minor[opp] + pawns[opp]) && rooks[me] == rooks[opp] && minor[me] == 1 && T(pawns[me]))
+			mat[me] = 127 / (1 + rooks[me]);
+
 		if (!mul[me])
 			mat[me] = 0;
 		if (mat[me] <= 1 && tot[me] != tot[opp])
