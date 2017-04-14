@@ -1360,13 +1360,13 @@ enum
 	KnightOutpost,
 	KnightOutpostProtected,
 	KnightOutpostPawnAtt,
-	KnightOutpostBishopAtt
+	KnightOutpostNoMinor
 };
 const array<int, 16> XKnightSpecial = {  // tuner: type=array, var=26, active=0
-	44, 36, 28, 0,
-	92, 46, 0, 0,
-	52, 38, 24, 0,
-	4, 12, 20, 0 };
+	40, 40, 24, 0,
+	41, 40, 0, 0,
+	44, 44, 18, 0,
+	41, 40, 0, 0 };
 
 enum
 {
@@ -1897,7 +1897,7 @@ void init_misc(CommonData_* data)
 		data->SpanWidth[i] = 1 + msb(i) - lsb(i);
 	data->SpanWidth[0] = 0;
 
-	data->Outpost = { 0x00007E73C000000ull, 0x0000003C7E7E0000ull };
+	data->Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
 	data->UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
 		0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -2650,7 +2650,8 @@ template<bool me> bool eval_stalemate(GEvalInfo& EI)
 template<bool me> void eval_pawns_only(GEvalInfo& EI, pop_func_t pop)
 {
 	int number = pop(Pawn(me));
-	int sq = FileOf(lsb(King(opp))) <= 3 ? (me ? 0 : 56) : (me ? 7 : 63);
+	int kOpp = lsb(King(opp));
+	int sq = FileOf(kOpp) <= 3 ? (me ? 0 : 56) : (me ? 7 : 63);
 
 	if (F(Pawn(me) & (~RO->PWay[opp][sq])))
 	{
@@ -3038,8 +3039,10 @@ void calc_material(int index, GMaterial& material)
 			else if (!pawns[me] && knights[me] == 2 && !bishops[me])
 				mat[me] = (!tot[opp] && pawns[opp]) ? 6 : 0;
 		}
-		else if (F(queens[me] + queens[opp] + minor[opp] + pawns[opp]) && rooks[me] == rooks[opp] && minor[me] == 1 && T(pawns[me]))
-			mat[me] = 127 / (1 + rooks[me]);
+		else if (F(queens[me] + queens[opp] + minor[opp] + pawns[opp]) && rooks[me] == rooks[opp] && minor[me] == 1 && T(pawns[me]))	// RNP or RBP vs R
+			mat[me] += 24 / (pawns[me] + rooks[me]);
+		else if (F(queens[me] + minor[me] + major[opp] + pawns[opp]) && rooks[me] == minor[opp] && T(pawns[me]))	// RP vs minor
+			mat[me] = 40;
 
 		if (!mul[me])
 			mat[me] = 0;
@@ -4253,8 +4256,8 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 				IncV(EI.score, RO->KnightSpecial[KnightOutpostProtected]);
 				if (att & EI.free[me] & Pawn(opp))
 					IncV(EI.score, RO->KnightSpecial[KnightOutpostPawnAtt]);
-				if (att & EI.free[me] & Bishop(opp))
-					IncV(EI.score, RO->KnightSpecial[KnightOutpostBishopAtt]);
+				if (F(Knight(opp) & Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
+					IncV(EI.score, RO->KnightSpecial[KnightOutpostNoMinor]);
 			}
 		}
 	}
@@ -4431,6 +4434,21 @@ template<class POP> int closure()
 {
 	// closure_x can return up to 16; we want to return about -128 to +128
 	return 4 * (closure_x<POP, 0>() + closure_x<POP, 1>());
+}
+
+template<bool me> void eval_castling(GEvalInfo& EI)
+{
+	static const array<int, 2> now = { 30, 10 };
+	static const array<int, 2> later = { 15, 5 };
+	uint64 occ = PieceAll();
+	if (can_castle(occ, me, true))
+		IncV(EI.score, Pack4(now[0], 0, 0, 0));
+	else if (Current->castle_flags & (me ? CanCastle_oo : CanCastle_OO))
+		IncV(EI.score, Pack4(later[0], 0, 0, 0));
+	if (can_castle(occ, me, false))
+		IncV(EI.score, Pack4(now[1], 0, 0, 0));
+	else if (Current->castle_flags & (me ? CanCastle_ooo : CanCastle_OOO))
+		IncV(EI.score, Pack4(later[1], 0, 0, 0));
 }
 
 template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
@@ -5659,6 +5677,21 @@ template<bool me> INLINE uint64 PawnJoins()
 	return (target1 & (protect | ~attack)) | (target2 & (protect & ~attack));
 }
 
+INLINE bool can_castle(const uint64& occ, bool me, bool kingside)
+{
+	if (me == White)
+	{
+		return kingside
+			? T(Current->castle_flags & CanCastle_OO) && F(occ & 0x60) && F(Current->att[Black] & 0x70)
+			: T(Current->castle_flags & CanCastle_OOO) && F(occ & 0xE) && F(Current->att[Black] & 0x1C);
+	}
+	else
+	{
+		return kingside
+			? T(Current->castle_flags & CanCastle_oo) && F(occ & 0x6000000000000000) && F(Current->att[White] & 0x7000000000000000)
+			: T(Current->castle_flags & CanCastle_ooo) && F(occ & 0x0E00000000000000) && F(Current->att[White] & 0x1C00000000000000);
+	}
+}
 template<bool me> int* gen_quiet_moves(int* list)
 {
 	uint64 u, v;
@@ -5667,16 +5700,16 @@ template<bool me> int* gen_quiet_moves(int* list)
 	uint64 occ = PieceAll();
 	if (me == White)
 	{
-		if (T(Current->castle_flags & CanCastle_OO) && F(occ & 0x60) && F(Current->att[Black] & 0x70))
+		if (can_castle(occ, me, true))
 			list = AddHistoryP(list, IKing[White], 4, 6, FlagCastling);
-		if (T(Current->castle_flags & CanCastle_OOO) && F(occ & 0xE) && F(Current->att[Black] & 0x1C))
+		if (can_castle(occ, me, false))
 			list = AddHistoryP(list, IKing[White], 4, 2, FlagCastling);
 	}
 	else
 	{
-		if (T(Current->castle_flags & CanCastle_oo) && F(occ & 0x6000000000000000) && F(Current->att[White] & 0x7000000000000000))
+		if (can_castle(occ, me, true))
 			list = AddHistoryP(list, IKing[Black], 60, 62, FlagCastling);
-		if (T(Current->castle_flags & CanCastle_ooo) && F(occ & 0x0E00000000000000) && F(Current->att[White] & 0x1C00000000000000))
+		if (can_castle(occ, me, false))
 			list = AddHistoryP(list, IKing[Black], 60, 58, FlagCastling);
 	}
 
@@ -5845,25 +5878,17 @@ template<bool me> int* gen_delta_moves(int margin, int* list)
 	uint64 free = ~occ;
 	if (me == White)
 	{
-		if (T(Current->castle_flags & CanCastle_OO) && F(occ & 0x60) && F(Current->att[Black] & 0x70))
-		{
+		if (can_castle(occ, me, true))
 			list = AddCDeltaP(list, margin, IKing[White], 4, 6, FlagCastling);
-		}
-		if (T(Current->castle_flags & CanCastle_OOO) && F(occ & 0xE) && F(Current->att[Black] & 0x1C))
-		{
+		if (can_castle(occ, me, false))
 			list = AddCDeltaP(list, margin, IKing[White], 4, 2, FlagCastling);
-		}
 	}
 	else
 	{
-		if (T(Current->castle_flags & CanCastle_oo) && F(occ & 0x6000000000000000) && F(Current->att[White] & 0x7000000000000000))
-		{
+		if (can_castle(occ, me, true))
 			list = AddCDeltaP(list, margin, IKing[Black], 60, 62, FlagCastling);
-		}
-		if (T(Current->castle_flags & CanCastle_ooo) && F(occ & 0x0E00000000000000) && F(Current->att[White] & 0x1C00000000000000))
-		{
+		if (can_castle(occ, me, false))
 			list = AddCDeltaP(list, margin, IKing[Black], 60, 58, FlagCastling);
-		}
 	}
 	for (uint64 v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
