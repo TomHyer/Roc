@@ -553,6 +553,7 @@ static const int AspirationEpsilon = 10;
 static const int InitiativeConst = 1 * CP_SEARCH;
 static const int InitiativePhase = 6 * CP_SEARCH;
 static const int FutilityThreshold = 50 * CP_SEARCH;
+static const int PVOversearch = 3;	// add x/32 to nonzero extension on PV
 
 #define IncV(var, x) (me ? (var -= (x)) : (var += (x)))
 #define DecV(var, x) IncV(var, -(x))
@@ -7501,6 +7502,8 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			continue;
 		bool check = is_check<me>(move);
 		ext = Max(pext, extension<me>(move, depth));
+		if (ext && ((height * PVOversearch) & 31) < PVOversearch)
+			++ext;
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
