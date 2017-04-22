@@ -465,7 +465,7 @@ struct CommonData_
 	array<array<uint64, 64>, 2> BishopForward, PAtt, PMove, PWay, PCone, PSupport;
 	array<uint64, 64> BMagic, BMagicMask, RMagic, RMagicMask;
 	array<uint64, 64> VLine, RMask, BMask, QMask, NAtt, RangeK1, RangeK2, NArea, OneIn;
-	array<uint64, 64> KingLocus;
+	array<uint64, 64> KingFrontal, KingFlank;
 	array<array<packed_t, 28>, 2> MobQueen;
 	array<uint8, 256> PieceFromChar;
 	array<int, 64> ROffset;
@@ -1156,8 +1156,8 @@ namespace PstW
 // coefficient (Linear, Log, Locus) * phase (4)
 static constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 36, 2000, 891, 89, -134, 257, 289, -47, 149 };
 static constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 117, 1687, 1644, 1594, -550, -96, 437, 136, 502 };
-static constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, -2, -565, 248, 1251, -17, 64, 59, 53, -15 };
-static constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -29, 1755, 324, -1091, -27, 65, 89, 20, -13 };
+static constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, -2, -565, 248, 1251, -17, 85, 85, 37, -10 };
+static constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -29, 1755, 324, -1091, -27, 92, 130, 14, -9 };
 
 static constexpr int N_LOCUS = 22;
 
@@ -2371,17 +2371,17 @@ double KingLocusDist(int x, int y)
 {
 	return sqrt(1.0 * Square(RankOf(x) - RankOf(y)) + Square(FileOf(x) - FileOf(y)));
 }
-uint64 make_klocus(int k_loc)
+uint64 make_klocus(int k_loc, double center_weight, double spine_weight)
 {
-	static const double CENTER_WEIGHT = 1.0;	// relative importance of center vis-a-vis king
 	if (N_LOCUS <= 0)
 		return 0ull;
 	array<pair<double, int>, 64> temp;
 	for (int ii = 0; ii < 64; ++ii)
 	{
 		auto kDist = KingLocusDist(k_loc, ii);
-		auto centerDist = sqrt(Square(3.5 - RankOf(ii)) + Square(3.5 - FileOf(ii)));
-		auto useDist = CENTER_WEIGHT * centerDist + kDist;
+		auto spineDist = fabs(3.5 - FileOf(ii));
+		auto centerDist = sqrt(Square(3.5 - RankOf(ii)) + Square(spineDist));
+		auto useDist = center_weight * centerDist + spine_weight * spineDist + kDist;
 		temp[ii] = { useDist, ii };
 	}
 	sort(temp.begin(), temp.end());
@@ -2443,7 +2443,10 @@ void init_eval(CommonData_* data)
 	init_mobility(MobCoeffsRook, &data->MobRook);
 	init_mobility(MobCoeffsQueen, &data->MobQueen);
 	for (int i = 0; i < 64; ++i)
-		data->KingLocus[i] = make_klocus(i);
+	{
+		data->KingFrontal[i] = make_klocus(i, 1.0, -0.25);
+		data->KingFlank[i] = make_klocus(i, 0.0, -0.75);
+	}
 
 	for (int i = 0; i < 3; ++i)
 		for (int j = 7; j >= 0; --j)
@@ -4190,15 +4193,13 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 				if (RO->FullLine[sq][lsb(v)] & att & ((Rook(me) & RO->RMask[sq]) | (Bishop(me) & RO->BMask[sq])))
 					EI.king_att[me]++;
 		}
-		uint64 control = att & EI.free[me];
-		if (uint64 dbl = att & RO->PWay[me][sq] & Rook(me))
-		{	// we are supporting a rook
-			uint64 att2 = QueenAttacks(sq, EI.occ & ~dbl);
-			IncV(EI.score, RO->MobRook[0][pop(att2 & EI.free[me])]);	// include its range in our mobility
-		}
+		uint64 control = EI.free[me];
+		if (uint64 dbl = att & RO->PWay[me][sq] & Rook(me))  // we are supporting a rook
+			control &= QueenAttacks(sq, EI.occ & ~dbl);
 		else
-			IncV(EI.score, RO->MobQueen[0][pop(control)]);
-		IncV(EI.score, RO->MobQueen[1][pop(control & RO->KingLocus[EI.king[opp]])]);
+			control &= att;
+		IncV(EI.score, RO->MobQueen[0][pop(control)]);
+		IncV(EI.score, RO->MobQueen[1][pop(control & RO->KingFlank[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalMajorPawn);
 		if (control & Minor(opp))
@@ -4264,19 +4265,19 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 					EI.king_att[me]++;
 		}
 		Current->threat |= att & Queen(opp);
-		uint64 control = att & EI.free[me];
+		uint64 control = EI.free[me];
 		if (uint64 dbl = att & RO->File[FileOf(sq)] & Major(me))
 		{	// doubled r/q
-			uint64 att2 = RookAttacks(sq, EI.occ & ~dbl);
-			IncV(EI.score, RO->MobRook[0][pop(att2 & EI.free[me])]);	// include other major's range in our mobility
+			control &= RookAttacks(sq, EI.occ & ~dbl);
 		}
 		else if (uint64 behind = att & Current->passer & Pawn(me) & RO->PWay[opp][sq])
 		{	// we are in front of a pawn
-			IncV(EI.score, RO->MobRook[0][7 - OwnRank<me>(lsb(behind))]);	// restrict to squares in front of passer
+			control &= att & RO->File[FileOf(sq)];	// restrict to squares in front of passer
 		}
 		else
-			IncV(EI.score, RO->MobRook[0][pop(control)]);
-		IncV(EI.score, RO->MobRook[1][pop(control & RO->KingLocus[EI.king[opp]])]);
+			control &= att;
+		IncV(EI.score, RO->MobRook[0][pop(control)]);
+		IncV(EI.score, RO->MobRook[1][pop(control & RO->KingFlank[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalMajorPawn);
 		if (control & Minor(opp))
@@ -4375,7 +4376,7 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 			EI.king_att[me] += Single(a) ? KingBAttack1 : KingBAttack;
 		uint64 control = att & EI.free[me];
 		IncV(EI.score, RO->MobBishop[0][pop(control)]);
-		IncV(EI.score, RO->MobBishop[1][pop(control & RO->KingLocus[EI.king[opp]])]);
+		IncV(EI.score, RO->MobBishop[1][pop(control & RO->KingFrontal[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalMinorPawn);
 		if (control & Knight(opp))
@@ -4407,7 +4408,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		Current->threat |= att & Major(opp);
 		uint64 control = att & EI.free[me];
 		IncV(EI.score, RO->MobKnight[0][pop(control)]);
-		IncV(EI.score, RO->MobKnight[1][pop(control & RO->KingLocus[EI.king[opp]])]);
+		IncV(EI.score, RO->MobKnight[1][pop(control & RO->KingFrontal[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalMinorPawn);
 		if (control & Bishop(opp))
@@ -4454,11 +4455,11 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	// add a correction for defense-in-depth
 	if (adjusted > 1)
 	{
-		uint64 holes = RO->KingLocus[EI.king[opp]] & ~Current->att[opp];
+		uint64 holes = RO->KingFrontal[EI.king[opp]] & ~Current->att[opp];
 		int nHoles = pop(holes);
 		int nIncursions = pop(holes & Current->att[me]);
 		uint64 personnel = NonPawnKing(opp);
-		uint64 guards = RO->KingLocus[EI.king[opp]] & personnel;
+		uint64 guards = RO->KingFrontal[EI.king[opp]] & personnel;
 		uint64 awol = personnel ^ guards;
 		int nGuards = pop(guards) + pop(guards & Queen(opp));
 		int nAwol = pop(awol) + pop(awol & Queen(opp));
