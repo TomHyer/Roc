@@ -464,7 +464,7 @@ struct CommonData_
 	array<int, 256> SpanWidth;
 	array<array<uint64, 64>, 2> BishopForward, PAtt, PMove, PWay, PCone, PSupport;
 	array<uint64, 64> BMagic, BMagicMask, RMagic, RMagicMask;
-	array<uint64, 64> VLine, RMask, BMask, QMask, NAtt, RangeK1, RangeK2, NArea, OneIn;
+	array<uint64, 64> VLine, RMask, BMask, QMask, NAtt, RangeK1, RangeK2, RangeN2, OneIn;
 	array<uint64, 64> KingFrontal, KingFlank;
 	array<array<packed_t, 28>, 2> MobQueen;
 	array<uint8, 256> PieceFromChar;
@@ -1044,15 +1044,20 @@ enum
 	IKingAttackWeight = IKingRay + 6
 };
 
-static constexpr array<int, 6> MatLinear = { 39, -11, -14, 86, -15, -1 };
 // pawn, knight, bishop, rook, queen, pair
-const int MatQuadMe[14] = { // tuner: type=array, var=1000, active=0
+static constexpr array<int, 6> MatLinear = { 39, -11, -14, 86, -15, -1 };
+
+// T(pawn), pawn, knight, bishop, rook, queen
+const int MatQuadMe[21] = { // tuner: type=array, var=1000, active=0
+	NULL, 0, 0, 0, 0, 0,
 	-33, 17, -23, -155, -247,
 	15, 296, -105, -83,
 	-162, 327, 315,
-	-861, -1013
+	-861, -1013,
+	NULL
 };
-const int MatQuadOpp[10] = { // tuner: type=array, var=1000, active=0
+const int MatQuadOpp[15] = { // tuner: type=array, var=1000, active=0
+	0, 0, 0, 0, 0,
 	-14, -96, -20, -278,
 	35, 39, 49,
 	9, -2,
@@ -1884,7 +1889,7 @@ void init_misc(CommonData_* data)
 	for (int i = 0; i < 64; ++i)
 	{
 		HLine[i] = data->VLine[i] = NDiag[i] = SDiag[i] = data->RMask[i] = data->BMask[i] = data->QMask[i] = 0;
-		data->BMagicMask[i] = data->RMagicMask[i] = data->NAtt[i] = data->RangeK1[i] = data->RangeK2[i] = data->NArea[i] = data->OneIn[i] = 0;
+		data->BMagicMask[i] = data->RMagicMask[i] = data->NAtt[i] = data->RangeK1[i] = data->RangeK2[i] = data->RangeN2[i] = data->OneIn[i] = 0;
 		data->PAtt[0][i] = data->PAtt[1][i] = data->PMove[0][i] = data->PMove[1][i] = data->PWay[0][i] = data->PWay[1][i] = data->PCone[0][i] = data->PCone[1][i]
 			= data->PSupport[0][i] = data->PSupport[1][i] = data->BishopForward[0][i] = data->BishopForward[1][i] = 0;
 		for (int j = 0; j < 64; ++j)
@@ -1977,7 +1982,7 @@ void init_misc(CommonData_* data)
 	for (int i = 0; i < 64; ++i)
 		for (int j = 0; j < 64; ++j)
 			if (data->NAtt[i] & data->NAtt[j])
-				data->NArea[i] |= Bit(j);
+				data->RangeN2[i] |= Bit(j);
 
 	for (int i = 0; i < 8; ++i)
 	{
@@ -3086,33 +3091,19 @@ void calc_material(int index, GMaterial& material)
 	score += (Opening(special) * material.phase + Endgame(special) * (MAX_PHASE - (int)material.phase)) / MAX_PHASE;
 
 	array<int, 2> quad = { 0, 0 };
+	auto mqm = [&](int i, int j) { return TrAv(MatQuadMe, 6, i, j); };
+	auto mqo = [&](int i, int j) { return TrAv(MatQuadOpp, 5, i, j); };
 	for (int me = 0; me < 2; me++)
 	{
-		quad[me] += pawns[me] * (pawns[me] * TrAv(MatQuadMe, 5, 0, 0)
-			+ knights[me] * TrAv(MatQuadMe, 5, 0, 1)
-			+ bishops[me] * TrAv(MatQuadMe, 5, 0, 2)
-			+ rooks[me] * TrAv(MatQuadMe, 5, 0, 3)
-			+ queens[me] * TrAv(MatQuadMe, 5, 0, 4));
-		quad[me] += knights[me] * (knights[me] * TrAv(MatQuadMe, 5, 1, 0)
-			+ bishops[me] * TrAv(MatQuadMe, 5, 1, 1)
-			+ rooks[me] * TrAv(MatQuadMe, 5, 1, 2)
-			+ queens[me] * TrAv(MatQuadMe, 5, 1, 3));
-		quad[me] += bishops[me] * (bishops[me] * TrAv(MatQuadMe, 5, 2, 0)
-			+ rooks[me] * TrAv(MatQuadMe, 5, 2, 1)
-			+ queens[me] * TrAv(MatQuadMe, 5, 2, 2));
-		quad[me] += rooks[me] * (rooks[me] * TrAv(MatQuadMe, 5, 3, 0)
-			+ queens[me] * TrAv(MatQuadMe, 5, 3, 1));
+		quad[me] += pawns[me] * (pawns[me] * mqm(1, 0) + knights[me] * mqm(1, 1) + bishops[me] * mqm(1, 2) + rooks[me] * mqm(1, 3) + queens[me] * mqm(1, 4));
+		quad[me] += knights[me] * (knights[me] * mqm(2, 0) + bishops[me] * mqm(2, 1) + rooks[me] * mqm(2, 2) + queens[me] * mqm(2, 3));
+		quad[me] += bishops[me] * (bishops[me] * mqm(3, 0) + rooks[me] * mqm(3, 1) + queens[me] * mqm(3, 2));
+		quad[me] += rooks[me] * (rooks[me] * mqm(4, 0) + queens[me] * mqm(4, 1));
 
-		quad[me] += pawns[me] * (knights[opp] * TrAv(MatQuadOpp, 4, 0, 0)
-			+ bishops[opp] * TrAv(MatQuadOpp, 4, 0, 1)
-			+ rooks[opp] * TrAv(MatQuadOpp, 4, 0, 2)
-			+ queens[opp] * TrAv(MatQuadOpp, 4, 0, 3));
-		quad[me] += knights[me] * (bishops[opp] * TrAv(MatQuadOpp, 4, 1, 0)
-			+ rooks[opp] * TrAv(MatQuadOpp, 4, 1, 1)
-			+ queens[opp] * TrAv(MatQuadOpp, 4, 1, 2));
-		quad[me] += bishops[me] * (rooks[opp] * TrAv(MatQuadOpp, 4, 2, 0)
-			+ queens[opp] * TrAv(MatQuadOpp, 4, 2, 1));
-		quad[me] += rooks[me] * queens[opp] * TrAv(MatQuadOpp, 4, 3, 0);
+		quad[me] += pawns[me] * (knights[opp] * mqo(1, 0) + bishops[opp] * mqo(1, 1) + rooks[opp] * mqo(1, 2) + queens[opp] * mqo(1, 3));
+		quad[me] += knights[me] * (bishops[opp] * mqo(2, 0) + rooks[opp] * mqo(2, 1) + queens[opp] * mqo(2, 2));
+		quad[me] += bishops[me] * (rooks[opp] * mqo(3, 0) + queens[opp] * mqo(3, 1));
+		quad[me] += rooks[me] * queens[opp] * mqo(4, 0);
 
 		if (light[me] * dark[me])
 			quad[me] += pawns[me] * Av(BishopPairQuad, 0, 0, 0)
@@ -5656,6 +5647,19 @@ template<bool me> void gen_root_moves()
 	*p = 0;
 }
 
+template<bool me> INLINE bool forkable(int dst)
+{
+	if (RO->RangeN2[dst] & King(me))
+	{
+		for (uint64 nn = Knight(opp) & RO->RangeN2[dst]; nn; Cut(nn))
+		{
+			if (T(RO->NAtt[dst] & RO->NAtt[lsb(nn)] & RO->NAtt[lsb(King(me))]))
+				return true;
+		}
+	}
+	return false;
+}
+
 template<bool me> int* gen_captures(int* list)
 {
 	static const int MvvLvaPromotion = RO->MvvLva[WhiteQueen][BlackQueen];
@@ -5667,12 +5671,15 @@ template<bool me> int* gen_captures(int* list)
 		for (v = RO->PAtt[opp][Current->ep_square] & Pawn(me); T(v); Cut(v))
 			list = AddMove(list, lsb(v), Current->ep_square, FlagEP, RO->MvvLva[IPawn[me]][IPawn[opp]]);
 	for (u = Pawn(me) & OwnLine(me, 6); T(u); Cut(u))
-		if (F(PieceAt(lsb(u) + Push[me])))
+	{
+		int from = lsb(u), to = from + Push[me];
+		if (F(PieceAt(to)))
 		{
-			list = AddMove(list, lsb(u), lsb(u) + Push[me], FlagPQueen, MvvLvaPromotion);
-			if (HasBit(RO->NAtt[lsb(King(opp))], lsb(u) + Push[me]))
-				list = AddMove(list, lsb(u), lsb(u) + Push[me], FlagPKnight, MvvLvaPromotionKnight);
+			list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotion);
+			if (T(RO->NAtt[to] & King(opp)) || forkable<me>(to))	// Roc v Hannibal, 64th amateur series A round 2, proved the need for this second test
+				list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnight);
 		}
+	}
 	for (v = ShiftW<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
 	{
 		list = AddMove(list, lsb(v), lsb(v) + PushE[me], FlagPQueen, MvvLvaPromotionCap(PieceAt(lsb(v) + PushE[me])));
@@ -5991,7 +5998,7 @@ template<bool me> int* gen_checks(int* list)
 	}
 
 	const uint64 nonDiscover = ~(Current->xray[me] & Piece(me));  // exclude pieces already checked
-	for (u = Knight(me) & RO->NArea[king] & nonDiscover; T(u); Cut(u))
+	for (u = Knight(me) & RO->RangeN2[king] & nonDiscover; T(u); Cut(u))
 		for (v = RO->NAtt[king] & RO->NAtt[lsb(u)] & clear; T(v); Cut(v))
 			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
 
