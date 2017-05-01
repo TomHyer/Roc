@@ -553,7 +553,6 @@ static const int AspirationEpsilon = 10;
 static const int InitiativeConst = 1 * CP_SEARCH;
 static const int InitiativePhase = 6 * CP_SEARCH;
 static const int FutilityThreshold = 50 * CP_SEARCH;
-static const int PVOversearch = 3;	// add x/32 to nonzero extension on PV
 
 #define IncV(var, x) (me ? (var -= (x)) : (var += (x)))
 #define DecV(var, x) IncV(var, -(x))
@@ -670,7 +669,7 @@ typedef struct
 	array<uint16, N_KILLER + 1> killer;
 	array<uint16, 2> ref;
 	uint16 move;
-	uint8 turn, castle_flags, ply, ep_square, capture, gen_flags, piece, stage, mul, piece_nb;
+	uint8 turn, castle_flags, ply, ep_square, capture, gen_flags, piece, stage, mul;
 	sint32 moves[230];
 } GData;
 __declspec(align(64)) GData Data[MAX_HEIGHT];
@@ -1159,11 +1158,10 @@ namespace PstW
 }
 
 // coefficient (Linear, Log, Locus) * phase (4)
-static constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 36, 2000, 891, 89, -134, 257, 289, -47, 149 };
-static constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 117, 1687, 1644, 1594, -550, -96, 437, 136, 502 };
-static constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, -2, -565, 248, 1251, -17, 85, 85, 37, -10 };
-static constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -29, 1755, 324, -1091, -27, 92, 130, 14, -9 };
-
+static constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 27, 2000, 891, 89, -175, 257, 289, -47, 163 };
+static constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 127, 1687, 1644, 1594, -565, -96, 437, 136, 502 };
+static constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 10, -565, 248, 1251, -5, 74, 72, 45, -12 };
+static constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -7, 1755, 324, -1091, -9, 78, 109, 17, -12 };
 static constexpr int N_LOCUS = 22;
 
 // file type (3) * distance from 2d rank/open (5)
@@ -1390,7 +1388,6 @@ namespace Params
 		TacticalMinorMinor,
 		TacticalThreat,
 		TacticalDoubleThreat,
-		TacticalColdFork,
 		TacticalUnguardedQ
 	};
 	static constexpr array<int, 32> Tactical = {  // tuner: type=array, var=51, active=0
@@ -1399,8 +1396,7 @@ namespace Params
 		34, 81, 112, 5,
 		76, 105, 133, -1,
 		79, 64, 45, -3,
-		135, 90, 41, 0,
-		191, 120, 54, 3,
+		164, 106, 48, 0,
 		-1,	9,	39,	-10
 	};
 }
@@ -1413,7 +1409,6 @@ namespace Values
 	VALUE(TacticalMinorMinor);
 	VALUE(TacticalThreat);
 	VALUE(TacticalDoubleThreat);
-	VALUE(TacticalColdFork);
 	VALUE(TacticalUnguardedQ);
 #undef VALUE
 }
@@ -1589,7 +1584,7 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 	return retval;
 }
 static constexpr array<uint16, 16> XKingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
-static constexpr array<int, 4> XKingCenterScale = { 62, 61, 70, 68 };
+static constexpr array<int, 4> XKingCenterScale = { 51, 50, 58, 55 };
 
 // tuner: stop
 
@@ -1607,7 +1602,7 @@ static const int MaxPrN = 64;  // mustn't exceed 64
 #endif
 #endif
 
-int PrN = 1, CPUs = 1, HT = 0, parent = 1, child = 0, WinParId, Id = 0, ResetHash = 1, NewPrN = 0;
+int PrN = 1, CPUs = 1, parent = 1, child = 0, WinParId, Id = 0, ResetHash = 1, NewPrN = 0;
 HANDLE ChildPr[MaxPrN];
 static const int SplitDepth = 10;
 static const int SplitDepthPV = 4;
@@ -2363,12 +2358,11 @@ void init_pst(CommonData_* data)
 			XPst(data, j, i) = Pack4(-Opening(src), -Middle(src), -Endgame(src), -Closed(src));
 		}
 
-	Current->pst = Current->piece_nb = 0;
+	Current->pst = 0;
 	for (int i = 0; i < 64; ++i)
 		if (PieceAt(i))
 		{
 			Current->pst += Pst(PieceAt(i), i);
-			++Current->piece_nb;
 		}
 }
 
@@ -2960,8 +2954,8 @@ template<bool me> void eval_krkpx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Rook(me) && Single(Rook(me)) && F(Pawn(me)) && Pawn(opp));
 	EI.mul = Min(EI.mul, krkpx<me>());
-	if (T(Minor(opp)))
-		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Rook(me) ? 6 : 0);
+//	if (T(Minor(opp)))
+//		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Rook(me) ? 6 : 0);
 }
 template<bool me> void eval_krpkrx(GEvalInfo& EI, pop_func_t pop)
 {
@@ -2995,8 +2989,8 @@ template<bool me> void eval_kqkpx(GEvalInfo& EI, pop_func_t pop)
 template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, kqkrpx<me>());
-	if (T(Minor(opp)))
-		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
+//	if (T(Minor(opp)))
+//		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
 }
 
 
@@ -3182,10 +3176,10 @@ void calc_material(int index, GMaterial& material)
 			else if (!pawns[me] && knights[me] == 2 && !bishops[me])
 				mat[me] = (!tot[opp] && pawns[opp]) ? 6 : 0;
 		}
-		else if (F(queens[me] + queens[opp] + minor[opp] + pawns[opp]) && rooks[me] == rooks[opp] && minor[me] == 1 && T(pawns[me]))	// RNP or RBP vs R
-			mat[me] += 24 / (pawns[me] + rooks[me]);
-		else if (F(queens[me] + minor[me] + major[opp] + pawns[opp]) && rooks[me] == minor[opp] && T(pawns[me]))	// RP vs minor
-			mat[me] = 40;
+//		else if (F(queens[me] + queens[opp] + minor[opp] + pawns[opp]) && rooks[me] == rooks[opp] && minor[me] == 1 && T(pawns[me]))	// RNP or RBP vs R
+//			mat[me] += 24 / (pawns[me] + rooks[me]);
+//		else if (F(queens[me] + minor[me] + major[opp] + pawns[opp]) && rooks[me] == minor[opp] && T(pawns[me]))	// RP vs minor
+//			mat[me] = 40;
 
 		if (!mul[me])
 			mat[me] = 0;
@@ -3258,11 +3252,11 @@ void calc_material(int index, GMaterial& material)
 	}
 }
 
-void init_material(CommonData_* DATA)
+void init_material(CommonData_* dst)
 {
-	memset(&DATA->Material[0], 0, TotalMat * sizeof(GMaterial));
+	memset(&dst->Material[0], 0, TotalMat * sizeof(GMaterial));
 	for (int index = 0; index < TotalMat; ++index)
-		calc_material(index, DATA->Material[index]);
+		calc_material(index, dst->Material[index]);
 }
 
 void init_data(CommonData_* dst)
@@ -3403,7 +3397,6 @@ void setup_board()
 	}
 	Current->material = 0;
 	Current->pst = 0;
-	Current->piece_nb = 0;
 	Current->key = RO->PieceKey[0][0];
 	if (Current->turn)
 		Current->key ^= RO->TurnKey;
@@ -3428,7 +3421,6 @@ void setup_board()
 			else
 				Current->pawn_key ^= RO->PieceKey[PieceAt(i)][i];
 			Current->pst += Pst(PieceAt(i), i);
-			++Current->piece_nb;
 		}
 	}
 	if (popcnt(Piece(WhiteKnight)) > 2 || popcnt(Piece(WhiteLight)) > 1 || popcnt(Piece(WhiteDark)) > 1 || popcnt(Piece(WhiteRook)) > 2 || popcnt(Piece(WhiteQueen)) > 2 ||
@@ -3649,7 +3641,6 @@ template<bool me> void do_move(int move)
 	const auto& pKey = RO->PieceKey[piece];
 	Next->capture = capture;
 	Next->pst = Current->pst + Pst(piece, to) - Pst(piece, from);
-	Next->piece_nb = Current->piece_nb;
 	Next->key = Current->key ^ pKey[to] ^ pKey[from];
 	Next->pawn_key = Current->pawn_key;
 
@@ -3658,7 +3649,6 @@ template<bool me> void do_move(int move)
 		Piece(capture) ^= mask_to;
 		Piece(opp) ^= mask_to;
 		Next->pst -= Pst(capture, to);
-		--Next->piece_nb;
 		Next->key ^= RO->PieceKey[capture][to];
 		if (capture == IPawn[opp])
 			Next->pawn_key ^= RO->PieceKey[IPawn[opp]][to];
@@ -3729,7 +3719,6 @@ template<bool me> void do_move(int move)
 				Next->key ^= RO->PieceKey[IPawn[opp]][to ^ 8];
 				Next->pawn_key ^= RO->PieceKey[IPawn[opp]][to ^ 8];
 				Next->pst -= Pst(IPawn[opp], to ^ 8);
-				--Next->piece_nb;
 				Pawn(opp) &= ~u;
 				Piece(opp) &= ~u;
 				Next->material -= RO->MatCode[IPawn[opp]];
@@ -3889,7 +3878,6 @@ void do_null()
 	Next->turn = Current->turn ^ 1;
 	Next->material = Current->material;
 	Next->pst = Current->pst;
-	Next->piece_nb = Current->piece_nb;
 	Next->ply = 0;
 	Next->castle_flags = Current->castle_flags;
 	Next->ep_square = 0;
@@ -4159,7 +4147,7 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-						if (piece < WhiteRook)	// double major attack is handled elsewhere
+//						if (piece < WhiteRook)	// double major attack is handled elsewhere
 						{
 							IncV(EI.score, Values::SelfPiecePin);
 							katt = 1;
@@ -4225,7 +4213,7 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-						if (piece < WhiteRook)	// double major attack is handled elsewhere
+//						if (piece < WhiteRook)	// double major attack is handled elsewhere
 						{
 							IncV(EI.score, Values::SelfPiecePin);
 							katt = 1;
@@ -4457,7 +4445,7 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 13, 10, 1, 0 };
+	static constexpr array<int, 4> PHASE = { 13, 10, 2, 0 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
@@ -4536,8 +4524,7 @@ template<class POP> INLINE packed_t eval_threat(const uint64& threat)
 	if (Single(threat))
 		return threat ? Values::TacticalThreat : 0;
 	// according to Gull, second threat is extra DoubleThreat, third and after are simple Threat again
-	auto dt = T((Current->threat & PieceAll()) ^ threat) ? Values::TacticalDoubleThreat : Values::TacticalColdFork;
-	return dt + pop(threat) * Values::TacticalThreat;
+	return Values::TacticalDoubleThreat + pop(threat) * Values::TacticalThreat;
 }
 
 template<bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
@@ -4713,7 +4700,7 @@ template<class POP> void evaluation()
 				EI.material->eval[White](EI, pop.Imp());
 #ifndef THREE_PHASE
 			else if (EI.mul <= 32)
-				EI.mul = Min(EI.mul, 35 - clx / 4);
+				EI.mul = Min(EI.mul, 37 - clx / 8);
 #endif
 			Current->score -= (Min<int>(Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64;
 		}
@@ -5169,7 +5156,7 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 	best->ply = Current->ply;
 }
 
-template<bool me> int extension(int move, int depth, bool* check = nullptr)
+template<bool me> int extension(int pv, int move, int depth, bool* check = nullptr)
 {
 	if (is_check<me>(move))
 	{
@@ -5180,8 +5167,8 @@ template<bool me> int extension(int move, int depth, bool* check = nullptr)
 	int from = From(move);
 	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
 	{
-		if (depth < 14 || (depth < 18 && F(Current->passer & RO->Forward[Current->turn][RankOf(from)] & Pawn(Current->turn))))
-			return 1;
+		if (depth < 16)
+			return 1 + pv;
 	}
 
 	return 0;
@@ -5664,6 +5651,7 @@ template<bool me> int* gen_captures(int* list)
 {
 	static const int MvvLvaPromotion = RO->MvvLva[WhiteQueen][BlackQueen];
 	static const int MvvLvaPromotionKnight = RO->MvvLva[WhiteKnight][BlackKnight];
+	static const int MvvLvaPromotionBad = RO->MvvLva[WhiteKnight][BlackPawn];
 
 	uint64 u, v;
 
@@ -5675,9 +5663,10 @@ template<bool me> int* gen_captures(int* list)
 		int from = lsb(u), to = from + Push[me];
 		if (F(PieceAt(to)))
 		{
-			list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotion);
-			if (T(RO->NAtt[to] & King(opp)) || forkable<me>(to))	// Roc v Hannibal, 64th amateur series A round 2, proved the need for this second test
-				list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnight);
+			list = AddMove(list, from, to, FlagPQueen, forkable<me>(to) ? MvvLvaPromotion : MvvLvaPromotionKnight);
+			list = AddMove(list, from, to, FlagPKnight, T(RO->NAtt[to] & King(opp)) ? MvvLvaPromotionKnight : MvvLvaPromotionBad);
+			list = AddMove(list, from, to, FlagPRook, MvvLvaPromotionBad);
+			list = AddMove(list, from, to, FlagPBishop, MvvLvaPromotionBad);
 		}
 	}
 	for (v = ShiftW<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
@@ -6681,7 +6670,7 @@ template<bool exclusion> int cut_search(int move, int hash_move, int score, int 
 
 INLINE int RazoringThreshold(int score, int depth, int height)
 {
-	int shift = (20 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
+	int shift = (20 + (3 * depth * (15 + Max(height, depth))) / 4 + 100 * Max(depth - 18, 0)) * CP_SEARCH;
 	return score + shift + FutilityThreshold;
 }
 
@@ -6796,7 +6785,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		}
 
 #if TB
-		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && Current->piece_nb <= TB_LARGEST) {
+		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				tb_hits++;
@@ -6861,7 +6850,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = extension<me>(move, depth);
+				ext = extension<me>(0, move, depth);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -6911,7 +6900,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		score = Max(margin, score);
 		Current->stage = stage_razoring;
 		Current->mask = Piece(opp);
-		value = margin + 200 * CP_SEARCH;
+		value = margin + (800 * CP_SEARCH) / Max(4, depth);
 		if (value < beta)
 		{
 			score = Max(value, score);
@@ -6940,7 +6929,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			continue;
 		}
 		bool check;
-		ext = extension<me>(move, depth, &check);
+		ext = extension<me>(0, move, depth, &check);
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -7147,7 +7136,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 				}
 			}
 #if TB
-		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && Current->piece_nb <= TB_LARGEST) {
+		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				tb_hits++;
@@ -7183,7 +7172,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = Max(pext, extension<me>(move, depth));
+				ext = Max(pext, extension<me>(0, move, depth));
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -7236,7 +7225,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			continue;
 		}
 		bool check;
-		ext = Max(pext, extension<me>(move, depth, &check));
+		ext = Max(pext, extension<me>(0, move, depth, &check));
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -7343,7 +7332,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		}
 	}
 #if TB
-	if (!root && hash_depth < NominalTbDepth && depth >= TBMinDepth && Current->piece_nb <= TB_LARGEST)
+	if (!root && hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST)
 	{
 		auto res = TBProbe(tb_probe_wdl, me);
 		if (res != TB_RESULT_FAILED) {
@@ -7410,7 +7399,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			if (Print)
 				sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt);
 		}
-		ext = Max(pext, extension<me>(move, depth));
+		ext = Max(pext, extension<me>(1, move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
 			int margin_one = hash_value - ExclSingle(depth);
@@ -7509,9 +7498,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		if (IsRepetition(alpha + 1, move))
 			continue;
 		bool check = is_check<me>(move);
-		ext = Max(pext, extension<me>(move, depth));
-		if (ext && ((height * PVOversearch) & 31) < PVOversearch)
-			++ext;
+		ext = Max(pext, extension<me>(1, move, depth));
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
@@ -7907,7 +7894,7 @@ template<bool me> int multipv(int depth)
 		move_to_string(move, score_string);
 		if (T(Print))
 			sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt + 1);
-		new_depth = depth - 2 + (ext = extension<me>(move, depth));
+		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
 		do_move<me>(move);
 		value = -pv_search<opp, 0>(-MateValue, MateValue, new_depth, ExtToFlag(ext));
 		MultiPV[cnt] |= value << 16;
@@ -7932,7 +7919,7 @@ template<bool me> int multipv(int depth)
 		move_to_string(move, score_string);
 		if (T(Print))
 			sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt + 1);
-		new_depth = depth - 2 + (ext = extension<me>(move, depth));
+		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
 		do_move<me>(move);
 		value = -scout<opp, 0>(-low, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value > low)
@@ -9165,6 +9152,8 @@ void Test1(const char* fen, int max_depth, const char* solution)
 		cout << WriteMove_(best_move) << ":  " << score << ", " << nodes << " nodes\n";
 	}
 	cout << KA_N << " samples; mean " << KA_E << "\n";
+	KA_N = 0;
+	cin.ignore();
 }
 
 int main(int argc, char *argv[])
