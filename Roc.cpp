@@ -550,8 +550,8 @@ static const int FailHiGrowth = 26;	// numerator; denominator is 64
 static const int FailLoDelta = 27;
 static const int FailHiDelta = 24;
 static const int AspirationEpsilon = 10;
-static const int InitiativeConst = 1 * CP_SEARCH;
-static const int InitiativePhase = 6 * CP_SEARCH;
+static const int InitiativeConst = 3 * CP_SEARCH;
+static const int InitiativePhase = 3 * CP_SEARCH;
 static const int FutilityThreshold = 50 * CP_SEARCH;
 
 #define IncV(var, x) (me ? (var -= (x)) : (var += (x)))
@@ -3089,11 +3089,13 @@ void calc_material(int index, GMaterial& material)
 	auto mqo = [&](int i, int j) { return TrAv(MatQuadOpp, 5, i, j); };
 	for (int me = 0; me < 2; me++)
 	{
+		quad[me] += T(pawns[me]) * (pawns[me] * mqm(0, 0) + knights[me] * mqm(0, 1) + bishops[me] * mqm(0, 2) + rooks[me] * mqm(0, 3) + queens[me] * mqm(0, 4));
 		quad[me] += pawns[me] * (pawns[me] * mqm(1, 0) + knights[me] * mqm(1, 1) + bishops[me] * mqm(1, 2) + rooks[me] * mqm(1, 3) + queens[me] * mqm(1, 4));
 		quad[me] += knights[me] * (knights[me] * mqm(2, 0) + bishops[me] * mqm(2, 1) + rooks[me] * mqm(2, 2) + queens[me] * mqm(2, 3));
 		quad[me] += bishops[me] * (bishops[me] * mqm(3, 0) + rooks[me] * mqm(3, 1) + queens[me] * mqm(3, 2));
 		quad[me] += rooks[me] * (rooks[me] * mqm(4, 0) + queens[me] * mqm(4, 1));
 
+		quad[me] += T(pawns[me]) * (knights[opp] * mqo(0, 0) + bishops[opp] * mqo(0, 1) + rooks[opp] * mqo(0, 2) + queens[opp] * mqo(0, 3));
 		quad[me] += pawns[me] * (knights[opp] * mqo(1, 0) + bishops[opp] * mqo(1, 1) + rooks[opp] * mqo(1, 2) + queens[opp] * mqo(1, 3));
 		quad[me] += knights[me] * (bishops[opp] * mqo(2, 0) + rooks[opp] * mqo(2, 1) + queens[opp] * mqo(2, 2));
 		quad[me] += bishops[me] * (rooks[opp] * mqo(3, 0) + queens[opp] * mqo(3, 1));
@@ -6179,7 +6181,9 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 		return q_evasion<me, pv>(alpha, beta, depth, FlagHashCheck);
 
 	int tempo = InitiativeConst;
-	if (F(Current->material & FlagUnusualMaterial) && Current->material < TotalMat)
+	if (F(NonPawnKing(me) | (Current->passer & Pawn(me))))
+		tempo = 0;
+	else if (F(Current->material & FlagUnusualMaterial) && Current->material < TotalMat)
 		tempo += (InitiativePhase * RO->Material[Current->material].phase) / MAX_PHASE;
 	score = Current->score + tempo;
 	if (score > alpha)
@@ -6900,7 +6904,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		score = Max(margin, score);
 		Current->stage = stage_razoring;
 		Current->mask = Piece(opp);
-		value = margin + (800 * CP_SEARCH) / Max(4, depth);
+		value = margin + (200 + 6 * depth) * CP_SEARCH;
 		if (value < beta)
 		{
 			score = Max(value, score);
