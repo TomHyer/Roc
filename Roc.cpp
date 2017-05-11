@@ -1045,6 +1045,7 @@ enum
 
 // pawn, knight, bishop, rook, queen, pair
 static constexpr array<int, 6> MatLinear = { 39, -11, -14, 86, -15, -1 };
+static constexpr int MatWinnable = 160;
 
 // T(pawn), pawn, knight, bishop, rook, queen
 const int MatQuadMe[21] = { // tuner: type=array, var=1000, active=0
@@ -3036,6 +3037,12 @@ void calc_material(int index, GMaterial& material)
 		+ (SeeValue[WhiteRook] + Av(MatLinear, 0, 0, 3)) * (rooks[White] - rooks[Black])
 		+ (SeeValue[WhiteQueen] + Av(MatLinear, 0, 0, 4)) * (queens[White] - queens[Black])
 		+ (50 * CP_EVAL + Av(MatLinear, 0, 0, 5)) * ((bishops[White] / 2) - (bishops[Black] / 2));
+	for (int me = 0; me < 2; ++me)
+	{
+		if (pawns[me] > pawns[opp] && queens[me] >= queens[opp] &&
+			((major[me] > major[opp] && major[me] + minor[me] >= major[opp] + minor[opp]) || (major[me] == major[opp] && minor[me] > minor[opp])))
+			score += (me ? -1 : 1) * MatWinnable;
+	}
 
 	int phase = Phase[PieceType[WhitePawn]] * (pawns[White] + pawns[Black])
 		+ Phase[PieceType[WhiteKnight]] * (knights[White] + knights[Black])
@@ -5834,12 +5841,8 @@ void mark_evasions(int* list)
 
 template<bool me> INLINE uint64 PawnJoins()
 {
-	auto upstream = [&](uint64 target) {return ShiftW<opp>(target) | ShiftE<opp>(target); };
-	uint64 target1 = upstream(Rook(opp) | Knight(opp) | Pawn(me));
-	uint64 target2 = upstream(Queen(opp) | Bishop(opp));
-	uint64 protect = ShiftW<me>(Pawn(me)) | ShiftE<me>(Pawn(me));
-	uint64 attack = upstream(Pawn(opp));
-	return (target1 & (protect | ~attack)) | (target2 & (protect & ~attack));
+	auto threat = Current->att[opp] & Current->passer;
+	return Shift<me>(Current->passer) | ShiftW<opp>(threat) | ShiftE<opp>(threat);
 }
 
 INLINE bool can_castle(const uint64& occ, bool me, bool kingside)
@@ -5879,9 +5882,8 @@ template<bool me> int* gen_quiet_moves(int* list)
 	}
 
 	uint64 free = ~occ;
-	//	auto pTarget = PawnJoins<me>();
-	//	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
-#define pFlag(x) 0
+	auto pTarget = PawnJoins<me>();
+	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
@@ -5889,7 +5891,6 @@ template<bool me> int* gen_quiet_moves(int* list)
 			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], pFlag(to + Push[me]));
 		list = AddHistoryP(list, IPawn[me], to - Push[me], to, pFlag(to));
 	}
-#undef pFlag
 
 	for (u = Knight(me); T(u); Cut(u))
 	{
@@ -6181,7 +6182,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 		return q_evasion<me, pv>(alpha, beta, depth, FlagHashCheck);
 
 	int tempo = InitiativeConst;
-	if (F(NonPawnKing(me) | (Current->passer & Pawn(me))))
+	if (F(NonPawnKing(me) | (Current->passer & Pawn(me) & Shift<opp>(Current->patt[me] | ~Current->att[opp]))))
 		tempo = 0;
 	else if (F(Current->material & FlagUnusualMaterial) && Current->material < TotalMat)
 		tempo += (InitiativePhase * RO->Material[Current->material].phase) / MAX_PHASE;
