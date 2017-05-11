@@ -87,9 +87,9 @@ template <class C> INLINE bool Odd(const C& x)
 #if TB
 constexpr sint16 TBMateValue = 31380;
 constexpr sint16 TBCursedMateValue = 13;
-const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
+constexpr array<int, 5> TbValues = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
 constexpr int NominalTbDepth = 33;
-inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
+INLINE int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
 
 constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
 extern unsigned TB_LARGEST;
@@ -372,7 +372,7 @@ template <bool me> INLINE uint8 Promotion(uint16 move)
 	return (me ? 1 : 0) + ((move & 0xF000) >> 12);
 }
 
-const array<uint64, 64> BMagic = { 0x0048610528020080, 0x00c4100212410004, 0x0004180181002010, 0x0004040188108502, 0x0012021008003040, 0x0002900420228000,
+constexpr array<uint64, 64> BMagic = { 0x0048610528020080, 0x00c4100212410004, 0x0004180181002010, 0x0004040188108502, 0x0012021008003040, 0x0002900420228000,
 0x0080808410c00100, 0x000600410c500622, 0x00c0056084140184, 0x0080608816830050, 0x00a010050200b0c0, 0x0000510400800181,
 0x0000431040064009, 0x0000008820890a06, 0x0050028488184008, 0x00214a0104068200, 0x004090100c080081, 0x000a002014012604,
 0x0020402409002200, 0x008400c240128100, 0x0001000820084200, 0x0024c02201101144, 0x002401008088a800, 0x0003001045009000,
@@ -384,7 +384,7 @@ const array<uint64, 64> BMagic = { 0x0048610528020080, 0x00c4100212410004, 0x000
 0x0009094800840082, 0x0020080200b1a010, 0x0003440407051000, 0x000000220e100440, 0x00480220a4041204, 0x00c1800011084800,
 0x000008021020a200, 0x0000414128092100, 0x0000042002024200, 0x0002081204004200 };
 
-const array<uint64, 64> RMagic = { 0x00800011400080a6, 0x004000100120004e, 0x0080100008600082, 0x0080080016500080, 0x0080040008000280, 0x0080020005040080,
+constexpr array<uint64, 64> RMagic = { 0x00800011400080a6, 0x004000100120004e, 0x0080100008600082, 0x0080080016500080, 0x0080040008000280, 0x0080020005040080,
 0x0080108046000100, 0x0080010000204080, 0x0010800424400082, 0x00004002c8201000, 0x000c802000100080, 0x00810010002100b8,
 0x00ca808014000800, 0x0002002884900200, 0x0042002148041200, 0x00010000c200a100, 0x00008580004002a0, 0x0020004001403008,
 0x0000820020411600, 0x0002120021401a00, 0x0024808044010800, 0x0022008100040080, 0x00004400094a8810, 0x0000020002814c21,
@@ -396,17 +396,17 @@ const array<uint64, 64> RMagic = { 0x00800011400080a6, 0x004000100120004e, 0x008
 0x0080800900220080, 0x000a01140081c200, 0x0080044180110021, 0x0008804001001225, 0x00a00c4020010011, 0x00001000a0050009,
 0x0011001800021025, 0x00c9000400620811, 0x0032009001080224, 0x001400810044086a };
 
-const array<short, 64> BShift = { 58, 59, 59, 59, 59, 59, 59, 58, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 57, 57, 57, 57, 59, 59, 59, 59, 57, 55, 55, 57, 59, 59,
+constexpr array<short, 64> BShift = { 58, 59, 59, 59, 59, 59, 59, 58, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 57, 57, 57, 57, 59, 59, 59, 59, 57, 55, 55, 57, 59, 59,
 59, 59, 57, 55, 55, 57, 59, 59, 59, 59, 57, 57, 57, 57, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 58, 59, 59, 59, 59, 59, 59, 58 };
 
-const array<short, 64> BOffset = { 0,    64,   96,   128,  160,  192,  224,  256,  320,  352,  384,  416,  448,  480,  512,  544,  576,  608,  640,  768,  896,  1024,
+constexpr array<short, 64> BOffset = { 0,    64,   96,   128,  160,  192,  224,  256,  320,  352,  384,  416,  448,  480,  512,  544,  576,  608,  640,  768,  896,  1024,
 1152, 1184, 1216, 1248, 1280, 1408, 1920, 2432, 2560, 2592, 2624, 2656, 2688, 2816, 3328, 3840, 3968, 4000, 4032, 4064, 4096, 4224,
 4352, 4480, 4608, 4640, 4672, 4704, 4736, 4768, 4800, 4832, 4864, 4896, 4928, 4992, 5024, 5056, 5088, 5120, 5152, 5184 };
 
-const array<short, 64> RShift = { 52, 53, 53, 53, 53, 53, 53, 52, 53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53,
+constexpr array<short, 64> RShift = { 52, 53, 53, 53, 53, 53, 53, 52, 53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53,
 53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53, 52, 53, 53, 53, 53, 53, 53, 52 };
 
-const array<int, 64> ROffset = { 5248,  9344,  11392, 13440, 15488, 17536, 19584, 21632, 25728, 27776, 28800, 29824, 30848, 31872, 32896,  33920,
+constexpr array<int, 64> ROffset = { 5248,  9344,  11392, 13440, 15488, 17536, 19584, 21632, 25728, 27776, 28800, 29824, 30848, 31872, 32896,  33920,
 35968, 38016, 39040, 40064, 41088, 42112, 43136, 44160, 46208, 48256, 49280, 50304, 51328, 52352, 53376,  54400,
 56448, 58496, 59520, 60544, 61568, 62592, 63616, 64640, 66688, 68736, 69760, 70784, 71808, 72832, 73856,  74880,
 76928, 78976, 80000, 81024, 82048, 83072, 84096, 85120, 87168, 91264, 93312, 95360, 97408, 99456, 101504, 103552 };
@@ -428,11 +428,11 @@ static const int MatBP = 9 * MatWP;
 static const int TotalMat = 2 * (MatWQ + MatBQ) + MatWL + MatBL + MatWD + MatBD + 2 * (MatWR + MatBR + MatWN + MatBN) + 8 * (MatWP + MatBP) + 1;
 static const int FlagUnusualMaterial = 1 << 30;
 
-const array<int, 16> MatCode = { 0, 0, MatWP, MatBP, MatWN, MatBN, MatWL, MatBL, MatWD, MatBD, MatWR, MatBR, MatWQ, MatBQ, 0, 0 };
+constexpr array<int, 16> MatCode = { 0, 0, MatWP, MatBP, MatWN, MatBN, MatWL, MatBL, MatWD, MatBD, MatWR, MatBR, MatWQ, MatBQ, 0, 0 };
 static const uint64 FileA = 0x0101010101010101;
-const array<uint64, 8> File = { FileA, FileA << 1, FileA << 2, FileA << 3, FileA << 4, FileA << 5, FileA << 6, FileA << 7 };
+constexpr array<uint64, 8> File = { FileA, FileA << 1, FileA << 2, FileA << 3, FileA << 4, FileA << 5, FileA << 6, FileA << 7 };
 static const uint64 Line0 = 0x00000000000000FF;
-const array<uint64, 8> Line = { Line0, (Line0 << 8), (Line0 << 16), (Line0 << 24), (Line0 << 32), (Line0 << 40), (Line0 << 48), (Line0 << 56) };
+constexpr array<uint64, 8> Line = { Line0, (Line0 << 8), (Line0 << 16), (Line0 << 24), (Line0 << 32), (Line0 << 40), (Line0 << 48), (Line0 << 56) };
 
 #define opp (1 ^ (me))
 #define MY_TURN (!Current->turn == opp)
@@ -465,9 +465,9 @@ template <bool me> INLINE uint64 Shift(const uint64& target)
 {
 	return me ? target >> 8 : target << 8;
 }
-static const array<int, 2> PushW = { 7, -9 };
-static const array<int, 2> Push = { 8, -8 };
-static const array<int, 2> PushE = { 9, -7 };
+static constexpr array<int, 2> PushW = { 7, -9 };
+static constexpr array<int, 2> Push = { 8, -8 };
+static constexpr array<int, 2> PushE = { 9, -7 };
 
 // THIS IS A NON-TEMPLATE FUNCTION BECAUSE MY COMPILER (Visual C++ 2015, Community Edition) CANNOT INLINE THE TEMPLATE VERSION CORRECTLY
 INLINE const uint64& OwnLine(bool me, int n)
@@ -1121,14 +1121,14 @@ INLINE int ExclDoublePV(int depth)
 
 // EVAL
 
-const sint8 DistC[8] = { 3, 2, 1, 0, 0, 1, 2, 3 };
-const sint8 RankR[8] = { -3, -2, -1, 0, 1, 2, 3, 4 };
+constexpr array<sint8, 8> DistC = { 3, 2, 1, 0, 0, 1, 2, 3 };
+constexpr array<sint8, 8> RankR = { -3, -2, -1, 0, 1, 2, 3, 4 };
 
-const uint16 SeeValue[16] = { 0, 0, 360, 360, 1300, 1300, 1300, 1300, 1300, 1300, 2040, 2040, 3900, 3900, 30000, 30000 };
-const int PieceType[16] = { 0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5 };
-const array<int, 5> Phase = { 0, SeeValue[4], SeeValue[6], SeeValue[10], SeeValue[12] };
-const int PhaseMin = 2 * Phase[3] + Phase[1] + Phase[2];
-const int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 * Phase[3] + 2 * Phase[4];
+constexpr array<uint16, 16> SeeValue = { 0, 0, 360, 360, 1300, 1300, 1300, 1300, 1300, 1300, 2040, 2040, 3900, 3900, 30000, 30000 };
+constexpr array<int, 16> PieceType = { 0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5 };
+constexpr array<int, 5> Phase = { 0, SeeValue[4], SeeValue[6], SeeValue[10], SeeValue[12] };
+constexpr int PhaseMin = 2 * Phase[3] + Phase[1] + Phase[2];
+constexpr int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 * Phase[3] + 2 * Phase[4];
 
 #ifndef TUNER
 #define V(x) (x)
@@ -1209,24 +1209,24 @@ enum
 	IKingAttackWeight = IKingRay + 6
 };
 
-const array<int, 6> MatLinear = { 29, -5, -12, 88, -19, -3 };
+constexpr array<int, 6> MatLinear = { 29, -5, -12, 88, -19, -3 };
 // pawn, knight, bishop, rook, queen, pair
-const int MatQuadMe[14] = { // tuner: type=array, var=1000, active=0
+constexpr array<int, 14> MatQuadMe = { // tuner: type=array, var=1000, active=0
 	-33, 17, -23, -155, -247,
 	15, 296, -105, -83,
 	-162, 327, 315,
 	-861, -1013
 };
-const int MatQuadOpp[10] = { // tuner: type=array, var=1000, active=0
+constexpr array<int, 10> MatQuadOpp = { // tuner: type=array, var=1000, active=0
 	-14, 47, -20, -278,
 	35, 39, 49,
 	9, -2,
 	75
 };
-const int BishopPairQuad[9] = { // tuner: type=array, var=1000, active=0
+constexpr array<int, 9> BishopPairQuad = { // tuner: type=array, var=1000, active=0
 	-38, 164, 99, 246, -84, -57, -184, 88, -186
 };
-const array<int, 6> MatClosed = { -17, 26, -27, 17, -4, 20 };
+constexpr array<int, 6> MatClosed = { -17, 26, -27, 17, -4, 20 };
 
 enum
 {
@@ -1242,7 +1242,7 @@ enum
 	MatM,
 	MatPawnOnly
 };
-const array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
+constexpr array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
 	52, 0, -52, 0,
 	40, 2, -36, 0,
 	32, 40, 48, 0,
@@ -1256,7 +1256,7 @@ const array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
 	0, 0, 0, -100};
 
 // piece type (6) * direction (4: h center dist, v center dist, diag dist, rank) * phase (3)
-const array<int, 96> PstQuadWeights = {  // tuner: type=array, var=256, active=0
+constexpr array<int, 96> PstQuadWeights = {  // tuner: type=array, var=256, active=0
 	-60, -68, -76, 0,
 	-280, -166, -52, 0,
 	132, 26, -80, 0,
@@ -1283,7 +1283,7 @@ const array<int, 96> PstQuadWeights = {  // tuner: type=array, var=256, active=0
 	160, 42, -76, 0
 };
 
-const array<int, 96> PstLinearWeights = {  // tuner: type=array, var=1280, active=0
+constexpr array<int, 96> PstLinearWeights = {  // tuner: type=array, var=1280, active=0
 	-428, -80, 268, 0,
 	-460, -64, 332, 0,
 	-220, 24, 268,  0,
@@ -1310,7 +1310,7 @@ const array<int, 96> PstLinearWeights = {  // tuner: type=array, var=1280, activ
 	-176, 600, 1376, 0 };
 
 // piece type (6) * type (2: h * v, h * rank) * phase (3)
-const array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256, active=0
+constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256, active=0
 	56, 16, -24,  0,
 	4, -6, -16,  0,
 	-32, -20, -8,  0,
@@ -1326,12 +1326,12 @@ const array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256, act
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-const array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 18, 2000, 891, 89, -215, 257, 289, -47, 178 };
-const array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 137, 1687, 1644, 1594, -580, -96, 437, 136, 502 };
-const array<int, 12> MobCoeffsRook = { 1096, 887, 678, 22, -565, 248, 1251, 7, 64, 59, 53, -15 };
-const array<int, 12> MobCoeffsQueen = { 597, 876, 1152, 16, 1755, 324, -1091, 8, 65, 89, 20, -18 };
+constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 18, 2000, 891, 89, -215, 257, 289, -47, 178 };
+constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 137, 1687, 1644, 1594, -580, -96, 437, 136, 502 };
+constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 22, -565, 248, 1251, 7, 64, 59, 53, -15 };
+constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, 16, 1755, 324, -1091, 8, 65, 89, 20, -18 };
 
-static const int N_LOCUS = 22;
+constexpr int N_LOCUS = 22;
 
 array<array<packed_t, 9>, 2> MobKnight;
 array<array<packed_t, 15>, 2> MobBishop, MobRook;
@@ -1339,7 +1339,7 @@ array<array<packed_t, 28>, 2> MobQueen;
 array<uint64, 64> KingLocus;
 
 // file type (3) * distance from 2d rank/open (5)
-const array<int, 15> ShelterValue = {  // tuner: type=array, var=26, active=0
+constexpr array<int, 15> ShelterValue = {  // tuner: type=array, var=26, active=0
 	8, 36, 44, 0, 0,	// h-pawns
 	48, 72, 44, 0, 8,	// g
 	96, 28, 32, 0, 0	// f
@@ -1353,7 +1353,7 @@ enum
 	StormOfValue,
 	StormOfScale
 };
-const array<int, 4> ShelterMod = { 0, 0, 88, 0 };
+constexpr array<int, 4> ShelterMod = { 0, 0, 88, 0 };
 
 enum
 {
@@ -1363,10 +1363,10 @@ enum
 	StormOpenMul,
 	StormFreeMul
 };
-const array<int, 5> StormQuad = {  // tuner: type=array, var=640, active=0
+constexpr array<int, 5> StormQuad = {  // tuner: type=array, var=640, active=0
 	504, 1312, 1852, 860, 356
 };
-const array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=0
+constexpr array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=0
 	332, 624, 1752, 1284, 48
 };
 array<sint16, 4> StormBlocked;
@@ -1376,7 +1376,7 @@ array<sint16, 4> StormOpen;
 array<sint16, 4> StormFree;
 
 // type (9: general, blocked, free, supported, protected, connected, outside, candidate, clear) * phase (4)
-const array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
+constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
 	76, 64, 52, 0,
 	84, 48, 12, 0,
 	-96, 204, 504, 0,
@@ -1386,7 +1386,7 @@ const array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
 	128, 32, -64, 0,
 	52, 34, 16,  0,
 	4, 4, 4, 0 };
-const array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
+constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
 	164, 86, 8, 0,
 	444, 394, 344, 0,
 	712, 582, 452, 0,
@@ -1396,7 +1396,7 @@ const array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
 	344, 356, 368, 0,
 	108, 122, 136, 0,
 	-72, -50, -28, 0 };
-const array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
+constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
 	0, 0, 0, 0,
 	0, 0, 0, 0,
 	0, 0, 0, 0,
@@ -1407,18 +1407,18 @@ const array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=
 	0, 0, 0, 0,
 	0, 0, 0, 0 };
 // type (2: att, def) * scaling (2: linear, log) 
-const array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
+constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
 	764, 204, 332, 76
 };
-const array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
+constexpr array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
 	2536, 16, 932, 264
 };
-const array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=0
+constexpr array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=0
 	0, 0, 0, 0
 };
 enum { PasserOnePiece, PasserOpKingControl, PasserOpMinorControl, PasserOpRookBlock };
 // case(4) * phase(3 -- no opening)
-const array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active=0
+constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active=0
 	0, 0, 0,
 	0, 0, 0,
 	0, 0, 0,
@@ -1453,7 +1453,7 @@ enum
 	IsolatedDoubledOpen,
 	IsolatedDoubledClosed
 };
-const array<int, 20> Isolated = {	
+constexpr array<int, 20> Isolated = {	
 	36, 28, 19, 1,
 	40, 21, 1, 12,
 	-40, -20, -3, -3,
@@ -1466,7 +1466,7 @@ enum
 	PasserTarget,
 	ChainRoot
 };
-const array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
+constexpr array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
 	16, 18, 20, 0,
 	-20, -12, -4, 0,
 	36, 16, -4, 0 };
@@ -1475,7 +1475,7 @@ enum
 	BackwardOpen,
 	BackwardClosed
 };
-const array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
+constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
 	68, 54, 40, 0,
 	16, 10, 4, 0 };
 enum
@@ -1483,7 +1483,7 @@ enum
 	DoubledOpen,
 	DoubledClosed
 };
-const array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
+constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
 	12, 6, 0, 0,
 	4, 2, 0, 0 };
 
@@ -1500,7 +1500,7 @@ enum
 	Rook7thK8th,
 	Rook7thDoubled
 };
-const array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
+constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
 	32, 16, 0, 0,
 	8, 4, 0, 0,
 	44, 38, 32, 0,
@@ -1522,7 +1522,7 @@ enum
 	TacticalDoubleThreat,
 	TacticalUnguardedQ
 };
-const array<int, 28> Tactical = {  // tuner: type=array, var=51, active=0
+constexpr array<int, 28> Tactical = {  // tuner: type=array, var=51, active=0
 	-4, 8, 20, 0,
 	0, 10, 20, 0,
 	44, 80, 116, 0,
@@ -1539,7 +1539,7 @@ enum
 	KingDefRook,
 	KingDefQueen
 };
-const array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
+constexpr array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
 	8, 4, 0, 0,
 	0, 2, 4, 0,
 	0, 0, 0, 0,
@@ -1553,7 +1553,7 @@ enum
 	PawnFileSpan,
 	PawnRestrictsK
 };
-const array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
+constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
 	44, 40, 36, 0, 
 	36, 26, 16, 0, 
 	0, 18, 36, 0, 
@@ -1561,13 +1561,14 @@ const array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
 	0, 0, 0, 0
 };
 
-enum { BishopNonForwardPawn, BishopPawnBlock };
-const array<int, 8> BishopSpecial = { // tuner: type=array, var=20, active=0
+enum { BishopNonForwardPawn, BishopPawnBlock, BishopOutpostNoMinor };
+constexpr array<int, 12> BishopSpecial = { // tuner: type=array, var=20, active=0
 	0, 0, 0, 0,
-	0, 6, 12, 0
+	0, 6, 12, 0,
+	60, 60, 45, 0
 };
 
-const array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
+constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
 enum
 {
 	KnightOutpost,
@@ -1575,7 +1576,7 @@ enum
 	KnightOutpostPawnAtt,
 	KnightOutpostNoMinor
 };
-const array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
+constexpr array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
 	40, 40, 24, 0,
 	41, 40, 0, 0,
 	44, 44, 18, 0,
@@ -1589,7 +1590,7 @@ enum
 	SelfPawnPin,
 	SelfPiecePin
 };
-const array<int, 20> Pin = {  // tuner: type=array, var=51, active=0
+constexpr array<int, 20> Pin = {  // tuner: type=array, var=51, active=0
 	84, 120, 156, 0,
 	24, 172, 320, 0,
 	180, 148, 116, 0,
@@ -1602,12 +1603,12 @@ enum
 	RKingRay,
 	BKingRay
 };
-const array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
+constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 	17, 26, 33, -2,
 	-14, 15, 42, 0,
 	43, 14, -9, -1 };
 
-const array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
+constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
 static const uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
 static const uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
@@ -1629,8 +1630,8 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-const array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 6, 9, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
-const array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
+constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 6, 9, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
+constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 
 // tuner: stop
 
@@ -4637,9 +4638,9 @@ void calc_material(int index)
 			}
 			else if (F(pawns[me]) && T(pawns[opp]))
 			{
-				if (F(NonPawnKing(opp)) && Single(Pawn(opp)))
+				if (tot[opp] == 0 && pawns[opp] == 1)
 					Material[index].eval[me] = TEMPLATE_ME(eval_kqkpx);
-				else if (Rook(opp))
+				else if (rooks[opp] == 1)
 					Material[index].eval[me] = TEMPLATE_ME(eval_kqkrpx);
 			}
 		}
@@ -5144,7 +5145,7 @@ template <bool me> bool draw_in_pv()
 template <bool me> void do_move(int move)
 {MOVING 
 	// clang-format off
-	static const array<uint8, 64> UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
+	static constexpr array<uint8, 64> UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
 		0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -5424,7 +5425,7 @@ typedef struct
 
 template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawnEvalInfo& PEI)
 {
-	static const array<array<uint64, 2>, 2> RFileBlockMask = {array<uint64, 2>({0x0202000000000000, 0x8080000000000000}), array<uint64, 2>({0x0202, 0x8080}) };
+	static constexpr array<array<uint64, 2>, 2> RFileBlockMask = {array<uint64, 2>({0x0202000000000000, 0x8080000000000000}), array<uint64, 2>({0x0202, 0x8080}) };
 	POP pop;
 	int kf = FileOf(PEI.king[me]);
 	int kr = RankOf(PEI.king[me]);
@@ -5848,14 +5849,19 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		uint64 v = BishopForward[me][sq] & Pawn(me) & myArea;
 		v |= (v & (File[2] | File[3] | File[4] | File[5] | BMask[sq])) >> 8;
 		DecV(EI.score, Ca4(BishopSpecial, BishopPawnBlock) * pop(v));
+		if (T(b & Outpost[me])
+			&& F(Knight(opp))
+			&& T(Current->patt[me] & b)
+			&& F(Pawn(opp) & PIsolated[FileOf(sq)] & Forward[me][RankOf(sq)])
+			&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
+			IncV(EI.score, Ca4(BishopSpecial, BishopOutpostNoMinor));
 	}
 }
 
 template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 {
 	POP pop;
-	uint64 u, b;
-	for (u = Knight(me); T(u); u ^= b)
+	for (uint64 b, u = Knight(me); T(u); u ^= b)
 	{
 		int sq = lsb(u);
 		b = Bit(sq);
@@ -5922,7 +5928,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static const array<int, 4> PHASE = { 13, 10, 1, 0 };
+	static constexpr array<int, 4> PHASE = { 13, 10, 1, 0 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
@@ -6753,7 +6759,7 @@ template <bool me, bool root> int get_move(int depth)
 	}
 }
 
-template <bool me> bool see(int move, int margin, const uint16* mat_value)
+template<bool me> bool see(int move, int margin, const array<uint16, 16>& mat_value)
 {
 	int from, to, piece, capture, delta, sq, pos;
 	uint64 clear, def, att, occ, b_area, r_slider_att, b_slider_att, r_slider_def, b_slider_def, r_area, u, new_att, my_bishop, opp_bishop;
@@ -7231,12 +7237,7 @@ void mark_evasions(int* list)
 
 template<bool me> INLINE uint64 PawnJoins()
 {
-	auto upstream = [&](uint64 target) {return ShiftW<opp>(target) | ShiftE<opp>(target); };
-	uint64 target1 = upstream(Rook(opp) | Knight(opp) | Pawn(me));
-	uint64 target2 = upstream(Queen(opp) | Bishop(opp));
-	uint64 protect = ShiftW<me>(Pawn(me)) | ShiftE<me>(Pawn(me));
-	uint64 attack = upstream(Pawn(opp));
-	return (target1 & (protect | ~attack)) | (target2 & (protect & ~attack));
+	return Shift<me>(Current->passer | Current->threat) | ShiftW<opp>(Current->threat) | ShiftE<opp>(Current->threat);
 }
 
 INLINE bool can_castle(const uint64& occ, bool me, bool kingside)
@@ -7276,9 +7277,8 @@ template<bool me> int* gen_quiet_moves(int* list)
 	}
 
 	uint64 free = ~occ;
-//	auto pTarget = PawnJoins<me>();
-//	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
-#define pFlag(x) 0
+	auto pTarget = PawnJoins<me>();
+	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
@@ -7286,7 +7286,6 @@ template<bool me> int* gen_quiet_moves(int* list)
 			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], pFlag(to + Push[me]));
 		list = AddHistoryP(list, IPawn[me], to - Push[me], to, pFlag(to));
 	}
-#undef pFlag
 
 	for (u = Knight(me); T(u); Cut(u))
 	{
