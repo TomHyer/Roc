@@ -9,7 +9,7 @@
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
-#define TB 1
+//#define TB 1
 //#define HNI
 
 #ifdef W32_BUILD
@@ -24,6 +24,7 @@
 #include <array>
 #include <numeric>
 #include <string>
+#include <vector>
 #include <thread>
 #include <cmath>
 #include <algorithm>
@@ -33,6 +34,10 @@
 #undef max
 #include <intrin.h>
 #include <assert.h>
+
+// Windows-specific
+typedef HANDLE mutex_t;
+typedef HANDLE event_t;
 
 //#include "TunerParams.inc"
 
@@ -488,7 +493,7 @@ struct CommonData_
 	array<sint16, 4> StormBlocked, StormShelterAtt, StormConnected, StormOpen, StormFree;
 	uint64 TurnKey;
 };
-HANDLE DATA = NULL;
+CommonData_* DATA = nullptr;
 const CommonData_* RO = nullptr;	// generally we access DATA through RO
 
 #define opp (1 ^ (me))
@@ -601,11 +606,6 @@ INLINE int MvvLvaXrayCap(int capture) { return RO->MvvLva[WhiteKing][capture]; }
 static const int RefOneScore = (0xFF << 16) | (3 << 24);
 static const int RefTwoScore = (0xFF << 16) | (2 << 24);
 
-#define HALT_CHECK \
-    if (Current->ply >= 100) return 0; \
-    for (int i = 4; i <= Current->ply; i += 2) if (Stack[sp - i] == Current->key) return 0; \
-	if ((Current - Data) >= 126) {evaluate(); return Current->score; }
-
 INLINE int ExtToFlag(int ext)
 {
 	return ext << 16;
@@ -630,7 +630,7 @@ typedef struct
 __declspec(align(64)) GBoard Board[1];
 array<uint64, 2048> Stack;
 int sp, save_sp;
-uint64 nodes, tb_hits, check_node, check_node_smp;
+//uint64 nodes, tb_hits, check_node, check_node_smp;
 GBoard SaveBoard[1];
 
 // macros using global "Board"
@@ -711,10 +711,6 @@ typedef struct
 	uint8 high_depth;
 } GEntry;
 static GEntry NullEntry = { 0, 1, 0, 0, 0, 0, 0, 0 };
-static const int initial_hash_size = 1024 * 1024;
-sint64 hash_size = initial_hash_size;
-uint64 hash_mask = (initial_hash_size - 4);
-GEntry* Hash;
 
 struct GPawnEntry
 {
@@ -723,10 +719,10 @@ struct GPawnEntry
 	array<sint16, 2> shelter;
 	array<uint8, 2> passer, draw;
 };
-static const GPawnEntry NullPawnEntry = { 0, 0, {0, 0}, {0, 0}, {0, 0} };
-static const int PAWN_HASH_SIZE = 1 << 20;
-__declspec(align(64)) array<GPawnEntry, PAWN_HASH_SIZE> PawnHash;
-static const int PAWN_HASH_MASK = PAWN_HASH_SIZE - 1;
+static const GPawnEntry NullPawnEntry = { 0, 0,{ 0, 0 },{ 0, 0 },{ 0, 0 } };
+static const int N_PAWN_HASH = 1 << 20;
+array<GPawnEntry, N_PAWN_HASH> PawnHash;
+static const int PAWN_HASH_MASK = N_PAWN_HASH - 1;
 
 typedef struct
 {
@@ -741,10 +737,9 @@ typedef struct
 	uint8 ex_depth;
 } GPVEntry;
 static const GPVEntry NullPVEntry = { 0, 0, 0, 1, 0, 0, 0, 0, 0 };
-static const int pv_hash_size = 1 << 20;
-static const int pv_cluster_size = 1 << 2;
-static const int pv_hash_mask = pv_hash_size - pv_cluster_size;
-GPVEntry* PVHash = nullptr;
+static const int N_PV_HASH = 1 << 20;
+static const int PV_CLUSTER = 1 << 2;
+static const int PV_HASH_MASK = N_PV_HASH - PV_CLUSTER;
 
 array<int, 256> RootList;
 
@@ -786,7 +781,6 @@ INLINE packed_t Pst(int piece, int sq)
 	return RO->PstVals[(piece << 6) | sq];
 };
 
-uint16 date;
 array<array<array<uint16, 2>, 64>, 16> HistoryVals;
 
 INLINE int* AddMove(int* list, int from, int to, int flags, int score)
@@ -916,7 +910,6 @@ INLINE void UpdateCheckRef(int ref_move)
 	}
 }
 
-uint16 PV[MAX_HEIGHT];
 char info_string[1024];
 char pv_string[1024];
 char score_string[16];
@@ -924,11 +917,9 @@ char mstring[65536];
 int MultiPV[256];
 int pvp;
 int pv_length;
-int best_move, best_score;
-int TimeLimit1, TimeLimit2, Console, HardwarePopCnt;
-int DepthLimit, LastDepth, LastTime, LastValue, LastExactValue, PrevMove, InstCnt;
+int LastDepth, LastTime, LastValue, LastExactValue, PrevMove, InstCnt;
 sint64 LastSpeed;
-int PVN, Contempt, Wobble, Stop, Print, Input = 1, PVHashing = 1, Infinite, MoveTime, SearchMoves, SMPointer, Ponder, Searching, Previous;
+int PVN, PVHashing = 1, SearchMoves, SMPointer, Previous;
 typedef struct
 {
 	int Bad, Change, Singular, Early, FailLow, FailHigh;
@@ -941,7 +932,7 @@ int GlobalInc[2] = { 0, 0 };
 int GlobalTurn = 0;
 static const sint64 CyclesPerMSec = 3400000;
 #endif
-int Aspiration = 1, LargePages = 1;
+static const int Aspiration = 1, LargePages = 1;
 static const int TimeSingTwoMargin = 20;
 static const int TimeSingOneMargin = 30;
 static const int TimeNoPVSCOMargin = 60;
@@ -1599,114 +1590,525 @@ static constexpr array<int, 4> XKingCenterScale = { 51, 50, 58, 55 };
 
 // END EVAL WEIGHTS
 
+sint64 get_time()
+{
+#ifdef W32_BUILD
+	return GetTickCount();
+#else
+	return GetTickCount64();
+#endif
+}
+
+#define log_msg(...)
+#define error_msg(format, ...)                                              \
+    do {                                                                \
+        log_msg("error_msg: " format "\n", ##__VA_ARGS__);                      \
+        fprintf(stderr, "error_msg: " format "\n", ##__VA_ARGS__);          \
+        abort();                                                        \
+    } while (false)
+
+// data sharing for multithreading
+void delete_object(void *addr, size_t size)
+{
+	if (!UnmapViewOfFile(addr))
+		error_msg("failed to unmap object (%d)", GetLastError());
+}
+
 // SMP
 
+// Windows threading routines
+static const size_t PAGE_SIZE = 4096;
+static const int PIPE_BUF = 4096;
+static const int PATH_MAX = 4096;
+inline size_t size_to_page(size_t size)
+{
+	return ((size - 1) / PAGE_SIZE) * PAGE_SIZE + PAGE_SIZE;
+}
+int get_num_cpus()
+{
+	SYSTEM_INFO sysinfo;
+	GetSystemInfo(&sysinfo);
+	return sysinfo.dwNumberOfProcessors;
+}
+
+mutex_t mutex_init()
+{
+	SECURITY_ATTRIBUTES attr;
+	memset(&attr, 0, sizeof(attr));
+	attr.nLength = sizeof(attr);
+	attr.bInheritHandle = TRUE;
+	mutex_t retval = CreateMutex(&attr, FALSE, NULL);
+	if (retval == NULL)
+		error_msg("failed to create mutex (%d)", GetLastError());
+	return retval;
+}
+
+void mutex_lock0(mutex_t *mutex)
+{
+	if (WaitForSingleObject(*mutex, INFINITE) != WAIT_OBJECT_0)
+		error_msg("failed to lock mutex (%d)", GetLastError());
+}
+static bool mutex_try_lock(mutex_t *mutex, uint64_t timeout)
+{
+	switch (WaitForSingleObject(*mutex, (DWORD)timeout))
+	{
+	case WAIT_OBJECT_0:
+		return true;
+	case WAIT_TIMEOUT:
+		return false;
+	default:
+		error_msg("failed to lock mutex (%d)", GetLastError());
+	}
+}
+
+void mutex_unlock0(mutex_t *mutex)
+{
+	if (!ReleaseMutex(*mutex))
+		error_msg("failed to unlock mutex (%d)", GetLastError());
+}
+
+void mutex_discard(mutex_t* mutex)
+{
+	mutex_unlock0(mutex);
+	//	CloseHandle(mutex);
+}
+
+event_t event_init()
+{
+	SECURITY_ATTRIBUTES attr;
+	memset(&attr, 0, sizeof(attr));
+	attr.nLength = sizeof(attr);
+	attr.bInheritHandle = TRUE;
+	event_t retval = CreateEvent(&attr, TRUE, FALSE, NULL);
+	if (retval == NULL)
+		error_msg("failed to create event (%d)", GetLastError());
+	return retval;
+}
+
+void event_discard(event_t* event)
+{
+	if (event)
+		CloseHandle(event);
+}
+
+string object_name(const char *basename, int id, int idx)
+{
+	return "Local\\Roc" + to_string(id) + basename + to_string(idx);
+}
+
+static DWORD forward_input(void* param)
+{
+	char buf[4 * PIPE_BUF];
+	HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+	HANDLE out = (HANDLE)param;
+	while (true)
+	{
+		DWORD len;
+		if (!ReadFile(in, buf, sizeof(buf), &len, NULL))
+			error_msg("failed to read input (%d)", GetLastError());
+		if (len == 0)
+		{
+			CloseHandle(out);
+			return 0;
+		}
+
+		DWORD ptr = 0;
+		while (ptr < len)
+		{
+			DWORD writelen;
+			if (!WriteFile(out, buf + ptr, len - ptr, &writelen, NULL))
+				error_msg("failed to forward input (%d)", GetLastError());
+			ptr += writelen;
+		}
+
+		FlushFileBuffers(out);
+	}
+}
+
+bool get_line(char *line, unsigned linelen, DWORD timeout)
+{
+	static char buf[4 * PIPE_BUF];
+	static unsigned ptr = 0, end = 0;
+	unsigned i = 0;
+
+	static HANDLE handle = INVALID_HANDLE_VALUE;
+	static event_t event = NULL;
+	static bool init = false;
+	if (!init)
+	{
+		handle = GetStdHandle(STD_INPUT_HANDLE);
+		if (GetFileType(handle) == FILE_TYPE_PIPE)
+		{
+			char name[256];
+			int res = snprintf(name, sizeof(name) - 1, "\\\\.\\pipe\\Roc%u_pipe", GetCurrentProcessId());
+			if (res < 0 || res >= sizeof(name) - 1)
+				error_msg("failed to create pipe name");
+			HANDLE out = CreateNamedPipe(name,
+				PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+				PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 2,
+				4 * PIPE_BUF, 4 * PIPE_BUF, 0, NULL);
+			if (out == INVALID_HANDLE_VALUE)
+				error_msg("failed to create named pipe #1 (%d)", GetLastError());
+			handle = CreateFile(name, GENERIC_READ, 0, NULL,
+				OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+			if (handle == INVALID_HANDLE_VALUE)
+				error_msg("failed to create named pipe #2 (%d)", GetLastError());
+			HANDLE thread = CreateThread(NULL, 0, forward_input, (LPVOID)out, 0, NULL);
+			if (thread == NULL)
+				error_msg("failed to create thread (%d)", GetLastError());
+		}
+		event = event_init();
+		init = true;
+	}
+
+	while (true)
+	{
+		bool space = false;
+		while (ptr < end)
+		{
+			if (i >= linelen)
+				error_msg("input buffer overflow");
+			char c = buf[ptr++];
+			switch (c)
+			{
+			case ' ': case '\r': case '\t': case '\n':
+				if (!space)
+				{
+					line[i++] = ' ';
+					space = true;
+				}
+				if (c == '\n')
+				{
+					line[i - 1] = '\0';
+					return false;
+				}
+				continue;
+			default:
+				space = false;
+				line[i++] = c;
+				continue;
+			}
+		}
+
+		OVERLAPPED overlapped;
+		memset(&overlapped, 0, sizeof(overlapped));
+		overlapped.hEvent = event;
+		DWORD len;
+		if (!ReadFile(handle, buf, sizeof(buf), &len, &overlapped))
+		{
+			if (GetLastError() != ERROR_IO_PENDING)
+				error_msg("failed to read input (%d)", GetLastError());
+			bool timedout = false;
+
+			switch (WaitForSingleObject(event, timeout))
+			{
+			case WAIT_TIMEOUT:
+				if (!CancelIo(handle))
+					error_msg("failed to cancel input (%d)", GetLastError());
+				timedout = true;
+				break;
+			case WAIT_OBJECT_0:
+				break;
+			default:
+				error_msg("failed to wait for input (%d)", GetLastError());
+			}
+			if (!GetOverlappedResult(handle, &overlapped, &len, FALSE))
+			{
+				if (timedout && GetLastError() == ERROR_OPERATION_ABORTED)
+					return true;
+				error_msg("failed to get input result (%d)", GetLastError());
+			}
+		}
+
+		if (len == 0)
+		{
+			line[0] = EOF;
+			return false;
+		}
+
+		ptr = 0;
+		end = len;
+	}
+}
+
+static void put_line(char *line, unsigned linelen)
+{
+	if (linelen > PIPE_BUF)
+	{
+		log_msg("warning: output \"%s\" too long (max is %u, got %u)\n", line, PIPE_BUF, linelen);
+		return;
+	}
+	HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+	DWORD len;
+	if (!WriteFile(handle, line, linelen, &len, NULL) || len != linelen)
+		error_msg("failed to write output (%d)", GetLastError());
+	FlushFileBuffers(handle);
+}
+
+typedef struct
+{
+	char name[256];
+	HANDLE handle;
+} GHandleInfo;
+vector<GHandleInfo> MyHandles;
+
+void* init_object_ex(const char *mapping_name, size_t true_size, void *addr, bool create, bool readonly, const void *value)
+{
+	size_t size = size_to_page(true_size);
+	HANDLE handle = INVALID_HANDLE_VALUE;
+	if (mapping_name)
+	{
+		if (create)
+		{
+			//fprintf(stderr, "Creating at %s\n", mapping_name);
+			handle = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, (DWORD)(size >> 32), (DWORD)(size & 0xFFFFFFFF), mapping_name);
+			GHandleInfo hi;
+			hi.handle = handle;
+			strncpy(hi.name, mapping_name, sizeof(hi.name) - 1);
+			MyHandles.push_back(hi);
+		}
+		else
+		{
+			//fprintf(stderr, "Opening %s\n", mapping_name);
+			handle = OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, mapping_name);
+		}
+	}
+	else
+		handle = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, (DWORD)(size >> 32), (DWORD)(size & 0xFFFFFFFF), NULL);
+
+	if ((handle == INVALID_HANDLE_VALUE || handle == NULL) && (create || GetLastError() != ERROR_ALREADY_EXISTS))
+		error_msg("failed to open file mapping \"%s\" (%d)", mapping_name, GetLastError());
+	DWORD access = readonly && !value ? FILE_MAP_READ : FILE_MAP_READ | FILE_MAP_WRITE;
+	void* ptr = MapViewOfFileEx(handle, access, 0, 0, size, addr);
+	if (!ptr)
+		error_msg("failed to map file mapping \"%s\" (%d)", mapping_name, GetLastError());
+	if (value)
+	{
+		memcpy(ptr, value, true_size);
+		DWORD old_prot;
+		if (readonly && !VirtualProtect(ptr, size, PAGE_READONLY, &old_prot))
+			error_msg("failed to protect object \"%s\" (%d)", mapping_name, GetLastError());
+	}
+	if (!create || !mapping_name)
+		CloseHandle(handle);
+	return ptr;
+}
+
+template<class T_> T_* init_object(T_* base_addr, const char *object, bool create, bool readonly, size_t n = 1, const T_* value = nullptr)
+{
+	return reinterpret_cast<T_*>(init_object_ex(object, n * sizeof(T_), base_addr, create, readonly, value));
+}
+
+void remove_object(const char *object)
+{
+	for (auto&& hi : MyHandles)
+	{
+		if (strcmp(hi.name, object) == 0)
+		{
+			hi.name[0] = '\0';
+			CloseHandle(hi.handle);
+			hi.handle = NULL;
+			return;
+		}
+	}
+	error_msg("failed to remove object \"%s\"", object);
+}
+
+void event_signal(event_t* event)
+{
+	SetEvent(*event);
+	ResetEvent(*event);
+}
+
 #ifdef DEBUG
-static const int MaxPrN = 1;
+static const int maxNumThreads = 1;
 #else
 #ifdef W32_BUILD
-static const int MaxPrN = 32;  // mustn't exceed 32
+static const int maxNumThreads = 32;  // mustn't exceed 32
 #else
-static const int MaxPrN = 64;  // mustn't exceed 64
+static const int maxNumThreads = 256;
 #endif
 #endif
 
-int PrN = 1, CPUs = 1, parent = 1, child = 0, WinParId, Id = 0, ResetHash = 1, NewPrN = 0;
-HANDLE ChildPr[MaxPrN];
-static const int SplitDepth = 10;
-static const int SplitDepthPV = 4;
-static const int MaxSplitPoints = 64;  // mustn't exceed 64
-
-typedef struct
+static const int MAX_PV_LEN = 256;
+struct ThreadOwn_
 {
-	GPosData Position[1];
-	array<uint64, 104> stack;
-	int sp, date;
-	array<array<uint16, N_KILLER>, 16> killer;
-} GPos;
+	bool newGame;
+	size_t nodes;
+	size_t tbHits;
+	int pid;
+	int id;
+	int depth;
+	int selDepth;
+	int bestMove;
+	int bestScore;
+	int PV[MAX_PV_LEN];
+};
+vector<ThreadOwn_*> THREADS;
+ThreadOwn_* INFO = 0;
+uint64 check_node;
 
-static const int FlagClaimed = 1 << 1;
-static const int FlagFinished = 1 << 2;
-
-typedef struct
+static const size_t HASH_CLUSTER = 4;
+struct Settings_
 {
-	volatile uint16 move;
-	volatile uint8 reduced_depth, research_depth, stage, ext, id, flags;
-} GMove;
+	int nThreads = 1;
+	int tbMinDepth = 7;
+	size_t nHash = 0;
+	size_t hashMask = 0;
+	int contempt = 8;
+	int wobble = 0;
+	unsigned parentPid = numeric_limits<unsigned>::max();
+	char tbPath[PATH_MAX];
+};
+Settings_* SETTINGS = 0;
 
-typedef struct
+struct WorkerList_
 {
-	array<GMove, MAX_HEIGHT> move;
-	GPos Pos[1];
-	volatile LONG lock;
-	volatile int claimed, active, finished, pv, move_number, current, depth, alpha, beta, singular, split, best_move, height;
-	jmp_buf jump;
-} GSP;
+	struct Record_ 
+	{
+		int pvs_, next_;
+	};
+	array<Record_, maxNumThreads + 1> vals_;
+	void Init()
+	{
+		for (int jj = 0; jj <= maxNumThreads; ++jj)
+			vals_[jj] = { jj, jj };
+	}
+	void Insert(int iw)
+	{
+		assert(iw >= 0 && iw < maxNumThreads);
+		assert(vals_[iw].pvs_ == iw && vals_[iw].next_ == iw);	// double insertion
+		int last = vals_[maxNumThreads].pvs_;
+		vals_[iw].pvs_ = last;
+		vals_[iw].next_ = maxNumThreads;
+		vals_[last].next_ = iw;
+		vals_[maxNumThreads].pvs_ = iw;
+	}
+	void Remove(int iw)
+	{
+		assert(iw >= 0 && iw < maxNumThreads);
+		assert(vals_[iw].pvs_ != iw && vals_[iw].next_ != iw);	// double deletion
+		vals_[vals_[iw].pvs_].next_ = vals_[iw].next_;
+		vals_[vals_[iw].next_].pvs_ = vals_[iw].pvs_;
+		vals_[iw].pvs_ = vals_[iw].next_ = iw;
+	}
+	bool Empty() const
+	{
+		return vals_[maxNumThreads].pvs_ == maxNumThreads;
+	}
+};
 
-typedef struct
+struct SharedInfo_
 {
-	volatile long long nodes, active_sp, searching;
-#ifdef TB
-	volatile long long tb_hits;
-#endif
-#ifndef W32_BUILD
-	volatile long long stop, fail_high;
-#else
-	volatile long stop, fail_high;
-#endif
-	volatile sint64 hash_size;
-	volatile int PrN;
-	GSP Sp[MaxSplitPoints];
-#ifdef TB
-	char tb_path[1024];
-#endif
-} GSMPI;
+	WorkerList_ working;
+	bool stopAll;
+	uint16_t date;
+	mutex_t mutex = NULL;
+	event_t goEvent = NULL;
+	int rootDepth;
+	int depthLimit;
+	uint64_t startTime;
+	uint64_t softTimeLimit;
+	uint64_t hardTimeLimit;
+	volatile bool ponder;
+	GBoard rootBoard;
+	GData rootData;
+	unsigned rootSp;
+	struct {
+		int depth, value, move, worker;
+	} best;
+	uint64_t rootStack[1024];
+};
 
-static const int SharedPVHashOffset = sizeof(GSMPI);
+SharedInfo_* SHARED = 0;
 
-GSMPI* Smpi;
+void mutex_lock1(mutex_t *mutex, int lineno)
+{
+	mutex_lock0(mutex);
+	if (!SHARED)
+		return;
+	if (!SHARED->working.Empty())
+	{
+		char line[64];
+		int len = snprintf(line, sizeof(line) - 1, "id name locked to %d at %d\n", GetCurrentProcessId(), lineno);
+		put_line(line, len);
+	}
+}
+void mutex_unlock1(mutex_t *mutex, int lineno)
+{
+	char line[64];
+	int len = snprintf(line, sizeof(line) - 1, "id name unlocked by %d at %d\n", GetCurrentProcessId(), lineno);
+	put_line(line, len);
+	mutex_unlock0(mutex);
+}
 
-jmp_buf CheckJump;
+#define mutex_lock(M) mutex_lock1(M, __LINE__)
+#define mutex_unlock(M) mutex_unlock1(M, __LINE__)
 
-HANDLE SHARED = nullptr, HASH = nullptr;
 
-#ifndef W32_BUILD
-#define SET_BIT(var, bit) (InterlockedOr(&(var), 1 << (bit)))
-#define SET_BIT_64(var, bit) (InterlockedOr64(&(var), Bit(bit)));
-#define ZERO_BIT_64(var, bit) (InterlockedAnd64(&(var), ~Bit(bit)));
-#define TEST_RESET_BIT(var, bit) (InterlockedBitTestAndReset64(&(var), bit))
-#define TEST_RESET(var) (InterlockedExchange64(&(var), 0))
-#else
-#define SET_BIT(var, bit) (_InterlockedOr(&(var), 1 << (bit)))
-#define SET_BIT_64(var, bit)                                        \
-    {                                                               \
-        if ((bit) < 32)                                             \
-            _InterlockedOr((LONG*)&(var), 1 << (bit));              \
-        else                                                        \
-            _InterlockedOr(((LONG*)(&(var))) + 1, 1 << ((bit)-32)); \
-    }
-#define ZERO_BIT_64(var, bit)                                           \
-    {                                                                   \
-        if ((bit) < 32)                                                 \
-            _InterlockedAnd((LONG*)&(var), ~(1 << (bit)));              \
-        else                                                            \
-            _InterlockedAnd(((LONG*)(&(var))) + 1, ~(1 << ((bit)-32))); \
-    }
-#define TEST_RESET_BIT(var, bit) (InterlockedBitTestAndReset(&(var), bit))
-#define TEST_RESET(var) (InterlockedExchange(&(var), 0))
-#endif
-#define SET(var, value) (InterlockedExchange(&(var), value))
+struct SharedLock_
+{
+	int line_;
+	SharedLock_(int line) : line_(line)
+	{
+		mutex_lock1(&SHARED->mutex, line);
+	}
+	~SharedLock_()
+	{
+		mutex_unlock1(&SHARED->mutex, line_);
+	}
+};
+#define LOCK_SHARED SharedLock_ _(__LINE__);
 
-#define LOCK(lock)                                                     \
-    {                                                                  \
-        while (InterlockedCompareExchange(&(lock), 1, 0)) _mm_pause(); \
-    }
-#define UNLOCK(lock)  \
-    {                 \
-        SET(lock, 0); \
-    }
 
-// END SMP
+GEntry* HASH = 0;
+GPVEntry* PVHASH = 0;
+GPawnEntry* PAWNHASH = 0;
+
+void move_to_string(int move, char string[])
+{
+	int pos = 0;
+	string[pos++] = ((move >> 6) & 7) + 'a';
+	string[pos++] = ((move >> 9) & 7) + '1';
+	string[pos++] = (move & 7) + 'a';
+	string[pos++] = ((move >> 3) & 7) + '1';
+	if (IsPromotion(move))
+	{
+		if ((move & 0xF000) == FlagPQueen)
+			string[pos++] = 'q';
+		else if ((move & 0xF000) == FlagPKnight)
+			string[pos++] = 'n';
+		else if ((move & 0xF000) == FlagPRook)
+			string[pos++] = 'r';
+		else if ((move & 0xF000) == FlagPBishop)
+			string[pos++] = 'b';
+	}
+	string[pos] = 0;
+}
+
+int move_from_string(char string[])
+{
+	int from, to, move;
+	from = ((string[1] - '1') * 8) + (string[0] - 'a');
+	to = ((string[3] - '1') * 8) + (string[2] - 'a');
+	move = (from << 6) | to;
+	if (Board->square[from] >= WhiteKing && abs(to - from) == 2)
+		move |= FlagCastling;
+	if (T(Current->ep_square) && to == Current->ep_square)
+		move |= FlagEP;
+	if (string[4] != 0)
+	{
+		if (string[4] == 'q')
+			move |= FlagPQueen;
+		else if (string[4] == 'n')
+			move |= FlagPKnight;
+		else if (string[4] == 'r')
+			move |= FlagPRook;
+		else if (string[4] == 'b')
+			move |= FlagPBishop;
+	}
+	return move;
+}
 
 INLINE int lsb(uint64 x);
 INLINE int msb(uint64 x);
@@ -3260,7 +3662,7 @@ void calc_material(int index, GMaterial& material)
 			{
 				if (F(NonPawnKing(opp)) && Single(Pawn(opp)))
 					material.eval[me] = TEMPLATE_ME(eval_kqkpx);
-				else if (Rook(opp))
+				else if (rooks[opp])
 					material.eval[me] = TEMPLATE_ME(eval_kqkrpx);
 			}
 		}
@@ -3287,130 +3689,356 @@ void init_data(CommonData_* dst)
 	init_material(dst);
 }
 
-void init_hash()
+
+void create_child
+	(const char *hashName,
+	const char *pvHashName,
+	const char *pawnHashName,
+	const char *dataName,
+	const char *settingsName,
+	const char *sharedName,
+	const char *infoName)
 {
-	string name = "ROC_HASH_" + to_string(WinParId);
-	sint64 size = hash_size * sizeof(GEntry);
-	int initialized = 0;
-	if (parent && HASH != nullptr)
+	char name[PATH_MAX];
+	char command[10 * PATH_MAX];
+	PROCESS_INFORMATION procInfo;
+	STARTUPINFO startInfo;
+
+	memset(&procInfo, 0, sizeof(procInfo));
+	memset(&startInfo, 0, sizeof(startInfo));
+
+	startInfo.cb = sizeof(STARTUPINFO);
+	startInfo.dwFlags |= STARTF_USESTDHANDLES;
+	startInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+	startInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
+	startInfo.hStdInput = INVALID_HANDLE_VALUE;
+
+	if (GetModuleFileName(NULL, name, sizeof(name) - 1) >= sizeof(name) - 1)
+		error_msg("failed to get module name");
+	int len = snprintf(command, sizeof(command) - 1,
+		"\"%s\" child \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\"",
+		name, hashName, pvHashName, pawnHashName, dataName, settingsName, sharedName, infoName);
+	if (len < 0 || len >= sizeof(command) - 1)
+		error_msg("failed to create command line for child");
+
+	BOOL success = CreateProcess(NULL, command, NULL, NULL, TRUE, 0, NULL, NULL, &startInfo, &procInfo);
+	if (!success)
+		error_msg("failed to create child process (%d)", GetLastError());
+	CloseHandle(procInfo.hThread);
+}
+
+static void create_children(const Settings_& settings)
+{
+	static const size_t maxNHash = ((size_t)1 << 43) / sizeof(GEntry);   // <= 8TB
+	static const int maxSyzygyProbeDepth = 64;
+
+	int nThreads = Min(maxNumThreads, settings.nThreads);
+	int tbMinDepth = Min(maxSyzygyProbeDepth, settings.tbMinDepth);
+	int contempt = Max(0, settings.contempt);
+	int wobble = Max(0, settings.wobble);
+	int pid = GetCurrentProcessId();
+
+	log_msg("settings: nThreads=%d, hashSize=%Iu, tbMinDepth=%d, syzygyPath=\"%s\", contempt=%d, wobble=%d\n",
+		settings.nThreads, settings.nHash * sizeof(GEntry), settings.tbMinDepth, settings.tbPath, settings.contempt, settings.wobble);
+
+	// Create shared objects:
+	string dataName = object_name("DATA", pid, 0);
+	RO = DATA = init_object(DATA, dataName.c_str(), true, false);
+	init_data(DATA);
+
+	string settingsName = object_name("SETTINGS", pid, 0);
+	SETTINGS = init_object(SETTINGS, settingsName.c_str(), true, true, 1, &settings);
+
+	string hashName = object_name("HASH", pid, 0);
+	HASH = init_object(HASH, hashName.c_str(), true, false, SETTINGS->nHash);
+
+	string pvHashName = object_name("PVHASH", pid, 0);
+	PVHASH = init_object(PVHASH, pvHashName.c_str(), true, false, N_PV_HASH);
+
+	string pawnHashName = object_name("PAWNHASH", pid, 0);
+	PAWNHASH = init_object(PAWNHASH, pawnHashName.c_str(), true, false, N_PAWN_HASH);
+
+	string sharedName = object_name("SHARED", pid, 0);
+	SHARED = init_object(SHARED, sharedName.c_str(), true, false);
+	SHARED->mutex = mutex_init();
+	SHARED->goEvent = event_init();
+	SHARED->working.Init();
+	SHARED->stopAll = true;
+
+	// Create children: 
+	THREADS.resize(nThreads);
+	for (int i = 0; i < nThreads; i++)
 	{
-		initialized = 1;
-		UnmapViewOfFile(Hash);
-		CloseHandle(HASH);
+		string infoName = object_name("INFO", pid, i);
+		THREADS[i] = init_object<ThreadOwn_>(nullptr, infoName.c_str(), true, false);
+		THREADS[i]->newGame = true;
+		THREADS[i]->id = i;
 	}
-	if (parent)
 	{
-		HASH = nullptr;
-#ifdef LARGE_PAGES
-		if (LargePages)
+		LOCK_SHARED;
+		for (int i = 0; i < nThreads; i++)
 		{
-			if (HINSTANCE hDll = LoadLibrary(TEXT("kernel32.dll")))
-			{
-				typedef int(*GETLARGEPAGEMINIMUM)(void);
-				if (GETLARGEPAGEMINIMUM pGetLargePageMinimum = (GETLARGEPAGEMINIMUM)GetProcAddress(hDll, "GetLargePageMinimum"))
-				{
-					int min_page_size = (*pGetLargePageMinimum)();
-					if (size < min_page_size)
-						size = min_page_size;
-					if (!initialized)
-					{
-						TOKEN_PRIVILEGES tp;
-						HANDLE hToken;
-						OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken);
-						LookupPrivilegeValue(nullptr, "SeLockMemoryPrivilege", &tp.Privileges[0].Luid);
-						tp.PrivilegeCount = 1;
-						tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-						AdjustTokenPrivileges(hToken, FALSE, &tp, 0, (PTOKEN_PRIVILEGES) nullptr, 0);
-					}
-					HASH = CreateFileMapping
-							(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE | SEC_COMMIT | SEC_LARGE_PAGES, size >> 32, size & 0xFFFFFFFF, name.c_str());
-					if (HASH)
-						fprintf(stdout, "Large page hash\n");
-				}
-			}
+			SHARED->working.Insert(i);
+			string infoName = object_name("INFO", pid, i);
+			create_child(hashName.c_str(), pvHashName.c_str(), pawnHashName.c_str(), dataName.c_str(), settingsName.c_str(), sharedName.c_str(), infoName.c_str());
 		}
+	}
+
+	INFO = init_object(INFO, nullptr, true, false);
+	INFO->pid = GetCurrentProcessId();
+#if TB
+	tb_init(settings.tbPath);%
 #endif
-		if (!HASH)
-			HASH = CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, size >> 32, size & 0xFFFFFFFF, name.c_str());
-	}
-	else
-		HASH = OpenFileMapping(FILE_MAP_ALL_ACCESS, 0, name.c_str());
 
-	Hash = (GEntry*)MapViewOfFile(HASH, FILE_MAP_ALL_ACCESS, 0, 0, size);
-	if (parent)
-		memset(Hash, 0, size);
-	hash_mask = hash_size - 4;
+	// Wait for threads to finish initializing:
+	while (!SHARED->working.Empty())
+		Sleep(1);
+
+	// Cleanup:
+	remove_object(dataName.c_str());
+	remove_object(settingsName.c_str());
+	remove_object(hashName.c_str());
+	remove_object(pvHashName.c_str());
+	remove_object(pawnHashName.c_str());
+	remove_object(sharedName.c_str());
+	for (int i = 0; i < nThreads; i++)
+	{
+		string infoName = object_name("INFO", pid, i);
+		remove_object(infoName.c_str());
+	}
 }
 
-void init_data()
+static void nuke_child(unsigned pid)
 {
-	if (parent && DATA != NULL)
+	HANDLE handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, (DWORD)pid);
+	if (handle == NULL)
+		return;
+	TerminateProcess(handle, EXIT_SUCCESS);
+	if (WaitForSingleObject(handle, INFINITE) != WAIT_OBJECT_0)
+		error_msg("failed to terminate child (%d)", GetLastError());
+	CloseHandle(handle);
+}
+
+static void nuke_children(void)
+{
+	for (size_t i = 0; i < SETTINGS->nThreads; i++)
+		nuke_child(THREADS[i]->pid);
+	delete_object(HASH, SETTINGS->nHash * sizeof(*HASH));
+	delete_object(PVHASH, N_PV_HASH * sizeof(*PVHASH));
+	delete_object(PAWNHASH, N_PAWN_HASH * sizeof(*PAWNHASH));
+	//	mutex_discard(&SHARED->mutex);
+	//	event_discard(&SHARED->goEvent);
+	//	event_discard(&SHARED->initEvent);
+	for (size_t i = 0; i < SETTINGS->nThreads; i++)
+		delete_object(THREADS[i], sizeof(*THREADS[i]));
+	delete_object(DATA, sizeof(*DATA));
+	delete_object(SETTINGS, sizeof(*SETTINGS));
+	delete_object(SHARED, sizeof(*SHARED));
+	delete_object(INFO, sizeof(*INFO));
+}
+
+static void reset(const Settings_& settings)
+{
+	nuke_children();
+	create_children(settings);
+}
+
+static void emergency_stop(void)
+{
+	// Something is wrong -- threads are not stopping, or have crashed.
+	// It is unspecified if the global mutex is locked.  We no longer care
+	// about races.
+	// Reset everthing.  We may lose on time, but so be it.
+	bool go = !SHARED->working.Empty();
+	int bestMove = 0;
+	for (const auto& t : THREADS)
+		if (bestMove = t->bestMove)
+			break;
+	// Log this incident:
+	log_msg("warning: threads crashed or deadlocked; initiating emergency reset\n");
+	reset(*SETTINGS);
+	if (go)
 	{
-		UnmapViewOfFile(RO);
-		CloseHandle(DATA);
+		char line[32], moveStr[16];
+		move_to_string(bestMove, moveStr);
+		int len = snprintf(line, sizeof(line) - 1, "bestmove %s\n", moveStr);
+		if (len > 0 && len < sizeof(line) - 1)
+			put_line(line, len);
+		else
+		{
+			// Giveup:
+			char reply[] = "bestmove 0\n";
+			put_line(reply, sizeof(reply));
+		}
 	}
-	char name[256];
-	sprintf_s(name, "ROC_DATA_%d", WinParId);
-	HANDLE RW = NULL;
-	DWORD size = sizeof(CommonData_);
-	if (parent)
+	mutex_lock(&SHARED->mutex);
+}
+
+void wait_for_stop()
+{
+	const uint64_t maxStopTime = 300;       // Max 300ms to stop all threads;
+	uint64_t stopTime = get_time(), currTime = stopTime;
+	while (true)
 	{
-		RW = CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, size, name);
-		auto data = reinterpret_cast<CommonData_*>(MapViewOfFile(RW, FILE_MAP_ALL_ACCESS, 0, 0, size));
-		init_data(data);
-		UnmapViewOfFile(data);
-	}
-	DATA = OpenFileMapping(FILE_MAP_READ, 0, name);
-	RO = reinterpret_cast<CommonData_*>(MapViewOfFile(DATA, FILE_MAP_READ, 0, 0, size));
-	if (parent)
-	{
-		CloseHandle(RW);
+		Sleep(1);
+		currTime = get_time();
+		if (mutex_try_lock(&SHARED->mutex, (currTime - stopTime > maxStopTime ? 5 : maxStopTime - (currTime - stopTime))))
+			mutex_unlock(&SHARED->mutex);
+		else
+		{
+			emergency_stop();
+			return;
+		}
+
+		if (SHARED->working.Empty())
+		{
+			if (SHARED->best.move)
+			{
+				// workers failed low, get the best cached move
+				char rescueMove[64], moveStr[16];
+				move_to_string(SHARED->best.move, moveStr);
+				int len = snprintf(rescueMove, sizeof(rescueMove) - 1, "bestmove %s\n", moveStr);
+				put_line(rescueMove, len);
+				SHARED->best = { 0, 0, 0, 0 };
+			}
+			break;
+		}
+
+		if (currTime - stopTime > maxStopTime)
+		{
+			emergency_stop();
+			return;
+		}
 	}
 }
 
-void init_shared()
+static void stop()
 {
-	char name[256];
-	DWORD size = SharedPVHashOffset + pv_hash_size * sizeof(GPVEntry);
-	sprintf_s(name, "ROC_SHARED_%d", WinParId);
-	if (parent && SHARED != NULL)
-	{
-		UnmapViewOfFile(Smpi);
-		CloseHandle(SHARED);
-	}
-	if (parent)
-		SHARED = CreateFileMapping(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, size, name);
-	else
-		SHARED = OpenFileMapping(FILE_MAP_ALL_ACCESS, 0, name);
-	Smpi = (GSMPI*)MapViewOfFile(SHARED, FILE_MAP_ALL_ACCESS, 0, 0, size);
-	if (parent)
-		memset(Smpi, 0, size);
-	PVHash = (GPVEntry*)(((char*)Smpi) + SharedPVHashOffset);
-	if (parent)
-		memset(PVHash, 0, pv_hash_size * sizeof(GPVEntry));
+	LOCK_SHARED;
+	SHARED->stopAll = true;
 }
 
-void init()
+static void go()
 {
-	init_shared();
-	init_data();
+#if TB
+	if (popcnt(PieceAll()) <= int(TB_LARGEST))
+	{
+		auto res = TBProbe(tb_probe_root, T(Current->turn));
+		if (res != TB_RESULT_FAILED)
+		{
+			int bestScore = TbValues[TB_GET_WDL(res)];
+			int flags = 0;
+			unsigned to = TB_GET_TO(res);
+			switch (TB_GET_PROMOTES(res))
+			{
+			case TB_PROMOTES_QUEEN:
+				flags |= FlagPQueen; break;
+			case TB_PROMOTES_ROOK:
+				flags |= FlagPRook; break;
+			case TB_PROMOTES_BISHOP:
+				flags |= FlagPBishop; break;
+			case TB_PROMOTES_KNIGHT:
+				flags |= FlagPKnight; break;
+			default:
+				break;
+			}
+			int bestMove = (TB_GET_FROM(res) << 6) | to | flags;
+			char movStr[16];
+			move_to_string(bestMove, movStr);
+			cout << "info depth 1 seldepth 1 score cp " << (bestScore / CP_SEARCH) << " nodes 1 tbhits 1 pv " << movStr << "\n";
+			cout << "bestmove " << movStr << "\n";
+			return;
+		}
+	}
+#endif
+
+	SHARED->date++;
+	assert(PVN == 1);       // Multi-PV NYI.
+	assert(INFO->pid == SETTINGS->parentPid);
+	memcpy(&SHARED->rootBoard, Board, sizeof(GBoard));
+	memcpy(&SHARED->rootData, Current, sizeof(GData));
+	memcpy(&SHARED->rootStack, &Stack[0], sp * sizeof(uint64_t));
+	SHARED->rootSp = sp;
+	SHARED->best = { 0, 0, 0, 0 };
+	SHARED->stopAll = false;
+	for (int i = 0; i < SETTINGS->nThreads; i++)
+	{
+		THREADS[i]->nodes = 0;
+		THREADS[i]->tbHits = 0;
+		THREADS[i]->depth = 0;
+		THREADS[i]->selDepth = 0;
+		THREADS[i]->bestMove = 0;
+		THREADS[i]->bestScore = 0;
+		THREADS[i]->PV[0] = 0;
+	}
+	event_signal(&SHARED->goEvent);
 }
+
+static void wait_for_go(void)
+{
+	if (WaitForSingleObject(SHARED->goEvent, INFINITE) != WAIT_OBJECT_0)
+		error_msg("Wait-for-go error %d\n", GetLastError());
+}
+
+static inline void check_for_stop(void)
+{
+	if (SHARED->stopAll) throw 3;
+}
+
+#ifndef W32_BUILD
+#define SET_BIT(var, bit) (InterlockedOr(&(var), 1 << (bit)))
+#define SET_BIT_64(var, bit) (InterlockedOr64(&(var), Bit(bit)));
+#define ZERO_BIT_64(var, bit) (InterlockedAnd64(&(var), ~Bit(bit)));
+#define TEST_RESET_BIT(var, bit) (InterlockedBitTestAndReset64(&(var), bit))
+#define TEST_RESET(var) (InterlockedExchange64(&(var), 0))
+#else
+#define SET_BIT(var, bit) (_InterlockedOr(&(var), 1 << (bit)))
+#define SET_BIT_64(var, bit)                                        \
+    {                                                               \
+        if ((bit) < 32)                                             \
+            _InterlockedOr((LONG*)&(var), 1 << (bit));              \
+        else                                                        \
+            _InterlockedOr(((LONG*)(&(var))) + 1, 1 << ((bit)-32)); \
+    }
+#define ZERO_BIT_64(var, bit)                                           \
+    {                                                                   \
+        if ((bit) < 32)                                                 \
+            _InterlockedAnd((LONG*)&(var), ~(1 << (bit)));              \
+        else                                                            \
+            _InterlockedAnd(((LONG*)(&(var))) + 1, ~(1 << ((bit)-32))); \
+    }
+#define TEST_RESET_BIT(var, bit) (InterlockedBitTestAndReset(&(var), bit))
+#define TEST_RESET(var) (InterlockedExchange(&(var), 0))
+#endif
+#define SET(var, value) (InterlockedExchange(&(var), value))
+
+#define LOCK(lock)                                                     \
+    {                                                                  \
+        while (InterlockedCompareExchange(&(lock), 1, 0)) _mm_pause(); \
+    }
+#define UNLOCK(lock)  \
+    {                 \
+        SET(lock, 0); \
+    }
+
+// END SMP
 
 void setup_board()
 {
 	int i;
-	uint64 occ;
 
-	occ = 0;
+	uint64 occ = 0;
 	sp = 0;
-	++date;
-	if (date > 0x8000)
-	{  // mustn't ever happen
-		date = 2;
-		// now GUI must wait for readyok... we have plenty of time :)
-		std::fill(Hash, Hash + hash_size, NullEntry);
-		std::fill(PVHash, PVHash + pv_hash_size, NullPVEntry);
-		//std::fill(PawnHash.begin(), PawnHash.end(), NullPawnEntry);
+	if (SHARED)
+	{
+		++SHARED->date;
+		if (SHARED->date > 0x8000)
+		{  // mustn't ever happen
+			SHARED->date = 2;
+			// now GUI must wait for readyok... we have plenty of time :)
+			std::fill(HASH, HASH + SETTINGS->nHash, NullEntry);
+			std::fill(PVHASH, PVHASH + N_PV_HASH, NullPVEntry);
+		}
 	}
 	Current->material = 0;
 	Current->pst = 0;
@@ -3444,12 +4072,12 @@ void setup_board()
 		popcnt(Piece(BlackKnight)) > 2 || popcnt(Piece(BlackLight)) > 1 || popcnt(Piece(BlackDark)) > 1 || popcnt(Piece(BlackRook)) > 2 || popcnt(Piece(BlackQueen)) > 2)
 		Current->material |= FlagUnusualMaterial;
 	Current->capture = 0;
-	fill(Current->killer.begin() + 1, Current->killer.end(), 0);
+	for (int ik = 1; ik <= N_KILLER; ++ik) Current->killer[ik] = 0;
 	Current->ply = 0;
 	Stack[sp] = Current->key;
 }
 
-void get_board(const char fen[])
+const char* get_board(const char* fen)
 {
 	int pos, i, j;
 	unsigned char c;
@@ -3517,6 +4145,7 @@ void get_board(const char fen[])
 		Current->ep_square = i;
 	}
 	setup_board();
+	return fen + pos;
 }
 
 void init_search(int clear_hash)
@@ -3530,43 +4159,29 @@ void init_search(int clear_hash)
 	memset(Data + 1, 0, 127 * sizeof(GData));
 	if (clear_hash)
 	{
-		date = 0;
-		date = 1;
-		memset(Hash, 0, hash_size * sizeof(GEntry));
-		memset(PVHash, 0, pv_hash_size * sizeof(GPVEntry));
+		SHARED->date = 1;
+		fill(HASH, HASH + SETTINGS->nHash, NullEntry);
+		fill(PVHASH, PVHASH + N_PV_HASH, NullPVEntry);
 	}
 	get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-	nodes = tb_hits = 0;
-	best_move = best_score = 0;
+	INFO->nodes = INFO->tbHits = 0;
+	INFO->bestMove = INFO->bestScore = 0;
 	LastTime = LastValue = LastExactValue = InstCnt = 0;
 	LastSpeed = 0;
 	PVN = 1;
-	Contempt = 8;
-	Wobble = 0;
-	Infinite = 1;
 	SearchMoves = 0;
-	TimeLimit1 = TimeLimit2 = 0;
-	Stop = Searching = 0;
-	if (MaxPrN > 1)
-		ZERO_BIT_64(Smpi->searching, 0);
-	DepthLimit = MAX_HEIGHT;
-	LastDepth = MAX_HEIGHT;
-	Print = 1;
+	LastDepth = 128;
 	memset(CurrentSI, 0, sizeof(GSearchInfo));
 	memset(BaseSI, 0, sizeof(GSearchInfo));
-#ifdef CPU_TIMING
-	GlobalTime[GlobalTurn] = UciBaseTime;
-	GlobalInc[GlobalTurn] = UciIncTime;
-#endif
 }
 
 INLINE GEntry* probe_hash()
 {
-	GEntry* start = Hash + (High32(Current->key) & hash_mask);
-	for (GEntry* Entry = start; Entry < start + 4; ++Entry)
+	GEntry* start = HASH + (High32(Current->key) & SETTINGS->hashMask);
+	for (GEntry* Entry = start; Entry < start + HASH_CLUSTER; ++Entry)
 		if (Low32(Current->key) == Entry->key)
 		{
-			Entry->date = date;
+			Entry->date = SHARED->date;
 			return Entry;
 		}
 	return nullptr;
@@ -3574,59 +4189,14 @@ INLINE GEntry* probe_hash()
 
 INLINE GPVEntry* probe_pv_hash()
 {
-	GPVEntry* start = PVHash + (High32(Current->key) & pv_hash_mask);
-	for (GPVEntry* PVEntry = start; PVEntry < start + pv_cluster_size; ++PVEntry)
+	GPVEntry* start = PVHASH + (High32(Current->key) & PV_HASH_MASK);
+	for (GPVEntry* PVEntry = start; PVEntry < start + PV_CLUSTER; ++PVEntry)
 		if (Low32(Current->key) == PVEntry->key)
 		{
-			PVEntry->date = date;
+			PVEntry->date = SHARED->date;
 			return PVEntry;
 		}
 	return nullptr;
-}
-
-void move_to_string(int move, char string[])
-{
-	int pos = 0;
-	string[pos++] = ((move >> 6) & 7) + 'a';
-	string[pos++] = ((move >> 9) & 7) + '1';
-	string[pos++] = (move & 7) + 'a';
-	string[pos++] = ((move >> 3) & 7) + '1';
-	if (IsPromotion(move))
-	{
-		if ((move & 0xF000) == FlagPQueen)
-			string[pos++] = 'q';
-		else if ((move & 0xF000) == FlagPKnight)
-			string[pos++] = 'n';
-		else if ((move & 0xF000) == FlagPRook)
-			string[pos++] = 'r';
-		else if ((move & 0xF000) == FlagPBishop)
-			string[pos++] = 'b';
-	}
-	string[pos] = 0;
-}
-
-int move_from_string(char string[])
-{
-	int from, to, move;
-	from = ((string[1] - '1') * 8) + (string[0] - 'a');
-	to = ((string[3] - '1') * 8) + (string[2] - 'a');
-	move = (from << 6) | to;
-	if (Board->square[from] >= WhiteKing && abs(to - from) == 2)
-		move |= FlagCastling;
-	if (T(Current->ep_square) && to == Current->ep_square)
-		move |= FlagEP;
-	if (string[4] != 0)
-	{
-		if (string[4] == 'q')
-			move |= FlagPQueen;
-		else if (string[4] == 'n')
-			move |= FlagPKnight;
-		else if (string[4] == 'r')
-			move |= FlagPRook;
-		else if (string[4] == 'b')
-			move |= FlagPBishop;
-	}
-	return move;
 }
 
 template<bool me> void do_move(int move)
@@ -3804,14 +4374,14 @@ template<bool me> void do_move(int move)
 	}	// end F(Capture)
 
 	Next->key ^= RO->TurnKey;
-	Entry = Hash + (High32(Next->key) & hash_mask);
+	Entry = HASH + (High32(Next->key) & SETTINGS->hashMask);
 	prefetch(Entry);
 	++sp;
 	Stack[sp] = Next->key;
 	Next->move = move;
 	Next->gen_flags = 0;
 	++Current;
-	++nodes;
+	++INFO->nodes;
 	assert(King(me) && King(opp));
 	BYE
 }
@@ -3888,7 +4458,7 @@ void do_null()
 
 	Next = Current + 1;
 	Next->key = Current->key ^ RO->TurnKey;
-	Entry = Hash + (High32(Next->key) & hash_mask);
+	Entry = HASH + (High32(Next->key) & SETTINGS->hashMask);
 	prefetch(Entry);
 	Next->pawn_key = Current->pawn_key;
 	Next->eval_key = 0;
@@ -3915,7 +4485,7 @@ void do_null()
 	Next->move = 0;
 	Next->gen_flags = 0;
 	++Current;
-	++nodes;
+	++INFO->nodes;
 }
 
 void undo_null()
@@ -4481,7 +5051,6 @@ template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 {
 	bool sr_me = Rook(me) && !Minor(me) && !Queen(me) && Single(Rook(me));
 	bool sr_opp = Rook(opp) && !Minor(opp) && !Queen(opp) && Single(Rook(opp));
-	int ksq = lsb(King(me));
 
 	for (uint8 u = EI.PawnEntry->passer[me]; T(u); u &= (u - 1))
 	{
@@ -4703,9 +5272,9 @@ template<class POP> void evaluation()
 #endif
 #endif
 																																			// apply contempt before drawishness
-		if (Contempt > 0)
+		if (SETTINGS->contempt > 0)
 		{
-			int maxContempt = (phase * Contempt * CP_EVAL) / 64;
+			int maxContempt = (phase * SETTINGS->contempt * CP_EVAL) / 64;
 			int mySign = F(Data->turn) ? 1 : -1;
 			if (Current->score * mySign > 2 * maxContempt)
 				Current->score += mySign * maxContempt;
@@ -4755,10 +5324,10 @@ template<class POP> void evaluation()
 	}
 }
 
+int HardwarePopCnt;
 INLINE void evaluate()
 {
-	HI
-		HardwarePopCnt ? evaluation<pop1_>() : evaluation<pop0_>();
+	HardwarePopCnt ? evaluation<pop1_>() : evaluation<pop0_>();
 	BYE
 }
 
@@ -4967,50 +5536,51 @@ template<bool me> bool is_check(int move)
 	return false;
 }
 
-void pick_pv()
+void pick_pv(int pvPtr, int pvLen)
 {
-	GEntry* Entry;
-	GPVEntry* PVEntry;
+	GEntry *Entry;
+	GPVEntry *PVEntry;
 	int i, depth, move;
-	if (pvp >= Min(pv_length, 64))
+	if (pvPtr >= Min(pvLen, MAX_PV_LEN))
 	{
-		PV[pvp] = 0;
+		INFO->PV[pvPtr] = 0;
 		return;
 	}
 	move = 0;
 	depth = -256;
-	if (Entry = probe_hash())
-		if (T(Entry->move) && Entry->low_depth > depth)
-		{
-			depth = Entry->low_depth;
-			move = Entry->move;
-		}
-	if (PVEntry = probe_pv_hash())
-		if (T(PVEntry->move) && PVEntry->depth > depth)
-		{
-			depth = PVEntry->depth;
-			move = PVEntry->move;
-		}
+	if ((Entry = probe_hash()) && T(Entry->move) && Entry->low_depth > depth)
+	{
+		depth = Entry->low_depth;
+		move = Entry->move;
+	}
+	if ((PVEntry = probe_pv_hash()) && T(PVEntry->move) && PVEntry->depth > depth)
+	{
+		depth = PVEntry->depth;
+		move = PVEntry->move;
+	}
 	evaluate();
 	if (Current->att[Current->turn] & King(Current->turn ^ 1))
-		PV[pvp] = 0;
+		INFO->PV[pvPtr] = 0;
 	else if (move && is_legal(T(Current->turn), move))
 	{
-		PV[pvp] = move;
-		++pvp;
-		ScopedMove_ raii(move);
-		if (Current->ply >= 100)
-			return;
+		INFO->PV[pvPtr] = move;
+		pvPtr++;
+		if (Current->turn) do_move<1>(move); else do_move<0>(move);
+		if (Current->ply >= 100) goto finish;
 		for (i = 4; i <= Current->ply; i += 2)
+		{
 			if (Stack[sp - i] == Current->key)
 			{
-				PV[pvp] = 0;
-				return;
+				INFO->PV[pvPtr] = 0;
+				goto finish;
 			}
-		pick_pv();
+		}
+		pick_pv(pvPtr, pvLen);
+	finish:
+		if (Current->turn ^ 1) undo_move<1>(move); else undo_move<0>(move);
 	}
 	else
-		PV[pvp] = 0;
+		INFO->PV[pvPtr] = 0;
 }
 
 template<bool me> bool draw_in_pv()
@@ -5044,11 +5614,11 @@ void hash_high(int value, int depth)
 
 	// search for an old entry to overwrite
 	int minMerit = 0x70000000;
-	for (i = 0, best = Entry = Hash + (High32(Current->key) & hash_mask); i < 4; ++i, ++Entry)
+	for (i = 0, best = Entry = HASH + (High32(Current->key) & SETTINGS->hashMask); i < HASH_CLUSTER; ++i, ++Entry)
 	{
 		if (Entry->key == Low32(Current->key))
 		{
-			Entry->date = date;
+			Entry->date = SHARED->date;
 			if (depth > Entry->high_depth || (depth == Entry->high_depth && value < Entry->high))
 			{
 				if (Entry->low <= value)
@@ -5072,7 +5642,7 @@ void hash_high(int value, int depth)
 			best = Entry;
 		}
 	}
-	best->date = date;
+	best->date = SHARED->date;
 	best->key = Low32(Current->key);
 	best->high = value;
 	best->high_depth = depth;
@@ -5091,11 +5661,11 @@ int hash_low(int move, int value, int depth)
 
 	int min_score = 0x70000000;
 	move &= 0xFFFF;
-	for (i = 0, best = Entry = Hash + (High32(Current->key) & hash_mask); i < 4; ++i, ++Entry)
+	for (i = 0, best = Entry = HASH + (High32(Current->key) & SETTINGS->hashMask); i < HASH_CLUSTER; ++i, ++Entry)
 	{
 		if (Entry->key == Low32(Current->key))
 		{
-			Entry->date = date;
+			Entry->date = SHARED->date;
 			if (depth > Entry->low_depth || (depth == Entry->low_depth && value > Entry->low))
 			{
 				if (move)
@@ -5123,7 +5693,7 @@ int hash_low(int move, int value, int depth)
 			best = Entry;
 		}
 	}
-	best->date = date;
+	best->date = SHARED->date;
 	best->key = Low32(Current->key);
 	best->high = 0;
 	best->high_depth = 0;
@@ -5141,11 +5711,11 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 	GPVEntry* PVEntry;
 
 	min_score = 0x70000000;
-	for (i = 0, best = PVEntry = PVHash + (High32(Current->key) & pv_hash_mask); i < pv_cluster_size; ++i, ++PVEntry)
+	for (i = 0, best = PVEntry = PVHASH + (High32(Current->key) & PV_HASH_MASK); i < PV_CLUSTER; ++i, ++PVEntry)
 	{
 		if (PVEntry->key == Low32(Current->key))
 		{
-			PVEntry->date = date;
+			PVEntry->date = SHARED->date;
 			PVEntry->knodes += knodes;
 			if (PVEntry->depth <= depth)
 			{
@@ -5169,7 +5739,7 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 		}
 	}
 	best->key = Low32(Current->key);
-	best->date = date;
+	best->date = SHARED->date;
 	best->value = value;
 	best->depth = depth;
 	best->move = move;
@@ -5248,7 +5818,7 @@ INLINE int pick_move()
 INLINE void apply_wobble(int* move, int depth)
 {
 	int mp = (((*move & 0xFFFF) * 529) >> 9) & 1;
-	*move += (mp + depth) % (Wobble + 1);	// (minimal) bonus for right parity
+	*move += (mp + depth) % (SETTINGS->wobble + 1);	// (minimal) bonus for right parity
 }
 
 INLINE bool is_killer(uint16 move)
@@ -5309,8 +5879,8 @@ template<bool me> void gen_next_moves(int depth)
 		p = gen_quiet_moves<me>(Current->start);
 		Current->gen_flags |= FlagSort;
 		Current->current = Current->start;
-		for (auto q = Current->start; *q; ++q)
-			apply_wobble(&*q, depth % (Wobble + 1));
+		for (q = Current->start; *q; ++q)
+			apply_wobble(&*q, depth);
 		return;
 	case s_bad_cap:
 		*(Current->start) = 0;
@@ -5740,7 +6310,6 @@ template<bool me> int* gen_evasions(int* list)
 {
 	static const int MvvLvaPromotion = RO->MvvLva[WhiteQueen][BlackQueen];
 
-	int from;
 	uint64 b, u;
 	//	pair<uint64, uint64> pJoins = pawn_joins(me, Pawn(me));
 
@@ -5781,7 +6350,7 @@ template<bool me> int* gen_evasions(int* list)
 	}
 	for (u = RO->PAtt[opp][att_sq] & Pawn(me); T(u); Cut(u))
 	{
-		from = lsb(u);
+		int from = lsb(u);
 		if (HasBit(OwnLine(me, 7), att_sq))
 			list = AddMove(list, from, att_sq, FlagPQueen, MvvLvaPromotionCap(PieceAt(att_sq)));
 		else if (HasBit(Current->mask, att_sq))
@@ -5793,7 +6362,7 @@ template<bool me> int* gen_evasions(int* list)
 	uint64 inter = RO->Between[king][att_sq];
 	for (u = Shift<opp>(inter) & Pawn(me); T(u); Cut(u))
 	{
-		from = lsb(u);
+		int from = lsb(u);
 		if (HasBit(OwnLine(me, 6), from))
 			list = AddMove(list, from, from + Push[me], FlagPQueen, MvvLvaPromotion);
 		else if (F(~Current->mask))
@@ -5961,7 +6530,7 @@ template<bool me> int* gen_checks(int* list)
 {
 	static const int MvvLvaXray = RO->MvvLva[WhiteQueen][WhitePawn];
 
-	int king, from;
+	int king;
 	uint64 u, v, target, b_target, r_target, clear;
 
 	clear = ~(Piece(me) | Current->mask);
@@ -5969,7 +6538,7 @@ template<bool me> int* gen_checks(int* list)
 	// discovered checks
 	for (u = Current->xray[me] & Piece(me); T(u); Cut(u))
 	{
-		from = lsb(u);
+		int from = lsb(u);
 		target = clear & (~RO->FullLine[king][from]);
 		if (PieceAt(from) == IPawn[me])
 		{
@@ -6012,7 +6581,7 @@ template<bool me> int* gen_checks(int* list)
 
 	for (u = RO->KAttAtt[king] & Pawn(me) & (~OwnLine(me, 6)) & nonDiscover; T(u); Cut(u))
 	{
-		from = lsb(u);
+		int from = lsb(u);
 		for (v = RO->PAtt[me][from] & RO->PAtt[opp][king] & clear & Piece(opp); T(v); Cut(v))
 			list = AddCaptureP(list, IPawn[me], from, lsb(v), 0);
 		if (F(PieceAt(from + Push[me])) && HasBit(RO->PAtt[opp][king], from + Push[me]))
@@ -6045,7 +6614,7 @@ template<bool me> int* gen_checks(int* list)
 	{	  // check for double-push checks	
 		for (u = Pawn(me) & OwnLine(me, 1) & nonDiscover & RO->PAtt[opp][king - 2 * Push[me]]; T(u); Cut(u))
 		{
-			from = lsb(u);
+			int from = lsb(u);
 			int to = from + 2 * Push[me];
 			if (F(PieceAt(from + Push[me])) && F(PieceAt(to)))
 				list = AddMove(list, from, to, 0, 0);
@@ -6162,6 +6731,11 @@ template<bool me> INLINE uint64 capture_margin_mask(int alpha, int* score)
 	return retval;
 }
 
+#define HALT_CHECK {\
+    if (Current->ply >= 100) return 0; \
+    for (int ihc = 4; ihc <= Current->ply; ihc += 2) if (Stack[sp - ihc] == Current->key) return 0; \
+	if ((Current - Data) >= 126) {evaluate(); return Current->score; }}
+
 template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flags)
 {
 	int i, value, score, move, hash_move, hash_depth;
@@ -6173,10 +6747,9 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 		return score;
 	};
 
+	check_for_stop();
 	if (flags & FlagHaltCheck)
-	{
 		HALT_CHECK;
-	}
 #ifdef CPU_TIMING
 #ifndef TIMING
 	if (nodes > check_node + 0x4000)
@@ -6213,7 +6786,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 	hash_move = hash_depth = 0;
 	if (flags & FlagHashCheck)
 	{
-		for (i = 0, Entry = Hash + (High32(Current->key) & hash_mask); i < 4; ++Entry, ++i)
+		for (i = 0, Entry = HASH + (High32(Current->key) & SETTINGS->hashMask); i < HASH_CLUSTER; ++Entry, ++i)
 		{
 			if (Low32(Current->key) == Entry->key)
 			{
@@ -6367,14 +6940,12 @@ template<bool me, bool pv> int q_evasion(int alpha, int beta, int depth, int fla
 
 	score = static_cast<int>(Current - Data) - MateValue;
 	if (flags & FlagHaltCheck)
-	{
 		HALT_CHECK;
-	}
 
 	hash_move = hash_depth = 0;
 	if (flags & FlagHashCheck)
 	{
-		for (i = 0, Entry = Hash + (High32(Current->key) & hash_mask); i < 4; ++Entry, ++i)
+		for (i = 0, Entry = HASH + (High32(Current->key) & SETTINGS->hashMask); i < HASH_CLUSTER; ++Entry, ++i)
 		{
 			if (Low32(Current->key) == Entry->key)
 			{
@@ -6468,200 +7039,7 @@ template<bool me, bool pv> int q_evasion(int alpha, int beta, int depth, int fla
 	return score;
 }
 
-void send_position(GPos* Pos)
-{
-	Pos->Position->key = Current->key;
-	Pos->Position->pawn_key = Current->pawn_key;
-	Pos->Position->move = Current->move;
-	Pos->Position->capture = Current->capture;
-	Pos->Position->turn = Current->turn;
-	Pos->Position->castle_flags = Current->castle_flags;
-	Pos->Position->ply = Current->ply;
-	Pos->Position->ep_square = Current->ep_square;
-	Pos->Position->piece = Current->piece;
-	Pos->Position->pst = Current->pst;
-	Pos->Position->material = Current->material;
-	for (int i = 0; i < 64; ++i) Pos->Position->square[i] = Board->square[i];
-	Pos->date = date;
-	Pos->sp = sp;
-	for (int i = 0; i <= Current->ply; ++i) Pos->stack[i] = Stack[sp - i];
-	for (int i = 0; i < Min(16, 126 - (int)(Current - Data)); ++i)
-		for (int ik = 0; ik < N_KILLER; ++ik) Pos->killer[i][ik] = (Current + i + 1)->killer[ik + 1];
-	for (int i = Min(16, 126 - (int)(Current - Data)); i < 16; ++i)
-		for (int ik = 0; ik < N_KILLER; ++ik) Pos->killer[i][ik] = 0;
-}
-
-void retrieve_board(GPos* Pos)
-{
-	for (int i = 0; i < 16; ++i) Board->bb[i] = 0;
-	for (int i = 0; i < 64; ++i)
-	{
-		int piece = Pos->Position->square[i];
-		Board->square[i] = piece;
-		if (piece)
-		{
-			Board->bb[piece & 1] |= Bit(i);
-			Board->bb[piece] |= Bit(i);
-		}
-	}
-}
-
-void retrieve_position(GPos* Pos, int copy_stack)
-{
-	Current->key = Pos->Position->key;
-	Current->pawn_key = Pos->Position->pawn_key;
-	Current->move = Pos->Position->move;
-	Current->capture = Pos->Position->capture;
-	Current->turn = Pos->Position->turn;
-	Current->castle_flags = Pos->Position->castle_flags;
-	Current->ply = Pos->Position->ply;
-	Current->ep_square = Pos->Position->ep_square;
-	Current->piece = Pos->Position->piece;
-	Current->pst = Pos->Position->pst;
-	Current->material = Pos->Position->material;
-	retrieve_board(Pos);
-	date = Pos->date;
-	if (copy_stack)
-	{
-		sp = Current->ply;
-		for (int i = 0; i <= sp; ++i) Stack[sp - i] = Pos->stack[i];
-	}
-	else
-		sp = Pos->sp;
-
-	for (int i = 0; i < 16; ++i)
-		for (int ik = 0; ik < N_KILLER; ++ik) (Current + i + 1)->killer[ik + 1] = Pos->killer[i][ik];
-}
-
-void halt_all(GSP* Sp, int locked)
-{
-	GMove* M;
-	if (!locked)
-		LOCK(Sp->lock);
-	if (Sp->active)
-	{
-		for (int i = 0; i < Sp->move_number; ++i)
-		{
-			M = &Sp->move[i];
-			if (T(M->flags & FlagClaimed) && F(M->flags & FlagFinished) && M->id != Id)
-				SET_BIT_64(Smpi->stop, M->id);
-		}
-		Sp->active = Sp->claimed = 0;
-		ZERO_BIT_64(Smpi->active_sp, (int)(Sp - Smpi->Sp));
-	}
-	if (!locked)
-		UNLOCK(Sp->lock);
-}
-
-void halt_all(int from, int to)
-{
-	for (uint64 u = Smpi->active_sp; u; Cut(u))
-	{
-		GSP* Sp = &Smpi->Sp[lsb(u)];
-		LOCK(Sp->lock);
-		if (Sp->height >= from && Sp->height <= to)
-			halt_all(Sp, 1);
-		UNLOCK(Sp->lock);
-	}
-}
-
-void init_sp(GSP* Sp, int alpha, int beta, int depth, int pv, int singular, int height)
-{
-	Sp->claimed = 1;
-	Sp->active = Sp->finished = 0;
-	Sp->best_move = 0;
-	Sp->alpha = alpha;
-	Sp->beta = beta;
-	Sp->depth = depth;
-	Sp->split = 0;
-	Sp->singular = singular;
-	Sp->height = height;
-	Sp->move_number = 0;
-	Sp->pv = pv;
-}
-
-int CutSearch(GSP* Sp)
-{
-	halt_all(Sp, 1);
-	UNLOCK(Sp->lock);
-	return Sp->beta;
-}
-
-template<bool me> int smp_search(GSP* Sp)
-{
-	int i, value, move, alpha;
-	if (!Sp->move_number)
-		return Sp->alpha;
-	send_position(Sp->Pos);
-	if (setjmp(Sp->jump))
-	{
-		LOCK(Sp->lock);
-		halt_all(Sp, 1);
-		UNLOCK(Sp->lock);
-		halt_all(Sp->height + 1, 127);
-		Current = Data + Sp->height;
-		sp = Sp->Pos->sp;
-		retrieve_board(Sp->Pos);
-		return Sp->beta;
-	}
-	LOCK(Sp->lock);
-	SET_BIT_64(Smpi->active_sp, (int)(Sp - Smpi->Sp));
-	Sp->active = 1;
-	Sp->claimed = Sp->finished = 0;
-	
-	for (int iter = 0; iter < 2; ++iter)
-	{
-		for (i = 0; i < Sp->move_number; ++i)
-		{
-			GMove* M = &Sp->move[i];
-			if (!iter)
-				Sp->current = i;
-			if (M->flags & FlagFinished)
-				continue;
-			if (!iter)
-			{
-				if (M->flags & FlagClaimed)
-					continue;
-				M->flags |= FlagClaimed;
-				M->id = Id;
-			}
-			else if (M->flags & FlagClaimed)
-			{
-				SET_BIT_64(Smpi->stop, M->id);
-				M->id = Id;
-			}
-			move = M->move;
-			alpha = Sp->alpha;
-			UNLOCK(Sp->lock);
-			do_move<me>(move);
-			value = -scout<opp, 0>(-alpha, M->reduced_depth, FlagNeatSearch | ExtToFlag(M->ext));
-			if (value > alpha && (Sp->pv || M->reduced_depth < M->research_depth))
-			{
-				if (Sp->pv)
-					value = -pv_search<opp, 0>(-Sp->beta, -Sp->alpha, M->research_depth, FlagNeatSearch | ExtToFlag(M->ext));
-				else
-					value = -scout<opp, 0>(-alpha, M->research_depth, FlagNeatSearch | FlagDisableNull | ExtToFlag(M->ext));
-			}
-			undo_move<me>(move);
-			LOCK(Sp->lock);
-			if (Sp->finished)
-				return CutSearch(Sp);
-			M->flags |= FlagFinished;
-			if (value > Sp->alpha)
-			{
-				Sp->best_move = move;
-				Sp->alpha = Min<volatile int>(value, Sp->beta);
-				if (value >= Sp->beta)
-					return CutSearch(Sp);
-			}
-		}
-	}
-	halt_all(Sp, 1);
-	UNLOCK(Sp->lock);
-	return Sp->alpha;
-}
-
-template<bool exclusion> int cut_search(int move, int hash_move, int score, int beta, int depth, int flags, int sp_init)
+template<bool exclusion> int cut_search(int move, int hash_move, int score, int beta, int depth, int flags)
 {
 	if (exclusion)
 		return score;
@@ -6681,7 +7059,7 @@ template<bool exclusion> int cut_search(int move, int hash_move, int score, int 
 			HistoryGood(*(Current->current - 1), depth);	// restore history information
 		else
 			HistoryGood(move, depth);
-		if (move != hash_move && Current->stage == s_quiet && !sp_init)
+		if (move != hash_move && Current->stage == s_quiet)
 			for (auto p = Current->start; p < (Current->current - 1); ++p)
 				HistoryBad(*p, depth);
 		UpdateRef(move);
@@ -6697,34 +7075,9 @@ INLINE int RazoringThreshold(int score, int depth, int height)
 
 template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 {
-	int i, value, cnt, flag, moves_to_play, score, move, ext, hash_move, do_split, sp_init, singular, played, high_depth, high_value, hash_value,
+	int value, cnt, flag, moves_to_play, score, move, ext, hash_move, singular, played, high_depth, high_value, hash_value,
 		new_depth, move_back, hash_depth;
 	int height = (int)(Current - Data);
-	GSP* Sp = nullptr;
-
-	if (nodes > check_node_smp + 0x10)
-	{
-#ifndef W32_BUILD
-		InterlockedAdd64(&Smpi->nodes, (long long)(nodes)-(long long)(check_node_smp));
-#else
-		Smpi->nodes += (long long)(nodes)-(long long)(check_node_smp);
-#endif
-		check_node_smp = nodes;
-		check_state();
-		if (nodes > check_node + 0x4000 && parent)
-		{
-#ifdef TB
-			InterlockedAdd64(&Smpi->tb_hits, tb_hits);
-			tb_hits = 0;
-#endif
-			check_node = nodes;
-#ifndef REGRESSION
-			check_time(nullptr, 1);
-#endif
-			if (Searching)
-				SET_BIT_64(Smpi->searching, Id);  // BUG, don't know why this is necessary
-		}
-	}
 
 	if (depth <= 1)
 		return q_search<me, 0>(beta - 1, beta, 1, flags);
@@ -6739,7 +7092,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 
 	if (exclusion)
 	{
-		cnt = high_depth = do_split = sp_init = singular = played = 0;
+		cnt = high_depth = singular = played = 0;
 		flag = 1;
 		score = beta - 1;
 		high_value = MateValue;
@@ -6809,7 +7162,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
-				tb_hits++;
+				++INFO->tbHits;
 				hash_high(TbValues[res], TbDepth(depth));
 				hash_low(0, TbValues[res], TbDepth(depth));
 				return TbValues[res];
@@ -6894,7 +7247,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				{
 					score = value;
 					if (value >= beta)
-						return cut_search<exclusion>(move, hash_move, score, beta, depth, flags, 0);
+						return cut_search<exclusion>(move, hash_move, score, beta, depth, flags);
 				}
 			}
 		}
@@ -6933,11 +7286,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 	if (depth <= 5)
 		Current->gen_flags |= FlagNoBcSort;
 
-	do_split = sp_init = 0;
-	if (depth >= SplitDepth && PrN > 1 && parent && !exclusion)
-		do_split = 1;
-
-	while (move = get_move<me, 0>(Odd(depth)))
+	while (move = get_move<me, 0>(depth))
 	{
 		if (move == hash_move)
 			continue;
@@ -7001,35 +7350,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			else if (Current->stage == s_bad_cap && !check && depth <= 5)
 				continue;
 		}
-		if (do_split && played >= 1)
-		{
-			uint64 u = 1;	// used to flag need for setup
-			if (!sp_init)
-			{
-				sp_init = 1;
-				u = ~Smpi->active_sp;
-				if (!u)
-					do_split = 0;
-				else
-				{
-					Sp = &Smpi->Sp[lsb(u)];
-					init_sp(Sp, beta - 1, beta, depth, 0, singular, height);
-				}
-			}
-			if (u)	// already initialized, or have active sp
-			{
-				GMove* M = &Sp->move[Sp->move_number++];
-				M->ext = ext;
-				M->flags = 0;
-				M->move = move;
-				M->reduced_depth = new_depth;
-				M->research_depth = depth - 2 + ext;
-				M->stage = Current->stage;
-				continue;
-			}
-		}
 
-		// done splitting
 		do_move<me>(move);
 		value = -scout<opp, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value >= beta && new_depth < depth - 2 + ext)
@@ -7040,25 +7361,8 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		{
 			score = value;
 			if (value >= beta)
-				return cut_search<exclusion>(move, hash_move, score, beta, depth, flags, sp_init);
+				return cut_search<exclusion>(move, hash_move, score, beta, depth, flags);
 		}
-	}
-	if (do_split && sp_init)
-	{
-		value = smp_search<me>(Sp);
-		if (value >= beta && Sp->best_move)
-		{
-			score = beta;
-			Current->best = move = Sp->best_move;
-			for (i = 0; i < Sp->move_number; ++i)
-			{
-				GMove* M = &Sp->move[i];
-				if ((M->flags & FlagFinished) && M->stage == s_quiet && M->move != move)
-					HistoryBad(M->move, depth);
-			}
-		}
-		if (value >= beta)
-			return cut_search<exclusion>(move, hash_move, score, beta, depth, flags, sp_init);
 	}
 	if (F(cnt) && F(flag))
 	{
@@ -7160,7 +7464,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
-				tb_hits++;
+				++INFO->tbHits;
 				hash_high(TbValues[res], TbDepth(depth));
 				hash_low(0, TbValues[res], TbDepth(depth));
 				return TbValues[res];
@@ -7287,9 +7591,8 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 
 template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int flags)
 {
-	int value, move, cnt, pext = 0, ext, hash_value = -MateValue, margin, do_split = 0, sp_init = 0, singular = 0, played = 0, new_depth, hash_move,
-		hash_depth, old_alpha = alpha, old_best, ex_depth = 0, ex_value = 0, start_knodes = (int)(nodes >> 10);
-	GSP* Sp = nullptr;
+	int value, move, cnt, pext = 0, ext, hash_value = -MateValue, margin, singular = 0, played = 0, new_depth, hash_move,
+		hash_depth, old_alpha = alpha, old_best, ex_depth = 0, ex_value = 0, start_knodes = (int)(INFO->nodes >> 10);
 	int height = (int)(Current - Data);
 
 	if (root)
@@ -7298,9 +7601,11 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		flags |= ExtToFlag(1);
 		if (F(RootList[0]))
 			return 0;
-		if (Print)
+		if (INFO->id == 0)
 		{
 			fprintf(stdout, "info depth %d\n", (depth / 2));
+			if (time_to_stop(CurrentSI, LastTime, false))
+				stop();	// will break the outer loop
 			fflush(stdout);
 		}
 		auto p = &RootList[0];
@@ -7357,7 +7662,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 	{
 		auto res = TBProbe(tb_probe_wdl, me);
 		if (res != TB_RESULT_FAILED) {
-			tb_hits++;
+			++INFO->tbHits;
 			hash_high(TbValues[res], TbDepth(depth));
 			hash_low(0, TbValues[res], TbDepth(depth));
 		}
@@ -7416,9 +7721,8 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		if (root)
 		{
 			memset(Data + 1, 0, 127 * sizeof(GData));
-			move_to_string(move, score_string);
-			if (Print)
-				sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt);
+			if (INFO->id == 0)
+				send_curr_move(move, cnt);
 		}
 		ext = Max(pext, extension<me>(1, move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
@@ -7438,15 +7742,13 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		}
 		new_depth = depth - 2 + ext;
 		do_move<me>(move);
-		if (PrN > 1) 
+		evaluate();
+		if (Current->att[opp] & King(me))
 		{
-			evaluate();
-			if (Current->att[opp] & King(me))
-			{
-				undo_move<me>(move);	// we will detect whether move has been undone, below
-				--cnt;
-			}
+			undo_move<me>(move);	// we will detect whether move has been undone, below
+			--cnt;
 		}
+
 		if (!MY_TURN)	// move has not been undone, i.e., don't skip hash move
 		{
 			value = -pv_search<opp, 0>(-beta, -alpha, new_depth, ExtToFlag(ext));
@@ -7457,11 +7759,11 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				if (root)
 				{
 					CurrentSI->FailLow = 0;
-					best_move = move;
-					best_score = value;
-					hash_low(best_move, value, depth);
-					if (depth >= 14 || T(Console))
-						send_pv(depth / 2, old_alpha, beta, value);
+					hash_low(move, value, depth);
+					INFO->bestMove = move;
+					INFO->bestScore = value;
+					if (depth >= 8)
+						send_pv(depth / 2, old_alpha, beta);
 				}
 				Current->best = move;
 				if (value >= beta)
@@ -7473,8 +7775,9 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				CurrentSI->FailLow = 1;
 				CurrentSI->FailHigh = 0;
 				CurrentSI->Singular = 0;
-				if (depth >= 14 || T(Console))
-					send_pv(depth / 2, old_alpha, beta, value);
+				INFO->bestScore = value;
+				if (depth >= 8)
+					send_pv(depth / 2, old_alpha, beta);
 			}
 		}
 	}
@@ -7499,10 +7802,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 	else
 		Current->current = Current->moves;
 
-	if (PrN > 1 && !root && parent && depth >= SplitDepthPV)
-		do_split = 1;
-
-	while (move = get_move<me, root>(Odd(depth)))
+	while (move = get_move<me, root>(depth))
 	{
 		if (move == hash_move)
 			continue;
@@ -7512,13 +7812,10 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		if (root)
 		{
 			memset(Data + 1, 0, 127 * sizeof(GData));
-			move_to_string(move, score_string);
-			if (Print)
-				sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt);
+			send_curr_move(move, cnt);
 		}
 		if (IsRepetition(alpha + 1, move))
 			continue;
-		bool check = is_check<me>(move);
 		ext = Max(pext, extension<me>(1, move, depth));
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
@@ -7529,31 +7826,6 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 				reduction += reduction / 2;
 			new_depth = Max(3, new_depth - reduction);
-		}
-		if (do_split && played >= 1)
-		{
-			if (!sp_init)
-			{
-				sp_init = 1;
-				if (uint64 u = ~Smpi->active_sp)
-				{
-					Sp = &Smpi->Sp[lsb(u)];
-					init_sp(Sp, alpha, beta, depth, 1, singular, height);
-				}
-				else
-					do_split = 0;
-			}
-			if (do_split)
-			{
-				GMove* M = &Sp->move[Sp->move_number++];
-				M->ext = ext;
-				M->flags = 0;
-				M->move = move;
-				M->reduced_depth = new_depth;
-				M->research_depth = depth - 2 + ext;
-				M->stage = Current->stage;
-				continue;
-			}
 		}
 
 		do_move<me>(move);  // now Current points at child, until we undo_move, below
@@ -7567,15 +7839,15 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			{
 				SetScore(&RootList[cnt - 1], 1);
 				CurrentSI->Early = 0;
-				old_best = best_move;
-				best_move = move;
+				old_best = INFO->bestMove;
+				INFO->bestMove = move;
 			}
 			new_depth = depth - 2 + ext;
 			value = -pv_search<opp, 0>(-beta, -alpha, new_depth, ExtToFlag(ext));
 			if (root)
 			{
 				if (value <= alpha) 
-					best_move = old_best;
+					INFO->bestMove = old_best;
 			}
 		}
 		undo_move<me>(move);
@@ -7587,28 +7859,17 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				SetScore(&RootList[cnt - 1], cnt + 3);
 				CurrentSI->Change = 1;
 				CurrentSI->FailLow = 0;
-				best_move = move;
-				best_score = value;
-				hash_low(best_move, value, depth);
-				if (depth >= 14 || T(Console))
-					send_pv(depth / 2, old_alpha, beta, value);
+				hash_low(move, value, depth);
+				INFO->bestMove = move;
+				INFO->bestScore = value;
+				if (depth >= 8)
+					send_pv(depth / 2, old_alpha, beta);
 			}
 			Current->best = move;
 			if (value >= beta)
 				return hash_low(move, value, depth);
 			alpha = value;
 		}
-	}
-	if (do_split && sp_init)
-	{
-		value = smp_search<me>(Sp);
-		if (value > alpha && Sp->best_move)
-		{
-			alpha = value;
-			Current->best = move = Sp->best_move;
-		}
-		if (value >= beta)
-			return hash_low(move, alpha, depth);
 	}
 	if (F(cnt) && F(IsCheck(me)))
 	{
@@ -7625,92 +7886,50 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		if (Current->best != hash_move)
 			ex_depth = 0;
 		if (F(root) || F(SearchMoves))
-			hash_exact(Current->best, alpha, depth, ex_value, ex_depth, static_cast<int>(nodes >> 10) - start_knodes);
+			hash_exact(Current->best, alpha, depth, ex_value, ex_depth, static_cast<int>(INFO->nodes >> 10) - start_knodes);
 	}
 	return alpha;
 }
 
 template<bool me> void root()
 {
-	int i, depth, value, alpha, beta, start_depth = 2, hash_depth = 0, hash_value = 0; 
-	int store_time = 0, time_est, ex_depth = 0, ex_value, prev_time = 0, knodes = 0;
-	sint64 time;
-	GPVEntry* PVEntry;
-
-	++date;
-	nodes = check_node = check_node_smp = 0;
-	if (parent)
-		Smpi->nodes = 0;
-	memcpy(Data, Current, sizeof(GData));
-	Current = Data;
-
-#ifdef TB
-	if (popcnt(PieceAll()) <= int(TB_LARGEST)) 
-	{
-		auto res = TBProbe(tb_probe_root, me);
-		if (res != TB_RESULT_FAILED) {
-			best_score = TbValues[TB_GET_WDL(res)];
-			int flags = 0;
-			unsigned to = TB_GET_TO(res);
-			switch (TB_GET_PROMOTES(res)) {
-			case TB_PROMOTES_QUEEN:
-				flags |= FlagPQueen; break;
-			case TB_PROMOTES_ROOK:
-				flags |= FlagPRook; break;
-			case TB_PROMOTES_BISHOP:
-				flags |= FlagPBishop; break;
-			case TB_PROMOTES_KNIGHT:
-				flags |= FlagPKnight; break;
-			default:
-				break;
-			}
-			best_move = (TB_GET_FROM(res) << 6) | to | flags;
-			char str[32];
-			move_to_string(best_move, str);
-			// TODO -- if TB mate, find # of moves to mate
-			printf("info depth 1 seldepth 1 score cp %d nodes 1 nps 0 tbhits 1 pv %s\n", best_score / CP_SEARCH, str);   // Fake PV
-			send_best_move();
-			Searching = 0;
-			if (MaxPrN > 1) ZERO_BIT_64(Smpi->searching, 0);
-			return;
-		}
-	}
-#endif
+	int& depth = INFO->depth;
+	int value, alpha, beta, start_depth = 2, hash_depth = 0, hash_value, store_time = 0, time_est, ex_depth = 0, ex_value, prev_time = 0, knodes = 0;
+	int64_t time;
 
 	evaluate();
 	gen_root_moves<me>();
-	if (PVN > 1)
-	{
-		memset(MultiPV, 0, MAX_HEIGHT * sizeof(int));
-		for (i = 0; MultiPV[i] = RootList[i]; ++i)
-			;
+	if (PVN > 1) {
+		//        memset(MultiPV,0,128 * sizeof(int));
+		//        for (i = 0; MultiPV[i] = RootList[i]; i++);
+		fprintf(stderr, "MPV NYI...\n");
+		abort();
 	}
-	best_move = RootList[0];
-#ifdef REGRESSION
-	return;
-#endif
-	if (F(best_move))
-		return;
-	if (F(Infinite) && !RootList[1])
+	INFO->bestMove = RootList[0];
+	if (F(INFO->bestMove))
 	{
-		Infinite = 1;
-		value = pv_search<me, 1>(-MateValue, MateValue, 4, FlagNeatSearch);
-		Infinite = 0;
+		LOCK_SHARED;
+		SHARED->stopAll = true;
+		return;
+	}
+	if (!RootList[1])
+	{
+		if (T(INFO->id))
+			return;	// let the master take care of it
+		INFO->bestScore = pv_search<me, 1>(-MateValue, MateValue, 4, FlagNeatSearch);
 		LastDepth = MAX_HEIGHT;
-		send_pv(6, -MateValue, MateValue, value);
-		send_best_move();
-		Searching = 0;
-		if (MaxPrN > 1)
-			ZERO_BIT_64(Smpi->searching, 0);
+		send_pv(6, -MateValue, MateValue);
+		LOCK_SHARED;
+		SHARED->stopAll = true;
 		return;
 	}
 
 	memset(CurrentSI, 0, sizeof(GSearchInfo));
 	memset(BaseSI, 0, sizeof(GSearchInfo));
 	Previous = -MateValue;
-	if (PVEntry = probe_pv_hash())
+	if (GPVEntry* PVEntry = probe_pv_hash())
 	{
-		if (is_legal<me>(PVEntry->move) && PVEntry->move == best_move && PVEntry->depth > hash_depth)
+		if (is_legal<me>(PVEntry->move) && PVEntry->move == INFO->bestMove && PVEntry->depth > hash_depth)
 		{
 			hash_depth = PVEntry->depth;
 			hash_value = PVEntry->value;
@@ -7719,18 +7938,18 @@ template<bool me> void root()
 			knodes = PVEntry->knodes;
 		}
 	}
-	if (T(hash_depth) && PVN == 1)
+	if (hash_depth > 0 && PVN == 1)
 	{
-		Previous = best_score = hash_value;
+		Previous = INFO->bestScore = hash_value;
 		depth = hash_depth;
 		if (PVHashing)
 		{
-			send_pv(depth / 2, -MateValue, MateValue, best_score);
+			send_pv(depth / 2, -MateValue, MateValue);
 			start_depth = (depth + 2) & (~1);
 		}
 		if ((depth >= LastDepth - 8 || T(store_time)) && LastValue >= LastExactValue && hash_value >= LastExactValue && T(LastTime) && T(LastSpeed))
 		{
-			time = TimeLimit1;
+			time = SHARED->softTimeLimit;
 			if (ex_depth >= depth - Min(12, depth / 2) && ex_value <= hash_value - ExclSingle(depth))
 			{
 				BaseSI->Early = 1;
@@ -7740,85 +7959,77 @@ template<bool me> void root()
 					time = (time * TimeSingTwoMargin) / 100;
 					BaseSI->Singular = 2;
 				}
-				else
-					time = (time * TimeSingOneMargin) / 100;
+				else time = (time * TimeSingOneMargin) / 100;
 			}
-			time_est = Min<int>(LastTime, (int)((sint64(knodes) << 10) / LastSpeed));
+			time_est = Min(LastTime, int((knodes << 10) / LastSpeed));
 			time_est = Max(time_est, store_time);
-			for (; ; )	// loop from set_prev_time
+			//		set_prev_time:
+			LastTime = prev_time = time_est;
+#if 0
+			// This is broken so disable for now...
+			if (prev_time >= time)
 			{
-				LastTime = prev_time = time_est;
-				if (prev_time >= time && F(Infinite))
+				InstCnt++;
+				if (time_est <= store_time) InstCnt = 0;
+				if (InstCnt > 2)
 				{
-					++InstCnt;
-					if (time_est <= store_time)
-						InstCnt = 0;
-					if (InstCnt > 2)
+					if (T(store_time) && store_time < time_est)
 					{
-						if (T(store_time) && store_time < time_est)
-						{
-							time_est = store_time;
-							continue;
-						}
-						LastSpeed = 0;
-						LastTime = 0;
-						prev_time = 0;
-						break;
+						time_est = store_time;
+						goto set_prev_time;
 					}
-					if (hash_value > 0 && Current->ply >= 2 && F(PieceAt(To(best_move))) && F(best_move & 0xF000) &&
-						PrevMove == ((To(best_move) << 6) | From(best_move)))
-						break;
-					do_move<me>(best_move);
-					if (Current->ply >= 100)
-					{
-						undo_move<me>(best_move);
-						break;
-					}
-					for (i = 4; i <= Current->ply; i += 2)
-						if (Stack[sp - i] == Current->key)
-						{
-							undo_move<me>(best_move);
-							break;
-						}
-					undo_move<me>(best_move);
-					LastDepth = depth;
-					LastTime = prev_time;
-					LastValue = LastExactValue = hash_value;
-					send_best_move();
-					Searching = 0;
-					if (MaxPrN > 1)
-						ZERO_BIT_64(Smpi->searching, 0);
-					return;
+					LastSpeed = 0;
+					LastTime = 0;
+					prev_time = 0;
+					goto set_jump;
 				}
-				else
-					break;
+				if (hash_value > 0 && Current->ply >= 2 &&
+					F(Square(To(INFO->bestMove))) &&
+					F(INFO->bestMove & 0xF000) &&
+					PrevMove ==
+					((To(INFO->bestMove) << 6) | From(INFO->bestMove)))
+					goto set_jump;
+				do_move<me>(INFO->bestMove);
+				if (Current->ply >= 100)
+				{
+					undo_move<me>(INFO->bestMove);
+					goto set_jump;
+				}
+				for (i = 4; i <= Current->ply; i += 2)
+				{
+					if (Stack[sp - i] == Current->key)
+					{
+						undo_move<me>(INFO->bestMove);
+						goto set_jump;
+					}
+				}
+				undo_move<me>(INFO->bestMove);
+				LastDepth = depth;
+				LastTime = prev_time;
+				LastValue = LastExactValue = hash_value;
+				mutex_lock(&SHARED->mutex);
+				INFO->stop = true;
+				mutex_unlock(&SHARED->mutex);
+				return;
 			}
-		}
+			else
+#endif
+				goto set_jump;
 	}
-	else
-		LastTime = 0;
-	
-	// set_jmp
+}
+	LastTime = 0;
+
+set_jump:
 	memcpy(SaveBoard, Board, sizeof(GBoard));
 	memcpy(SaveData, Data, sizeof(GData));
 	save_sp = sp;
-	if (setjmp(Jump))
+	for (depth = start_depth; !SHARED->stopAll && depth < SHARED->depthLimit && depth < 256; depth += 2)
 	{
-		Current = Data;
-		Searching = 0;
-		if (MaxPrN > 1)
-		{
-			halt_all(0, 127);
-			ZERO_BIT_64(Smpi->searching, 0);
-		}
-		memcpy(Board, SaveBoard, sizeof(GBoard));
-		memcpy(Data, SaveData, sizeof(GData));
-		sp = save_sp;
-		send_best_move();
-		return;
-	}
-	for (depth = start_depth; depth < DepthLimit; depth += 2)
-	{
+		static const double SkipProb = (3 - sqrt(5.0)) / 2;
+		const int ii = depth * INFO->id;
+		if (int(ii * SkipProb) > int((ii - 1) * SkipProb))
+			continue;
+
 		memset(Data + 1, 0, 127 * sizeof(GData));
 		CurrentSI->Early = 1;
 		CurrentSI->Change = CurrentSI->FailHigh = CurrentSI->FailLow = CurrentSI->Singular = 0;
@@ -7831,11 +8042,11 @@ template<bool me> void root()
 			int deltaLo = FailLoInit, deltaHi = FailHiInit;
 			alpha = Previous - deltaLo;
 			if (alpha >= 0 && alpha < AspirationEpsilon)
-				alpha = -1;
+				alpha = -1, deltaLo = Previous - alpha;
 			beta = Previous + deltaHi;
 			if (beta <= 0 && -beta < AspirationEpsilon)
-				beta = 1;
-			for ( ; ; )	// loop:
+				beta = 1, deltaHi = beta - Previous;
+			for (; ; )	// loop:
 			{
 				if (Max(deltaLo, deltaHi) >= 1300)
 				{
@@ -7863,15 +8074,16 @@ template<bool me> void root()
 					beta += deltaHi;
 					deltaHi += (deltaHi * FailHiGrowth) / 64 + FailHiDelta;
 					LastDepth = depth;
-					LastTime = Max(prev_time, (int)(get_time() - StartTime));
-					LastSpeed = nodes / Max(LastTime, 1);
-					if (depth + 2 < DepthLimit)
+					LastTime = Max(prev_time, (int)(get_time() - SHARED->startTime));
+					LastSpeed = INFO->nodes / Max(LastTime, 1);
+					if (depth + 2 < SHARED->depthLimit)
 						depth += 2;
 					InstCnt = 0;
-#ifdef TIMING
-					if (depth >= 6)
-#endif
-						check_time(&LastTime, 0);
+					if (INFO->id == 0 && time_to_stop(CurrentSI, LastTime, false))
+					{
+						stop();	// will break the outer loop
+						break;
+					}
 					memset(Data + 1, 0, 127 * sizeof(GData));
 					LastValue = value;
 					memcpy(BaseSI, CurrentSI, sizeof(GSearchInfo));
@@ -7885,23 +8097,32 @@ template<bool me> void root()
 			}
 		}
 
-		CurrentSI->Bad = (value < Previous - 50 * CP_SEARCH);
-		memcpy(BaseSI, CurrentSI, sizeof(GSearchInfo));
-		LastDepth = depth;
-		LastTime = Max(prev_time, (int)(get_time() - StartTime));
-		LastSpeed = nodes / Max(LastTime, 1);
-		Previous = value;
-		InstCnt = 0;
-#ifdef TIMING
-		if (depth >= 6)
-#endif
-			check_time(&LastTime, 0);
+		if (!SHARED->stopAll)
+		{
+			CurrentSI->Bad = T(value < Previous - 50);
+			memcpy(BaseSI, CurrentSI, sizeof(GSearchInfo));
+			LastDepth = depth;
+			LastTime = Max(prev_time, int(get_time() - SHARED->startTime));
+			LastSpeed = INFO->nodes / Max(LastTime, 1);
+			Previous = value;
+			InstCnt = 0;
+			if (INFO->id == 0 && time_to_stop(CurrentSI, LastTime, false))
+			{
+				stop();
+				break;
+			}
+		}
 	}
-	Searching = 0;
-	if (MaxPrN > 1)
-		ZERO_BIT_64(Smpi->searching, 0);
-	if (F(Infinite) || DepthLimit < MAX_HEIGHT)
-		send_best_move();
+
+	Current = Data;
+	memcpy(Board, SaveBoard, sizeof(GBoard));
+	memcpy(Data, SaveData, sizeof(GData));
+	sp = save_sp;
+	if (!SHARED->stopAll)
+	{
+		LOCK_SHARED;
+		SHARED->stopAll = true;
+	}
 }
 
 template<bool me> int multipv(int depth)
@@ -7912,9 +8133,7 @@ template<bool me> int multipv(int depth)
 	for (cnt = 0; cnt < PVN && T(move = (MultiPV[cnt] & 0xFFFF)); ++cnt)
 	{
 		MultiPV[cnt] = move;
-		move_to_string(move, score_string);
-		if (T(Print))
-			sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt + 1);
+		send_curr_move(move, cnt);
 		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
 		do_move<me>(move);
 		value = -pv_search<opp, 0>(-MateValue, MateValue, new_depth, ExtToFlag(ext));
@@ -7930,16 +8149,14 @@ template<bool me> int multipv(int depth)
 				MultiPV[i] = move | (value << 16);
 			}
 		}
-		best_move = MultiPV[0] & 0xFFFF;
+		INFO->bestMove = MultiPV[0] & 0xFFFF;
 		Current->score = MultiPV[0] >> 16;
 		send_multipv((depth / 2), cnt);
 	}
 	for (; T(move = (MultiPV[cnt] & 0xFFFF)); ++cnt)
 	{
 		MultiPV[cnt] = move;
-		move_to_string(move, score_string);
-		if (T(Print))
-			sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt + 1);
+		send_curr_move(move, cnt);
 		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
 		do_move<me>(move);
 		value = -scout<opp, 0>(-low, new_depth, FlagNeatSearch | ExtToFlag(ext));
@@ -7959,7 +8176,7 @@ template<bool me> int multipv(int depth)
 					MultiPV[i] = move | (value << 16);
 				}
 			}
-			best_move = MultiPV[0] & 0xFFFF;
+			INFO->bestMove = MultiPV[0] & 0xFFFF;
 			Current->score = MultiPV[0] >> 16;
 			low = MultiPV[PVN - 1] >> 16;
 			send_multipv((depth / 2), cnt);
@@ -7968,261 +8185,193 @@ template<bool me> int multipv(int depth)
 	return Current->score;
 }
 
-sint64 get_time()
+static void send_pv
+	(const int* PV,
+	size_t nodes,
+	size_t tbHits,
+	int depth,
+	int selDepth,
+	int bestScore,
+	int bestMove,
+	uint64_t startTime)
 {
-#ifdef CPU_TIMING
-#ifndef TIMING
-	if (CpuTiming)
-	{
-#endif
-		uint64 ctime;
-		QueryProcessCycleTime(GetCurrentProcess(), &ctime);
-#ifdef TIMING
-		return ctime / (CyclesPerMSec / 1000);
-#endif
-		return (ctime / CyclesPerMSec);
-#ifndef TIMING
-	}
-#endif
-#endif
-
-#ifdef W32_BUILD
-	return GetTickCount();
-#else
-	return GetTickCount64();
-#endif
-}
-
-void send_pv(int depth, int alpha, int beta, int score)
-{
-	int i, pos, move, mate = 0, mate_score, sel_depth;
-	sint64 nps, snodes, tbhits = 0;
-	if (F(Print))
-		return;
-	for (sel_depth = 1; sel_depth < 127 && T((Data + sel_depth)->att[0]); ++sel_depth)
-		;
-	--sel_depth;
-	pv_length = 64;
-	if (F(move = best_move))
-		move = RootList[0];
-	if (F(move))
-		return;
-	PV[0] = move;
-	if (Current->turn)
-		do_move<1>(move);
+	const char *scoreType = "mate";
+	if (bestScore > EvalValue)
+		bestScore = (MateValue - bestScore + 1) / 2;
+	else if (bestScore < -EvalValue)
+		bestScore = -(bestScore + MateValue + 1) / 2;
 	else
-		do_move<0>(move);
-	pvp = 1;
-	pick_pv();
-	if (Current->turn ^ 1)
-		undo_move<1>(move);
-	else
-		undo_move<0>(move);
-	pos = 0;
-	for (i = 0; i < 64 && T(PV[i]); ++i)
+		scoreType = "cp";
+
+	uint64_t currTime = get_time();
+	uint64_t elapsedTime = currTime - startTime;
+	if (elapsedTime == 0)
+		elapsedTime = 1;
+
+	size_t nps = (nodes * 1000) / elapsedTime;
+
+	char pvStr[PIPE_BUF];
+	unsigned pvPos = 0;
+	for (unsigned i = 0; i < MAX_PV_LEN && PV[i] != 0; i++)
 	{
-		if (pos > 0)
-		{
-			pv_string[pos] = ' ';
-			++pos;
-		}
-		move = PV[i];
-		pv_string[pos++] = ((move >> 6) & 7) + 'a';
-		pv_string[pos++] = ((move >> 9) & 7) + '1';
-		pv_string[pos++] = (move & 7) + 'a';
-		pv_string[pos++] = ((move >> 3) & 7) + '1';
+		if (pvPos >= sizeof(pvStr) - 32)
+			break;
+		int move = PV[i];
+		pvStr[pvPos++] = ' ';
+		pvStr[pvPos++] = ((move >> 6) & 7) + 'a';
+		pvStr[pvPos++] = ((move >> 9) & 7) + '1';
+		pvStr[pvPos++] = (move & 7) + 'a';
+		pvStr[pvPos++] = ((move >> 3) & 7) + '1';
 		if (IsPromotion(move))
 		{
 			if ((move & 0xF000) == FlagPQueen)
-				pv_string[pos++] = 'q';
+				pvStr[pvPos++] = 'q';
 			else if ((move & 0xF000) == FlagPRook)
-				pv_string[pos++] = 'r';
+				pvStr[pvPos++] = 'r';
 			else if ((move & 0xF000) == FlagPBishop)
-				pv_string[pos++] = 'b';
+				pvStr[pvPos++] = 'b';
 			else if ((move & 0xF000) == FlagPKnight)
-				pv_string[pos++] = 'n';
+				pvStr[pvPos++] = 'n';
 		}
-		pv_string[pos] = 0;
 	}
-	score_string[0] = 'c';
-	score_string[1] = 'p';
-	if (score > EvalValue)
+	pvStr[pvPos++] = '\0';
+
+	char line[PIPE_BUF];
+	int len = snprintf
+			(line, sizeof(line) - 1, "info depth %d seldepth %d score %s %d nodes %Iu nps %Iu tbhits %Iu time %Iu pv%s\n",
+				depth / 2, selDepth / 2, scoreType, bestScore / CP_SEARCH, nodes, nps, tbHits, currTime - startTime, pvStr);
+	// if (len < 0 || len >= sizeof(line) - 1)		return;
+	put_line(line, len);
+}
+
+void send_pv(int depth, int alpha, int beta)
+{
+	int sel_depth;
+	for (sel_depth = 1; sel_depth < 127 && T((Data + sel_depth)->att[0]);
+		sel_depth++);
+	sel_depth--;
+	int move = (INFO->bestMove == 0 ? RootList[0] : INFO->bestMove);
+	bool isBest = false;
 	{
-		mate = 1;
-		strcpy_s(score_string, "mate ");
-		mate_score = (MateValue - score + 1) / 2;
-		score_string[6] = 0;
+		LOCK_SHARED;
+		INFO->selDepth = sel_depth;
+		INFO->PV[0] = move;
+		if (Current->turn) do_move<1>(move); else do_move<0>(move);
+		unsigned pvPtr = 1, pvLen = 64;
+		pick_pv(pvPtr, pvLen);
+		undo_move(F(Current->turn), move);
+		// also while SHARED is locked, find out whether this is the best candidate move so far
+		isBest = depth > SHARED->best.depth
+			|| (depth == SHARED->best.depth && move != SHARED->best.move && (INFO->bestScore > SHARED->best.value || (INFO->bestScore == SHARED->best.value && INFO->id == 0)));
+		if (isBest)
+			SHARED->best = { depth, INFO->bestScore, move, INFO->id };
 	}
-	else if (score < -EvalValue)
+	if (!isBest)
+		return;
+
+	size_t nodes = 0, tbHits = 0;
+	for (int i = 0; i < SETTINGS->nThreads; i++)
 	{
-		mate = 1;
-		strcpy_s(score_string, "mate ");
-		mate_score = -(score + MateValue + 1) / 2;
-		score_string[6] = 0;
+		nodes += THREADS[i]->nodes;
+		tbHits += THREADS[i]->tbHits;
 	}
-	else
-	{
-		score_string[0] = 'c';
-		score_string[1] = 'p';
-		score_string[2] = ' ';
-		score_string[3] = 0;
-	}
-	nps = get_time() - StartTime;
-#ifdef MP_NPS
-	snodes = Smpi->nodes;
-#ifdef TB
-	tbhits = Smpi->tb_hits;
-#endif
-#else
-	snodes = nodes;
-#endif
-	if (nps)
-		nps = (snodes * 1000) / nps;
-	if (score < beta)
-	{
-		if (score <= alpha)
-			fprintf(stdout, "info depth %d seldepth %d score %s%d upperbound nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
-					(mate ? mate_score : score / CP_SEARCH), snodes, nps, tbhits, pv_string);
-		else
-			fprintf(stdout, "info depth %d seldepth %d score %s%d nodes %I64d nps  %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string, 
-					(mate ? mate_score : score / CP_SEARCH), snodes, nps, tbhits, pv_string);
-	}
-	else
-		fprintf(stdout, "info depth %d seldepth %d score %s%d lowerbound nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
-			(mate ? mate_score : score / CP_SEARCH), snodes, nps, tbhits, pv_string);
-	fflush(stdout);
+	const ThreadOwn_ my = *THREADS[INFO->id];
+	send_pv(&my.PV[0], nodes, tbHits, my.depth, my.selDepth, my.bestScore, my.bestMove, SHARED->startTime);
 }
 
 void send_multipv(int depth, int curr_number)
 {
-	int i, j, pos, move, score;
-	sint64 nps, snodes, tbhits = 0;
-	if (F(Print))
+	abort();	// not implemented
+}
+
+void send_curr_move(int move, int cnt)
+{
+	if (INFO->id != 0)
 		return;
-	for (j = 0; j < PVN && T(MultiPV[j]); ++j)
+	uint64_t currTime = get_time();
+	uint64_t diffTime = currTime - SHARED->startTime;
+	if (currTime - SHARED->startTime <= InfoLag ||
+		currTime - InfoTime <= InfoDelay)
+		return;
+	InfoTime = currTime;
+	char moveStr[16], line[PIPE_BUF];
+	move_to_string(move, moveStr);
+	int len = snprintf(line, sizeof(line) - 1,
+		"info currmove %s currmovenumber %d\n", moveStr, cnt);
+	if (len > 0 && len < sizeof(line) - 1)
+		put_line(line, len);
+}
+
+void send_best_move
+	(bool have_lock, 
+	 const int* PV,
+	 size_t nodes,
+	 size_t tbHits,
+	 int bestScore,
+	 int bestMove,
+	 uint64_t startTime)
+{
+	if (have_lock)
+		SHARED->best = { 0, 0, 0, 0 };
+	else
 	{
-		pv_length = 63;
-		pvp = 0;
-		move = MultiPV[j] & 0xFFFF;
-		score = MultiPV[j] >> 16;
-		memset(PV, 0, 64 * sizeof(uint16));
-		if (Current->turn)
-			do_move<1>(move);
-		else
-			do_move<0>(move);
-		pick_pv();
-		if (Current->turn ^ 1)
-			undo_move<1>(move);
-		else
-			undo_move<0>(move);
-		for (i = 63; i > 0; --i) PV[i] = PV[i - 1];
-		PV[0] = move;
-		pos = 0;
-		for (i = 0; i < 64 && T(PV[i]); ++i)
-		{
-			if (pos > 0)
-			{
-				pv_string[pos] = ' ';
-				++pos;
-			}
-			move = PV[i];
-			pv_string[pos++] = ((move >> 6) & 7) + 'a';
-			pv_string[pos++] = ((move >> 9) & 7) + '1';
-			pv_string[pos++] = (move & 7) + 'a';
-			pv_string[pos++] = ((move >> 3) & 7) + '1';
-			if (IsPromotion(move))
-			{
-				if ((move & 0xF000) == FlagPQueen)
-					pv_string[pos++] = 'q';
-				else if ((move & 0xF000) == FlagPRook)
-					pv_string[pos++] = 'r';
-				else if ((move & 0xF000) == FlagPBishop)
-					pv_string[pos++] = 'b';
-				else if ((move & 0xF000) == FlagPKnight)
-					pv_string[pos++] = 'n';
-			}
-			pv_string[pos] = 0;
-		}
-		score_string[0] = 'c';
-		score_string[1] = 'p';
-		if (score > EvalValue)
-		{
-			strcpy_s(score_string, "mate ");
-			score = (MateValue - score + 1) / 2;
-			score_string[6] = 0;
-		}
-		else if (score < -EvalValue)
-		{
-			strcpy_s(score_string, "mate ");
-			score = -(score + MateValue + 1) / 2;
-			score_string[6] = 0;
-		}
-		else
-		{
-			score_string[0] = 'c';
-			score_string[1] = 'p';
-			score_string[2] = ' ';
-			score_string[3] = 0;
-		}
-		nps = get_time() - StartTime;
-#ifdef MP_NPS
-		snodes = Smpi->nodes;
-#ifdef TB
-		tbhits = Smpi->tb_hits;
-#endif
-#else
-		snodes = nodes;
-#endif
-		if (nps)
-			nps = (snodes * 1000) / nps;
-		fprintf(stdout, "info multipv %d depth %d score %s%d nodes %I64d nps %I64d tbhits %I64d pv %s\n", 
-					j + 1, (j <= curr_number ? depth : depth - 1), score_string, score,	snodes, nps, tbhits, pv_string);
-		fflush(stdout);
+		LOCK_SHARED;
+		SHARED->best = { 0, 0, 0, 0 };
+	}
+
+	uint64_t stopTime = get_time();
+
+	if (nodes == 0)
+		nodes = 1;
+	const char *scoreType = "mate";
+	if (bestScore > EvalValue)
+		bestScore = (MateValue - bestScore + 1) / 2;
+	else if (bestScore < -EvalValue)
+		bestScore = -(bestScore + MateValue + 1) / 2;
+	else
+		scoreType = "cp";
+
+	char line[PIPE_BUF];
+	uint64_t time = stopTime - startTime;
+	uint64_t nps = (nodes / Max(time / 1000, 1ull));
+	int len = snprintf(line, sizeof(line) - 1, "info nodes %Iu tbhits %Iu time %Iu nps %Iu score %s %d\n", nodes, tbHits, time, nps, scoreType, bestScore / CP_SEARCH);
+	if (len > 0 && len < sizeof(line) - 1)
+		put_line(line, len);
+
+	char moveStr[16], ponderStr[16];
+	int ponder = (PV[0] == 0 ? 0 : PV[1]);
+	move_to_string(bestMove, moveStr);
+	if (ponder != 0)
+	{
+		move_to_string(ponder, ponderStr);
+		len = snprintf(line, sizeof(line) - 1, "bestmove %s ponder %s\n",
+			moveStr, ponderStr);
+	}
+	else
+		len = snprintf(line, sizeof(line) - 1, "bestmove %s\n", moveStr);
+	if (len > 0 && len < sizeof(line) - 1)
+		put_line(line, len);
+	else
+	{
+		// Giveup:
+		char reply[] = "bestmove 0\n";
+		put_line(reply, sizeof(reply));
 	}
 }
 
-void send_best_move()
+void send_best_move(bool have_lock = false)
 {
-	uint64 snodes;
-	int ponder;
-#ifdef CPU_TIMING
-	GlobalTime[GlobalTurn] -= static_cast<int>(get_time() - StartTime) - GlobalInc[GlobalTurn];
-	if (GlobalTime[GlobalTurn] < GlobalInc[GlobalTurn])
-		GlobalTime[GlobalTurn] = GlobalInc[GlobalTurn];
-#endif
-	if (F(Print))
-		return;
-#ifdef MP_NPS
-	snodes = Smpi->nodes;
-#else
-	snodes = nodes;
-#endif
-	fprintf(stdout, "info nodes %I64d score cp %d\n", snodes, best_score / CP_SEARCH);
-	if (!best_move)
-		return;
-	Current = Data;
-	evaluate();
-	if (Current->turn)
-		do_move<1>(best_move);
-	else
-		do_move<0>(best_move);
-	pv_length = 1;
-	pvp = 0;
-	pick_pv();
-	ponder = PV[0];
-	if (Current->turn ^ 1)
-		undo_move<1>(best_move);
-	else
-		undo_move<0>(best_move);
-	move_to_string(best_move, pv_string);
-	if (ponder)
+	size_t nodes = THREADS[0]->nodes, tbHits = THREADS[0]->tbHits;
+	ThreadOwn_* bestThread = THREADS[0];
+
+	for (int i = 1; i < SETTINGS->nThreads; i++)
 	{
-		move_to_string(ponder, score_string);
-		fprintf(stdout, "bestmove %s ponder %s\n", pv_string, score_string);
+		nodes += THREADS[i]->nodes;
+		tbHits += THREADS[i]->tbHits;
+		if (THREADS[i]->depth > bestThread->depth && bestThread->depth == 0)
+			bestThread = THREADS[i];
 	}
-	else
-		fprintf(stdout, "bestmove %s\n", pv_string);
-	fflush(stdout);
+	send_best_move(have_lock, bestThread->PV, nodes, tbHits, bestThread->bestScore, bestThread->bestMove, SHARED->startTime);
 }
 
 void get_position(char string[])
@@ -8273,870 +8422,527 @@ void get_position(char string[])
 	sp = Current->ply;
 }
 
-void get_time_limit(char string[])
-{
-	const char* ptr;
-	int i, time, inc, wtime, btime, winc, binc, moves, pondering, movetime = 0;
-	double exp_moves = MovesTg - 1;
-	char* strtok_context = nullptr;
-
-	Infinite = 1;
-	MoveTime = 0;
-	SearchMoves = 0;
-	SMPointer = 0;
-	pondering = 0;
-	TimeLimit1 = 0;
-	TimeLimit2 = 0;
-	wtime = btime = 0;
-	winc = binc = 0;
-	moves = 0;
-	Stop = 0;
-	DepthLimit = MAX_HEIGHT;
-	ptr = strtok_s(string, " ", &strtok_context);
-	for (ptr = strtok_s(nullptr, " ", &strtok_context); ptr != nullptr; ptr = strtok_s(nullptr, " ", &strtok_context))
-	{
-		if (!strcmp(ptr, "binc"))
-		{
-			ptr = strtok_s(nullptr, " ", &strtok_context);
-			binc = atoi(ptr);
-			Infinite = 0;
-		}
-		else if (!strcmp(ptr, "btime"))
-		{
-			ptr = strtok_s(nullptr, " ", &strtok_context);
-			btime = atoi(ptr);
-			Infinite = 0;
-		}
-		else if (!strcmp(ptr, "depth"))
-		{
-			ptr = strtok_s(nullptr, " ", &strtok_context);
-			DepthLimit = 2 * atoi(ptr) + 2;
-			Infinite = 1;
-		}
-		else if (!strcmp(ptr, "infinite"))
-		{
-			Infinite = 1;
-		}
-		else if (!strcmp(ptr, "movestogo"))
-		{
-			ptr = strtok_s(nullptr, " ", &strtok_context);
-			moves = atoi(ptr);
-			Infinite = 0;
-		}
-		else if (!strcmp(ptr, "winc"))
-		{
-			ptr = strtok_s(nullptr, " ", &strtok_context);
-			winc = atoi(ptr);
-			Infinite = 0;
-		}
-		else if (!strcmp(ptr, "wtime"))
-		{
-			ptr = strtok_s(nullptr, " ", &strtok_context);
-			wtime = atoi(ptr);
-			Infinite = 0;
-		}
-		else if (!strcmp(ptr, "movetime"))
-		{
-			ptr = strtok_s(nullptr, " ", &strtok_context);
-			movetime = atoi(ptr);
-			MoveTime = 1;
-			Infinite = 0;
-		}
-		else if (!strcmp(ptr, "searchmoves"))
-		{
-			if (F(SearchMoves))
-			{
-				for (i = 0; i < 256; ++i) SMoves[i] = 0;
-			}
-			SearchMoves = 1;
-			ptr += 12;
-			while (ptr != nullptr && ptr[0] >= 'a' && ptr[0] <= 'h' && ptr[1] >= '1' && ptr[1] <= '8')
-			{
-				pv_string[0] = *ptr++;
-				pv_string[1] = *ptr++;
-				pv_string[2] = *ptr++;
-				pv_string[3] = *ptr++;
-				if (*ptr == 0 || *ptr == ' ')
-					pv_string[4] = 0;
-				else
-				{
-					pv_string[4] = *ptr++;
-					pv_string[5] = 0;
-				}
-				SMoves[SMPointer] = move_from_string(pv_string);
-				SMPointer++;
-				ptr = strtok_s(nullptr, " ", &strtok_context);
-			}
-		}
-		else if (!strcmp(ptr, "ponder"))
-			pondering = 1;
-	}
-	if (pondering)
-		Infinite = 1;
-	if (Current->turn == White)
-	{
-		time = wtime;
-		inc = winc;
-	}
-	else
-	{
-		time = btime;
-		inc = binc;
-	}
-#ifdef CPU_TIMING
-	if (CpuTiming)
-	{
-		time = GlobalTime[GlobalTurn];
-		inc = GlobalInc[GlobalTurn];
-		if (UciMaxDepth)
-			DepthLimit = 2 * UciMaxDepth + 2;
-	}
-#endif
-	if (moves)
-		moves = Max(moves - 1, 1);
-	int time_max = Max(time - Min(1000, time / 2), 0);
-	double nmoves;
-	if (moves)
-		nmoves = moves;
-	else
-	{
-		nmoves = (MovesTg - 1);
-		if (Current->ply > 40)
-			nmoves += Min(Current->ply - 40, (100 - Current->ply) / 2);
-		exp_moves = nmoves;
-	}
-	TimeLimit1 = Min(time_max, static_cast<int>((time_max + (Min(exp_moves, nmoves) * inc)) / Min(exp_moves, nmoves)));
-	TimeLimit2 = Min(time_max, static_cast<int>((time_max + (Min(exp_moves, nmoves) * inc)) / Min(3.0, Min(exp_moves, nmoves))));
-	TimeLimit1 = Min(time_max, (TimeLimit1 * TimeRatio) / 100);
-	if (Ponder)
-		TimeLimit1 = (TimeLimit1 * PonderRatio) / 100;
-	if (MoveTime)
-	{
-		TimeLimit2 = movetime;
-		TimeLimit1 = TimeLimit2 * 100;
-	}
-	InfoTime = StartTime = get_time();
-	Searching = 1;
-	if (MaxPrN > 1)
-		SET_BIT_64(Smpi->searching, 0);
-	if (F(Infinite))
-		PVN = 1;
-	if (Current->turn == White)
-		root<0>();
-	else
-		root<1>();
-}
-
 int time_to_stop(GSearchInfo* SI, int time, int searching)
 {
-	if (Infinite)
-		return 0;
-	if (time > TimeLimit2)
+	if (time > SHARED->hardTimeLimit)
 		return 1;
 	if (searching)
 		return 0;
-	if (2 * time > TimeLimit2 && F(MoveTime))
+	if (2 * time > SHARED->hardTimeLimit)
 		return 1;
 	if (SI->Bad)
 		return 0;
-	if (time > TimeLimit1)
+	if (time > SHARED->softTimeLimit)
 		return 1;
 	if (T(SI->Change) || T(SI->FailLow))
 		return 0;
-	if (time * 100 > TimeLimit1 * TimeNoChangeMargin)
+	if (time * 100 > SHARED->softTimeLimit * TimeNoChangeMargin)
 		return 1;
 	if (F(SI->Early))
 		return 0;
-	if (time * 100 > TimeLimit1 * TimeNoPVSCOMargin)
+	if (time * 100 > SHARED->softTimeLimit * TimeNoPVSCOMargin)
 		return 1;
 	if (SI->Singular < 1)
 		return 0;
-	if (time * 100 > TimeLimit1 * TimeSingOneMargin)
+	if (time * 100 > SHARED->softTimeLimit * TimeSingOneMargin)
 		return 1;
 	if (SI->Singular < 2)
 		return 0;
-	if (time * 100 > TimeLimit1 * TimeSingTwoMargin)
+	if (time * 100 > SHARED->softTimeLimit * TimeSingTwoMargin)
 		return 1;
 	return 0;
 }
 
-int input()
+inline int get_number(const char *token)
 {
-	if (child)
+	if (token == NULL)
 		return 0;
-	DWORD p;
-	if (F(Input))
+	return atoi(token);
+}
+inline size_t get_size(const char *token)
+{
+	if (token == NULL)
 		return 0;
-	if (F(Console))
-	{
-		if (PeekNamedPipe(StreamHandle, nullptr, 0, nullptr, &p, nullptr))
-			return (p > 0);
-		else
-			return 1;
-	}
-	else
-		return 0;
+	return size_t(atoll(token));
 }
 
-void epd_test(char filename[], int time_limit)
-{
-	int n = 0, positions = 4000;
-	uint64 Time, all_nodes = 0, new_time, total_time;
-	double prod = 0.0;
-	char* ptr;
-	FILE* fh = nullptr;
-	if (fopen_s(&fh, filename, "r") || fh == nullptr)
-	{
-		fprintf(stdout, "File not found\n");
-		return;
-	}
-	Infinite = 1;
-	Time = get_time();
-	int total_depth = 0;
-	Print = 0;
-	Input = 0;
-	total_time = 1;
-	while (!feof(fh) && n < positions)
-	{
-	new_position:
-		(void)fgets(mstring, 65536, fh);
-		ptr = strchr(mstring, '\n');
-		if (ptr != nullptr)
-			*ptr = 0;
-		get_board(mstring);
-		evaluate();
-		if (Current->turn == White)
-		{
-			gen_root_moves<0>();
-		}
-		else
-		{
-			gen_root_moves<1>();
-		}
-		Infinite = 0;
-		MoveTime = TimeLimit1 = 100000000;
-#ifndef TIME_TO_DEPTH
-		TimeLimit2 = time_limit;
-#else
-		TimeLimit2 = TimeLimit1;
-#endif
-		DepthLimit = 127;
-		++n;
-		Stop = 0;
-		Smpi->nodes = nodes = check_node = check_node_smp = 0;
-		StartTime = get_time();
-		if (setjmp(Jump))
-		{
-			halt_all(0, 127);
-#ifdef TIME_TO_DEPTH
-			stop_searching :
-#endif
-						   ZERO_BIT_64(Smpi->searching, Id);
-						   Searching = 0;
-						   Current = Data;
-						   new_time = Max(get_time() - StartTime, 1ll);
-						   total_time += new_time;
-#ifdef MP_NPS
-						   all_nodes += Smpi->nodes;
-#else
-						   all_nodes += nodes;
-#endif
-						   total_depth += LastDepth / 2;
-#ifndef TIME_TO_DEPTH
-						   fprintf(stdout, "Position %d: %d [%lf, %lld]\n", n, LastDepth / 2, ((double)total_depth) / ((double)n), (all_nodes * 1000ull) / total_time);
-#else
-						   prod += log((double)new_time);
-						   fprintf(stdout, "Position %d: %lld [%.0lf, %lld]\n", n, new_time, exp(prod / (double)n), (all_nodes * 1000ull) / total_time);
-#endif
-						   goto new_position;
-		}
-		for (int d = 4; d < MAX_HEIGHT; d += 2)
-		{
-			LastDepth = d;
-			Searching = 1;
-			SET_BIT_64(Smpi->searching, Id);
-			if (Current->turn == White)
-			{
-				pv_search<0, 1>(-MateValue, MateValue, d, FlagNeatSearch);
-			}
-			else
-			{
-				pv_search<1, 1>(-MateValue, MateValue, d, FlagNeatSearch);
-			}
-#ifdef TIME_TO_DEPTH
-			if (d >= (time_limit * 2))
-				goto stop_searching;
-#endif
-		}
-	}
-	if (n == 0)
-	{
-		fprintf(stdout, "Empty file\n");
-		return;
-	}
-	fclose(fh);
-}
-
-void uci()
+namespace Version
 {
 	const char* mdy = __DATE__;
 	const char now[10] = { mdy[7], mdy[8], mdy[9], mdy[10], mdy[0], mdy[1], mdy[2], mdy[4], mdy[5], 0 };
-	char* ptr = nullptr;
-	char * strtok_context = nullptr;
-	int i;
-
-	(void)fgets(mstring, 65536, stdin);
-	if (feof(stdin))
-		exit(0);
-	ptr = strchr(mstring, '\n');
-	if (ptr != nullptr)
-		*ptr = 0;
-	if (!strcmp(mstring, "uci"))
-	{
-		fprintf(stdout, "id name Roc ");
-		fprintf(stdout, now);
-		fprintf(stdout, "\n");
-		fprintf(stdout, "id author Demichev/Hyer\n");
-#ifndef W32_BUILD
-		fprintf(stdout, "option name Hash type spin min 1 max 65536 default 16\n");
-#else
-		fprintf(stdout, "option name Hash type spin min 1 max 1024 default 16\n");
-#endif
-		fprintf(stdout, "option name Ponder type check default false\n");
-		fprintf(stdout, "option name MultiPV type spin min 1 max 64 default 1\n");
-		fprintf(stdout, "option name Clear Hash type button\n");
-		fprintf(stdout, "option name PV Hash type check default true\n");
-		fprintf(stdout, "option name Contempt type spin min 0 max 64 default 8\n");
-		fprintf(stdout, "option name Wobble type spin min 0 max 3 default 0\n");
-		fprintf(stdout, "option name Aspiration window type check default true\n");
-#ifdef TB
-		fprintf(stdout, "option name SyzygyPath type string default <empty>\n");
-#endif
-#ifdef CPU_TIMING
-		fprintf(stdout, "option name CPUTiming type check default false\n");
-		fprintf(stdout, "option name MaxDepth type spin min 0 max 128 default 0\n");
-		fprintf(stdout, "option name MaxKNodes type spin min 0 max 65536 default 0\n");
-		fprintf(stdout, "option name BaseTime type spin min 0 max 1000000 default 1000\n");
-		fprintf(stdout, "option name IncTime type spin min 0 max 1000000 default 5\n");
-#endif
-		fprintf(stdout, "option name Threads type spin min 1 max %d default %d\n", Min(CPUs, MaxPrN), PrN);
-#ifdef LARGE_PAGES
-		fprintf(stdout, "option name Large memory pages type check default true\n");
-#endif
-		fprintf(stdout, "uciok\n");
-		if (F(Searching))
-			init_search(1);
-	}
-	else if (!strcmp(mstring, "ucinewgame"))
-	{
-		Stop = 0;
-		init_search(1);
-	}
-	else if (!strcmp(mstring, "isready"))
-	{
-		fprintf(stdout, "readyok\n");
-		fflush(stdout);
-	}
-	else if (!memcmp(mstring, "position", 8))
-	{
-		if (F(Searching))
-			get_position(mstring);
-	}
-	else if (!memcmp(mstring, "go", 2))
-	{
-		if (F(Searching))
-			get_time_limit(mstring);
-	}
-	else if (!memcmp(mstring, "setoption", 9))
-	{
-		ptr = strtok_s(mstring, " ", &strtok_context);
-		for (ptr = strtok_s(nullptr, " ", &strtok_context); ptr != nullptr; ptr = strtok_s(nullptr, " ", &strtok_context))
-		{
-			if (!memcmp(ptr, "Hash", 4) && !Searching)
-			{
-				ptr += 11;
-				int value = Max(1, atoi(ptr));
-#ifdef W32_BUILD
-				value = Min(value, 1024);
-#else
-				value = Min(value, 65536);
-#endif
-				value = static_cast<int>(Bit(msb(value) + 20) / static_cast<uint64>(sizeof(GEntry)));
-				if (value != hash_size)
-				{
-					ResetHash = 1;
-					hash_size = value;
-					longjmp(ResetJump, 1);
-				}
-			}
-			else if (!memcmp(ptr, "Threads", 7) && !Searching)
-			{
-				ptr += 14;
-				int value = atoi(ptr);
-				if (value != PrN)
-				{
-					NewPrN = Max(1, Min(MaxPrN, value));
-					ResetHash = 0;
-					longjmp(ResetJump, 1);
-				}
-			}
-			else if (!memcmp(ptr, "MultiPV", 7))
-			{
-				ptr += 14;
-				PVN = atoi(ptr);
-				Stop = 1;
-			}
-			else if (!memcmp(ptr, "Contempt", 8))
-			{
-				ptr += 15;
-				Contempt = atoi(ptr);
-				Stop = 1;
-			}
-			else if (!memcmp(ptr, "Wobble", 6))
-			{
-				ptr += 13;
-				Wobble = atoi(ptr);
-				Stop = 1;
-			}
-			else if (!memcmp(ptr, "Ponder", 6))
-			{
-				ptr += 13;
-				if (ptr[0] == 't')
-					Ponder = 1;
-				else
-					Ponder = 0;
-			}
-			else if (!memcmp(ptr, "Clear", 5))
-			{
-				init_search(1);
-				break;
-			}
-			else if (!memcmp(ptr, "PV", 2))
-			{
-				ptr += 14;
-				if (ptr[0] == 't')
-					PVHashing = 1;
-				else
-					PVHashing = 0;
-			}
-			else if (!memcmp(ptr, "Large", 5) && !Searching)
-			{
-				ptr += 25;
-				if (ptr[0] == 't')
-				{
-					if (LargePages)
-						return;
-					LargePages = 1;
-				}
-				else
-				{
-					if (!LargePages)
-						return;
-					LargePages = 0;
-				}
-				ResetHash = 1;
-				longjmp(ResetJump, 1);
-			}
-			else if (!memcmp(ptr, "Aspiration", 10))
-			{
-				ptr += 24;
-				if (ptr[0] == 't')
-					Aspiration = 1;
-				else
-					Aspiration = 0;
-			}
-#ifdef TB
-			else if (!memcmp(ptr, "SyzygyPath", 10))
-			{
-				ptr += 17;
-				strncpy(Smpi->tb_path, ptr, sizeof(Smpi->tb_path) - 1);
-				ResetHash = 0;
-				longjmp(ResetJump, 1);
-			}
-#endif
-#ifdef CPU_TIMING
-			else if (!memcmp(ptr, "CPUTiming", 9))
-			{
-				ptr += 16;
-				if (ptr[0] == 't')
-					CpuTiming = 1;
-				else
-					CpuTiming = 0;
-			}
-			else if (!memcmp(ptr, "MaxDepth", 8))
-				UciMaxDepth = atoi(ptr + 15);
-			else if (!memcmp(ptr, "MaxKNodes", 9))
-				UciMaxKNodes = atoi(ptr + 16);
-			else if (!memcmp(ptr, "BaseTime", 8))
-				UciBaseTime = atoi(ptr + 15);
-			else if (!memcmp(ptr, "IncTime", 7))
-				UciIncTime = atoi(ptr + 14);
-#endif
-		}
-	}
-	else if (!strcmp(mstring, "stop"))
-	{
-		Stop = 1;
-		if (F(Searching))
-			send_best_move();
-	}
-	else if (!strcmp(mstring, "ponderhit"))
-	{
-		Infinite = 0;
-		if (!RootList[1])
-			Stop = 1;
-		if (F(CurrentSI->Bad) && F(CurrentSI->FailLow) && time_to_stop(BaseSI, LastTime, 0))
-			Stop = 1;
-		if (F(Searching))
-			send_best_move();
-	}
-	else if (!strcmp(mstring, "quit"))
-	{
-		for (i = 1; i < PrN; ++i)
-		{
-			TerminateProcess(ChildPr[i], 0);
-			CloseHandle(ChildPr[i]);
-		}
-		exit(0);
-	}
-	else if (!memcmp(mstring, "epd", 3))
-	{
-		ptr = mstring + 4;
-		epd_test("op.epd", atoi(ptr));
-	}
 }
 
-void check_time(const int* time, int searching)
+
+void uci(void)
 {
-#ifdef CPU_TIMING
-	if (!time && CpuTiming && UciMaxKNodes && nodes > UciMaxKNodes * 1024)
-		Stop = 1;
-#endif
-	while (!Stop && input()) 
-		uci();
-	if (!Stop)
+	char line[4 * PIPE_BUF];
+	uint64_t currTime = get_time();
+
+	while (true)
 	{
-		CurrTime = get_time();
-		int Time = static_cast<int>(CurrTime - StartTime);
-		if (T(Print) && Time > InfoLag && CurrTime - InfoTime > InfoDelay)
+		line[0] = '\0';
+		while (true)
 		{
-			InfoTime = CurrTime;
-			if (info_string[0])
+			DWORD timeout = numeric_limits<DWORD>::max();
+//			if (!SHARED->working.Empty())
+//				timeout = 100;          // 100ms
+
+			bool timedout = get_line(line, sizeof(line) - 1, timeout);
+			currTime = get_time();
+
+			if (mutex_try_lock(&SHARED->mutex, 500))
+				mutex_unlock(&SHARED->mutex);
+			else
+				emergency_stop();
+			if (!SHARED->working.Empty() &&	currTime >= SHARED->startTime + SHARED->hardTimeLimit / 2)
 			{
-				fprintf(stdout, "%s", info_string);
-				info_string[0] = 0;
+				stop();
+				wait_for_stop();
+			}
+			if (!timedout)
+				break;
+		}
+
+		if (line[0] == EOF)
+		{
+			nuke_children();
+			exit(EXIT_SUCCESS);
+		}
+		char *saveptr = NULL;
+		char *token = strtok_s(line, " ", &saveptr);
+		if (token == NULL)
+			/* NOP */;
+		else if (strcmp(token, "go") == 0)
+		{
+			if (!SHARED->working.Empty())
+				continue;
+			int binc = 0, btime = 0, depth = 256, movestogo = 0,
+				winc = 0, wtime = 0, movetime = 0;
+			bool infinite = false, ponder = false;
+			while ((token = strtok_s(NULL, " ", &saveptr)) != NULL)
+			{
+				if (strcmp(token, "binc") == 0)
+					binc = get_number(strtok_s(NULL, " ", &saveptr));
+				else if (strcmp(token, "btime") == 0)
+					btime = get_number(strtok_s(NULL, " ", &saveptr));
+				else if (strcmp(token, "winc") == 0)
+					winc = get_number(strtok_s(NULL, " ", &saveptr));
+				else if (strcmp(token, "wtime") == 0)
+					wtime = get_number(strtok_s(NULL, " ", &saveptr));
+				else if (strcmp(token, "movetime") == 0)
+					movetime = get_number(strtok_s(NULL, " ", &saveptr));
+				else if (strcmp(token, "movetogo") == 0)
+					movestogo = get_number(strtok_s(NULL, " ", &saveptr));
+				else if (strcmp(token, "depth") == 0)
+					depth = get_number(strtok_s(NULL, " ", &saveptr));
+				else if (strcmp(token, "infinite") == 0)
+					infinite = true;
+				else if (strcmp(token, "ponder") == 0)
+					ponder = true;
+			}
+			int time = (Current->turn == White ? wtime : btime);
+			int inc = (Current->turn == White ? winc : binc);
+			if (movetime == 0 && time == 0 && inc == 0)
+				infinite = true;
+			if (movestogo != 0)
+				movestogo = Max(movestogo - 1, 1);
+			int time_max = Max(time - Min(1000, (3 * time) / 4), 0);
+			int nmoves;
+			int exp_moves = MovesTg - 1;
+			if (movestogo != 0)
+				nmoves = movestogo;
+			else
+			{
+				nmoves = MovesTg - 1;
+				if (Current->ply > 40)
+					nmoves += Min(Current->ply - 40, (100 - Current->ply) / 2);
+				exp_moves = nmoves;
+			}
+			int softTimeLimit = Min(time_max, (time_max + (Min(exp_moves, nmoves) * inc)) / Min(exp_moves, nmoves));
+			int hardTimeLimit = Min(time_max, (time_max + (Min(exp_moves, nmoves) * inc)) / Min(5, Min(exp_moves, nmoves)));
+			softTimeLimit = Min(time_max, (softTimeLimit * TimeRatio) / 100);
+
+			if (movetime != 0)
+			{
+				hardTimeLimit = movetime;
+				softTimeLimit = numeric_limits<decltype(softTimeLimit)>::max();
+			}
+			else if (infinite)
+				hardTimeLimit = softTimeLimit = numeric_limits<int>::max();
+			{
+				LOCK_SHARED;
+				SHARED->ponder = ponder;
+				SHARED->softTimeLimit = softTimeLimit;
+				SHARED->hardTimeLimit = hardTimeLimit;
+				SHARED->depthLimit = 2 * depth + 2;
+				SHARED->startTime = currTime;
+			}
+			go();
+			// children start working; we wait until they are done
+			for (int i = 1; ; ++i)
+			{
+				Sleep(i);
+				if (SHARED->working.Empty())
+					break;
+			}
+		}
+		else if (strcmp(token, "isready") == 0)
+		{
+			char reply[] = "readyok\n";
+			put_line(reply, sizeof(reply) - 1);
+		}
+		else if (strcmp(token, "stop") == 0)
+		{
+			fprintf(stdout, "id name stop requested\n");
+			fflush(stdout);
+			{
+				LOCK_SHARED;
+				if (!SHARED->working.Empty())
+				{
+					for (int ii = 0; ii < SETTINGS->nThreads; ++ii)
+					{
+						if (SHARED->working.vals_[ii].next_ != ii)
+							fprintf(stdout, "id name worker %d still active\n", ii);
+					}
+				}
+				if (SHARED->stopAll)
+					fprintf(stdout, "id name stop requested\n");
+				else
+					fprintf(stdout, "id name no stop requested\n");
+				if (SHARED->best.move)
+					fprintf(stdout, "id name stored candidate is move %d depth %d score %d worker %d\n", SHARED->best.move, SHARED->best.depth, SHARED->best.value, SHARED->best.worker);
+				else
+					fprintf(stdout, "id name no stored candidate\n");
 				fflush(stdout);
 			}
-		}
-		if (F(time_to_stop(CurrentSI, time ? *time : Time, searching)))
-			return;
-	}
-
-	Stop = 1;
-	longjmp(Jump, 1);
-}
-
-void check_state()
-{
-	GSP* Sp, *Spc;
-	int n, nc, score, best, pv, alpha, beta, new_depth, r_depth, ext, move, value;
-	GMove* M;
-
-	if (parent)
-	{
-		for (uint64 u = TEST_RESET(Smpi->fail_high); u; Cut(u))
-		{
-			Sp = &Smpi->Sp[lsb(u)];
-			LOCK(Sp->lock);
-			if (Sp->active && Sp->finished)
-			{
-				UNLOCK(Sp->lock);
-				longjmp(Sp->jump, 1);
-			}
-			UNLOCK(Sp->lock);
-		}
-		return;
-	}
-
-	for (; ; ) // start:
-	{
-		if (TEST_RESET_BIT(Smpi->stop, Id))
-			longjmp(CheckJump, 1);
-		if (HasBit(Smpi->searching, Id))
-			return;
-		if (!(Smpi->searching & 1))
-		{
-			Sleep(1);
-			return;
-		}
-		while ((Smpi->searching & 1) && !Smpi->active_sp) _mm_pause();
-		while ((Smpi->searching & 1) && !HasBit(Smpi->searching, Id - 1)) _mm_pause();
-
-		Sp = nullptr;
-		best = -0x7FFFFFFF;
-		for (uint64 u = Smpi->active_sp; u; Cut(u))
-		{
-			Spc = &Smpi->Sp[lsb(u)];
-			if (!Spc->active || Spc->finished || Spc->lock)
+			if (SHARED->working.Empty())
 				continue;
-			for (nc = Spc->current + 1; nc < Spc->move_number; ++nc)
-				if (!(Spc->move[nc].flags & FlagClaimed))
-					break;
-			if (nc < Spc->move_number)
-				score = 1024 * 1024 + 512 * 1024 * (Spc->depth >= 20) + 128 * 1024 * (!(Spc->split)) + ((Spc->depth + 2 * Spc->singular) * 1024) -
-				(((16 * 1024) * (nc - Spc->current)) / nc);
+			stop();
+			wait_for_stop();
+		}
+		else if (strcmp(token, "ponderhit") == 0)
+		{
+			SHARED->ponder = false;	// don't bother with mutex, workers will not write to ponder
+			if (SHARED->working.Empty())
+				send_best_move(true);
+		}
+		else if (strcmp(token, "position") == 0)
+		{
+			token = strtok_s(NULL, " ", &saveptr);
+			if (token == NULL)
+				goto bad_command;
+			char *moves;
+			if (strcmp(token, "fen") == 0)
+			{
+				char *fen = token + strlen(token) + 1;
+				moves = (char*)get_board(fen);
+			}
+			else if (strcmp(token, "startpos") == 0)
+			{
+				moves = saveptr;
+				get_board(
+					"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+			}
 			else
-				continue;
-			if (score > best)
+				goto bad_command;
+			token = strtok_s(moves, " ", &saveptr);
+			if (token != NULL && strcmp(token, "moves") == 0)
 			{
-				best = score;
-				Sp = Spc;
-				n = nc;
+				LOCK_SHARED;
+				while ((token = strtok_s(NULL, " ", &saveptr)) != NULL)
+				{
+					int move = move_from_string(token);
+					if (Current->turn) do_move<1>(move); else do_move<0>(move);
+					memcpy(Data, Current, sizeof(GData));
+					Current = Data;
+					SHARED->rootDepth++;
+				}
 			}
+			copy(Stack.begin() + sp - Current->ply, Stack.begin() + sp + 1, Stack.begin());
+			sp = Current->ply;
 		}
-
-		if (Sp == nullptr)
-			continue;
-		if (!Sp->active || Sp->finished || (Sp->move[n].flags & FlagClaimed) || n <= Sp->current || n >= Sp->move_number)
-			continue;
-		if (Sp->lock)
-			continue;
-
-		LOCK(Sp->lock);
-		if (!Sp->active || Sp->finished || (Sp->move[n].flags & FlagClaimed) || n <= Sp->current || n >= Sp->move_number)
+		else if (strcmp(token, "setoption") == 0)
 		{
-			UNLOCK(Sp->lock);
-			continue;
+			token = strtok_s(NULL, " ", &saveptr);
+			if (token == NULL || strcmp(token, "name") != 0)
+				goto bad_command;
+			const char *name = strtok_s(NULL, " ", &saveptr);
+			if (name == NULL)
+				goto bad_command;
+			token = strtok_s(NULL, " ", &saveptr);
+			if (token == NULL || strcmp(token, "value") != 0)
+				goto bad_command;
+			if (token == NULL)
+				goto bad_command;
+			auto settings = *SETTINGS;
+			if (strcmp(name, "Hash") == 0)
+			{
+				size_t n = get_size(strtok_s(NULL, " ", &saveptr));
+				size_t nc = (n << 20) / (HASH_CLUSTER * sizeof(GEntry));
+				if (nc == 0) nc = 1;	// don't want to deal with degenerate case of no hash
+				settings.nHash = Bit(msb(nc)) * HASH_CLUSTER;
+				settings.hashMask = settings.nHash - HASH_CLUSTER;
+			}
+			else if (strcmp(name, "Threads") == 0)
+				settings.nThreads = get_number(strtok_s(NULL, " ", &saveptr));
+			else if (strcmp(name, "SyzygyPath") == 0)
+			{
+				if (saveptr != NULL && strlen(saveptr) < sizeof(settings.tbPath) - 1)
+					memcpy(settings.tbPath, saveptr, strlen(saveptr) + 1);
+			}
+			else if (strcmp(name, "Contempt") == 0)
+				settings.contempt = get_number(strtok_s(NULL, " ", &saveptr));
+			else if (strcmp(name, "Wobble") == 0)
+				settings.wobble = get_number(strtok_s(NULL, " ", &saveptr));
+			else if (strcmp(name, "SyzygyProbeDepth") == 0)
+				settings.tbMinDepth = get_number(strtok_s(NULL, " ", &saveptr));
+			else
+				goto bad_command;
+			reset(settings);
 		}
-		break;
-	}
-
-	M = &Sp->move[n];
-	M->flags |= FlagClaimed;
-	M->id = Id;
-	Sp->split |= Bit(Id);
-	pv = Sp->pv;
-	alpha = Sp->alpha;
-	beta = Sp->beta;
-	new_depth = M->reduced_depth;
-	r_depth = M->research_depth;
-	ext = M->ext;
-	move = M->move;
-
-	Current = Data;
-	retrieve_position(Sp->Pos, 1);
-	evaluate();
-	SET_BIT_64(Smpi->searching, Id);
-	UNLOCK(Sp->lock);
-
-	if (setjmp(CheckJump))
-	{
-		ZERO_BIT_64(Smpi->searching, Id);
-		return;
-	}
-	if (Current->turn == White)
-	{
-		do_move<0>(move);
-		if (pv)
+		else if (strcmp(token, "ucinewgame") == 0)
 		{
-			value = -scout<1, 0>(-alpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
-			if (value > alpha)
-				value = -pv_search<1, 0>(-beta, -alpha, r_depth, ExtToFlag(ext));
+			if (!SHARED->working.Empty())
+				continue;
+			init_search(true);
+			LOCK_SHARED;
+			for (int i = 0; i < SETTINGS->nThreads; i++)
+				THREADS[i]->newGame = true;
+		}
+		else if (strcmp(token, "uci") == 0)
+		{
+			char reply[] =
+				"id name Roc            \n"
+				"id author Demichev/Falcinelli/Hyer\n"
+				"option name Hash type spin min 1 max 8388608 default 128\n"
+				"option name Threads type spin min 1 max 64 default 4\n"
+				"option name SyzygyPath type string default <empty>\n"
+				"option name SyzygyProbeDepth type spin min 0 max 64 "
+				"default 1\n"
+				"uciok\n";
+			char* dst = &reply[12];
+			for (const char* src = &Version::now[0]; *src; ++src, ++dst) *dst = *src;
+			put_line(reply, sizeof(reply) - 1);
+		}
+		else if (strcmp(token, "quit") == 0)
+		{
+			nuke_children();
+			exit(EXIT_SUCCESS);
 		}
 		else
 		{
-			value = -scout<1, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
-			if (value >= beta && new_depth < r_depth)
-				value = -scout<1, 0>(1 - beta, r_depth, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
-		}
-		undo_move<0>(move);
-	}
-	else
-	{
-		do_move<1>(move);
-		if (pv)
-		{
-			value = -scout<0, 0>(-alpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
-			if (value > alpha)
-				value = -pv_search<0, 0>(-beta, -alpha, r_depth, ExtToFlag(ext));
-		}
-		else
-		{
-			value = -scout<0, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
-			if (value >= beta && new_depth < r_depth)
-				value = -scout<0, 0>(1 - beta, r_depth, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
-		}
-		undo_move<1>(move);
-	}
-
-	LOCK(Sp->lock);
-	ZERO_BIT_64(Smpi->searching, Id);
-	if (TEST_RESET_BIT(Smpi->stop, Id))
-	{
-		UNLOCK(Sp->lock);
-		return;
-	}
-	M->flags |= FlagFinished;
-	if (value > Sp->alpha)
-	{
-		Sp->alpha = Min(value, beta);
-		Sp->best_move = move;
-		if (value >= beta)
-		{
-			Sp->finished = 1;
-			SET_BIT_64(Smpi->fail_high, (int)(Sp - Smpi->Sp));
+		bad_command:
+			log_msg("warning: unknown command\n");
 		}
 	}
-	UNLOCK(Sp->lock);
 }
 
-HANDLE CreateChildProcess(int child_id)
+void worker()
 {
-	char name[1024];
-	TCHAR szCmdline[1024];
-	PROCESS_INFORMATION piProcInfo;
-	STARTUPINFO siStartInfo;
-	BOOL bSuccess = FALSE;
-
-	ZeroMemory(&piProcInfo, sizeof(PROCESS_INFORMATION));
-	ZeroMemory(&siStartInfo, sizeof(STARTUPINFO));
-	ZeroMemory(szCmdline, 1024 * sizeof(TCHAR));
-	ZeroMemory(name, 1024);
-
-	siStartInfo.cb = sizeof(STARTUPINFO);
-	siStartInfo.dwFlags |= STARTF_USESTDHANDLES;
-
-	GetModuleFileName(nullptr, name, 1024);
-	sprintf_s(szCmdline, " child %d %d", WinParId, child_id);
-
-	bSuccess = CreateProcess(TEXT(name), TEXT(szCmdline), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &siStartInfo, &piProcInfo);
-
-	if (bSuccess)
+	while (true)
 	{
-		CloseHandle(piProcInfo.hThread);
-		return piProcInfo.hProcess;
+		Current = Data;
+//		while (!SHARED->stopAll)
+//			Sleep(1);	// can get here if we finish the search before timing out
+//		while (SHARED->stopAll)
+			wait_for_go();
+
+		bool newGame = INFO->newGame;
+		INFO->newGame = false;
+
+		{
+			LOCK_SHARED;
+			SHARED->working.Insert(INFO->id);
+		}
+
+		if (newGame)
+			init_search(false);
+
+		memcpy(Board, &SHARED->rootBoard, sizeof(GBoard));
+		memcpy(Current, &SHARED->rootData, sizeof(GData));
+		memcpy(&Stack[0], &SHARED->rootStack, SHARED->rootSp * sizeof(uint64_t));
+		sp = SHARED->rootSp;
+		Stack[sp] = Current->key;
+		check_node = INFO->nodes + 1024;	// should cause a check within a millisecond
+
+		try
+		{
+			if (Current->turn == White)
+				root<0>();
+			else
+				root<1>();
+		}
+		catch (...) {}	// reserve the right to use exceptions to halt work
+
+		bool done = false;
+		{
+			LOCK_SHARED;
+			SHARED->working.Remove(INFO->id);
+			done = SHARED->working.Empty();
+		}
+		if (done)
+			send_best_move();
 	}
-	else
+}
+
+void init_os()
+{
+	HANDLE handle = GetStdHandle(STD_INPUT_HANDLE);
+	DWORD mode;
+	if (GetConsoleMode(handle, &mode))
 	{
-		fprintf(stdout, "Error %d\n", GetLastError());
-		return nullptr;
+		mode &= ~ENABLE_MOUSE_INPUT;
+		mode &= ~ENABLE_WINDOW_INPUT;
+		mode |= ENABLE_LINE_INPUT;
+		mode |= ENABLE_ECHO_INPUT;
+		SetConsoleMode(handle, mode);
+		FlushConsoleInputBuffer(handle);
 	}
+
+	HANDLE job = CreateJobObject(NULL, NULL);
+	if (job == NULL)
+		error_msg("failed to create job object (%d)", GetLastError());
+	JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+	memset(&info, 0, sizeof(info));
+	info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+	SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info,
+		sizeof(info));
+	AssignProcessToJobObject(job, GetCurrentProcess());     // Allowed to fail
 }
 
 #ifndef REGRESSION
-int main(int argc, char* argv[])
+int main(int argc, char **argv)
 {
-	DWORD p;
-	int i, HT = 0;
-	SYSTEM_INFO sysinfo;
-
-	if (argc >= 2)
-		if (!memcmp(argv[1], "child", 5))
+	if (argc > 1 && strcmp(argv[1], "child") == 0)
+	{
+		if (argc != 9)
 		{
-			child = 1;
-			parent = 0;
-			WinParId = atoi(argv[2]);
-			Id = atoi(argv[3]);
+		usage:
+			fprintf(stderr, "usage: %s\n", argv[0]);
+			fprintf(stderr, "       %s \"bench\" <depth> FEN1 [FEN2 ...]\n",
+				argv[0]);
+			exit(EXIT_FAILURE);
 		}
 
-	int CPUInfo[4] = { -1, 0, 0, 0 };
-	__cpuid(CPUInfo, 1);
-	HardwarePopCnt = (CPUInfo[2] >> 23) & 1;
-
-	if (parent)
-	{
-		if (((CPUInfo[3] >> 28) & 1) && GetProcAddress(GetModuleHandle(TEXT("kernel32")), "GetLogicalProcessorInformation") != nullptr)
-		{
-			p = sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
-#ifndef W32_BUILD
-			SYSTEM_LOGICAL_PROCESSOR_INFORMATION syslogprocinfo[1];
-			GetLogicalProcessorInformation(syslogprocinfo, &p);
-			if (syslogprocinfo->ProcessorCore.Flags == 1)
-				HT = 1;
+		// CHILD:
+		const char
+			*hashStr = argv[2],
+			*pvHashStr = argv[3],
+			*pawnHashStr = argv[4],
+			*dataStr = argv[5],
+			*settingsStr = argv[6],
+			*sharedStr = argv[7],
+			*infoStr = argv[8];
+		RO = DATA = init_object(DATA, dataStr, false, true);
+		SETTINGS = init_object(SETTINGS, settingsStr, false, true);
+		SHARED = init_object(SHARED, sharedStr, false, false);
+		HASH = init_object(HASH, hashStr, false, false, SETTINGS->nHash);
+		PVHASH = init_object(PVHASH, pvHashStr, false, false, N_PV_HASH);
+		PAWNHASH = init_object(PAWNHASH, pawnHashStr, false, false, N_PAWN_HASH);
+		INFO = init_object(INFO, infoStr, false, false);
+		INFO->pid = GetCurrentProcessId();
+#if TB
+		tb_init(SETTINGS->tbPath);
 #endif
-		}
-		WinParId = GetProcessId(GetCurrentProcess());
-		HANDLE JOB = CreateJobObject(nullptr, nullptr);
-		JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
-		jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-		SetInformationJobObject(JOB, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli));
-		AssignProcessToJobObject(JOB, GetCurrentProcess());
-		if (MaxPrN > 1)
+		THREADS.resize(SETTINGS->nThreads);
+		for (int i = 0; i < SETTINGS->nThreads; i++)
 		{
-			GetSystemInfo(&sysinfo);
-			CPUs = sysinfo.dwNumberOfProcessors;
-			PrN = Min(CPUs, MaxPrN);
-			if (HT)
-				PrN = Max(1, Min(PrN, CPUs / 2));
-		}
-	}
-
-#ifdef CPU_TIMING
-	SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS);
-#endif
-
-	init();
-
-#ifdef TB
-	if (parent)
-		if (auto val = getenv("GULL_SYZYGY_PATH"))
-			strncpy(Smpi->tb_path, val, sizeof(Smpi->tb_path) - 1);
-#endif
-
-	StreamHandle = GetStdHandle(STD_INPUT_HANDLE);
-	Console = GetConsoleMode(StreamHandle, &p);
-	if (Console)
-	{
-		SetConsoleMode(StreamHandle, p & (~(ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT)));
-		FlushConsoleInputBuffer(StreamHandle);
-	}
-
-	setvbuf(stdout, nullptr, _IONBF, 0);
-	setvbuf(stdin, nullptr, _IONBF, 0);
-	fflush(nullptr);
-
-	fprintf(stdout, "Roc\n");
-
-reset_jump:
-	if (parent)
-	{
-		if (setjmp(ResetJump))
-		{
-			for (i = 1; i < PrN; ++i) TerminateProcess(ChildPr[i], 0);
-			for (i = 1; i < PrN; ++i)
+			if (i == INFO->id)
 			{
-				WaitForSingleObject(ChildPr[i], INFINITE);
-				CloseHandle(ChildPr[i]);
+				THREADS[i] = INFO;
+				continue;
 			}
-			Smpi->searching = Smpi->active_sp = Smpi->stop = 0;
-			for (i = 0; i < MaxSplitPoints; ++i) Smpi->Sp->active = Smpi->Sp->claimed = 0;
-
-			Smpi->hash_size = hash_size;
-			if (NewPrN)
-				Smpi->PrN = PrN = NewPrN;
-			goto reset_jump;
+			string infoName = object_name("INFO", SETTINGS->parentPid, i);
+			THREADS[i] = init_object<ThreadOwn_>(nullptr, infoName.c_str(), false, false);
 		}
-		Smpi->hash_size = hash_size;
-		Smpi->PrN = PrN;
+		init_search(false);
+
+		// Signal that we are initialized.
+		{
+			LOCK_SHARED;
+			SHARED->working.Remove(INFO->id);
+		}
+		worker();   // Wait for work from parent.
 	}
-	else
+	else if (argc > 2 && strcmp(argv[1], "bench") == 0)
 	{
-		hash_size = Smpi->hash_size;
-		PrN = Smpi->PrN;
+		const int benchDepth = atoi(argv[2]);
+		RO = DATA = init_object(DATA, nullptr, true, false);
+		init_data(DATA);
+		Settings_ settings;
+		settings.nThreads = 1;
+		settings.nHash = (1 << 23) / sizeof(GEntry);        // 8MB
+		settings.tbPath[0] = 0;
+		SETTINGS = init_object(SETTINGS, nullptr, true, true, 1, &settings);
+		SHARED = init_object(SHARED, nullptr, true, false);
+		SHARED->mutex = mutex_init;
+		SHARED->goEvent = event_init();
+
+		HASH = init_object(HASH, nullptr, true, false, SETTINGS->nHash);
+		PVHASH = init_object(PVHASH, nullptr, true, false, N_PV_HASH);
+		PAWNHASH = init_object(PAWNHASH, nullptr, true, false, N_PAWN_HASH);
+		INFO = init_object(INFO, nullptr, true, false);
+		INFO->pid = GetCurrentProcessId();
+		THREADS[0] = INFO;
+
+		uint64_t t0 = get_time(), nodes = 0;
+		for (int i = 3; i < argc; i++)
+		{
+			init_search(true);
+			if (strcmp(argv[i], "startpos") != 0)
+				get_board(argv[i]);
+			SHARED->stopAll = false;
+			SHARED->depthLimit = 2 * benchDepth + 2;
+			SHARED->softTimeLimit = UINT32_MAX;
+			SHARED->hardTimeLimit = UINT32_MAX;
+			SHARED->startTime = t0;
+			if (Current->turn == White) root<0>(); else root<1>();
+			send_best_move();
+			nodes += INFO->nodes;
+		}
+		cout << "TIME : " << get_time() - t0 << "\nNODES: " << nodes << "\n";
+		exit(EXIT_SUCCESS);
 	}
-	if (ResetHash)
-		init_hash();
-	init_search(0);
-#ifdef TB
-	tb_init(Smpi->tb_path);
-#endif
+	else if (argc > 1)
+		goto usage;
 
-	if (child)
-		while (true) check_state();
-	if (parent)
-		for (i = 1; i < PrN; ++i) ChildPr[i] = CreateChildProcess(i);
+	// PARENT:
+	cout << "Roc " << Version::now << "\n";
+	init_os();
 
-	while (true) uci();
+	// Read override parameters from the environment (useful for debugging)
+	Settings_ startInfo;
+	startInfo.parentPid = GetCurrentProcessId();
+	const char *val;
+	if ((val = getenv("ROC_HASH")) != NULL)
+		startInfo.nHash = atoll(val) / sizeof(GEntry);
+	else
+		startInfo.nHash = (1 << 27) / sizeof(GEntry);     // 128MB
+	startInfo.nHash = Bit(msb(startInfo.nHash));
+	startInfo.hashMask = startInfo.nHash - HASH_CLUSTER;
+	if ((val = getenv("ROC_THREADS")) != NULL)
+		startInfo.nThreads = atoi(val);
+	else
+		startInfo.nThreads = get_num_cpus();
+	if ((val = getenv("ROC_SYZYGY_PATH")) != NULL)
+		strncpy(startInfo.tbPath, val, sizeof(startInfo.tbPath) - 1);
+	else
+		startInfo.tbPath[0] = 0;
+	// other settings are fine at defaults
+	if ((val = getenv("ROC_TB_MIN_DEPTH")) != NULL)
+		startInfo.tbMinDepth = atoi(val);
+	if ((val = getenv("ROC_CONTEMPT")) != NULL)
+		startInfo.contempt = atoi(val);
+	if ((val = getenv("ROC_WOBBLE")) != NULL)
+		startInfo.wobble = atoi(val);
+
+	PVN = 1;        // XXX NYI
+
+	create_children(startInfo);
+	init_search(false);
+
+	while (true)
+		uci();
 	return 0;
 }
 #else
