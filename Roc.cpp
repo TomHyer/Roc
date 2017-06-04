@@ -300,7 +300,8 @@ static const uint8 CanCastle_oo = 2;
 static const uint8 CanCastle_OOO = 4;
 static const uint8 CanCastle_ooo = 8;
 
-static const uint16 FlagCastling = 0x1000;  // also overloaded to flag "joins", desirable quiet moves
+static const uint16 FlagCastling = 0x1000;  // numerically equal to FlagPriority
+static const uint16 FlagPriority = 0x1000;  // flag desirable quiet moves
 static const uint16 FlagEP = 0x2000;
 static const uint16 FlagPKnight = 0x4000;
 static const uint16 FlagPBishop = 0x6000;
@@ -321,7 +322,10 @@ INLINE bool IsEP(uint16 move)
 }
 template<bool me> INLINE uint8 Promotion(uint16 move)
 {
-	return (me ? 1 : 0) + ((move & 0xF000) >> 12);
+	uint8 retval = (move & 0xF000) >> 12;
+//	if (retval == WhiteLight && HasBit(DarkArea, To(move)))
+//		retval = WhiteDark;
+	return (me ? 1 : 0) + retval;
 }
 
 #ifndef W32_BUILD
@@ -654,7 +658,8 @@ typedef struct
 {
 	array<uint8, 64> square;
 	uint64 key, pawn_key;
-	packed_t material, pst;
+	packed_t pst;
+	int material;
 	uint16 move;
 	uint8 turn, castle_flags, ply, ep_square, piece, capture;
 } GPosData;
@@ -662,15 +667,16 @@ typedef struct
 {
 	array<uint64, 2> att, patt, xray;
 	uint64 key, pawn_key, eval_key, passer, threat, mask;
-	packed_t material, pst;
+	packed_t pst;
+	int material;
 	int *start, *current;
 	int best;
 	score_t score;
 	array<uint16, N_KILLER + 1> killer;
 	array<uint16, 2> ref;
 	uint16 move;
-	uint8 turn, castle_flags, ply, ep_square, capture, gen_flags, piece, stage, mul;
-	sint32 moves[230];
+	uint8 turn, castle_flags, ply, ep_square, capture, gen_flags, piece, stage;
+	sint32 moves[144];
 } GData;
 __declspec(align(64)) GData Data[MAX_HEIGHT];
 GData* Current = Data;
@@ -748,9 +754,27 @@ GPVEntry* PVHash = nullptr;
 
 array<int, 256> RootList;
 
-template<class T> void prefetch(T* p)
+void Prefetch1(const char* p)
 {
-	_mm_prefetch(reinterpret_cast<const char*>(p), _MM_HINT_NTA);
+	_mm_prefetch(p, _MM_HINT_T0);
+}
+template<int N> void Prefetch(const char* p)
+{
+	//p -= reinterpret_cast<size_t>(p) & 63;
+	for (int ii = 0; ii < N; ++ii)
+		Prefetch1(p + 64 * ii);
+}
+INLINE void Prefetch(const GMaterial* pe)
+{
+	Prefetch1(reinterpret_cast<const char*>(pe));
+}
+INLINE void Prefetch(const GEntry* pe)
+{
+	Prefetch<2>(reinterpret_cast<const char*>(pe));
+}
+INLINE void Prefetch(const GPawnEntry* pe)
+{
+	Prefetch<2>(reinterpret_cast<const char*>(pe));
 }
 
 #ifndef HNI
@@ -813,7 +837,7 @@ INLINE int* AddCapture(int* list, int from, int to, int flags)
 
 INLINE uint16 JoinFlag(uint16 move)
 {
-	return (move & FlagCastling) ? 1 : 0;
+	return T(move & FlagPriority);
 }
 INLINE uint16& HistoryScore(int join, int piece, int from, int to)
 {
@@ -1044,21 +1068,21 @@ enum
 };
 
 // pawn, knight, bishop, rook, queen, pair
-static constexpr array<int, 6> MatLinear = { 39, -11, -14, 86, -15, -1 };
+static constexpr array<int, 6> MatLinear = { 36, -20, -2, 86, -15, -1 };
 static constexpr int MatWinnable = 160;
 
 // T(pawn), pawn, knight, bishop, rook, queen
-const int MatQuadMe[21] = { // tuner: type=array, var=1000, active=0
+const array<int, 21> MatQuadMe = { // tuner: type=array, var=1000, active=0
 	NULL, 0, 0, 0, 0, 0,
-	-33, 17, -23, -155, -247,
+	-33, 117, -23, -155, -247,
 	15, 296, -105, -83,
 	-162, 327, 315,
 	-861, -1013,
 	NULL
 };
-const int MatQuadOpp[15] = { // tuner: type=array, var=1000, active=0
+const array<int, 15> MatQuadOpp = { // tuner: type=array, var=1000, active=0
 	0, 0, 0, 0, 0,
-	-14, -96, -20, -278,
+	-114, -96, -20, -278,
 	35, 39, 49,
 	9, -2,
 	75
@@ -1389,6 +1413,7 @@ namespace Params
 		TacticalMinorMinor,
 		TacticalThreat,
 		TacticalDoubleThreat,
+		TacticalNonQuiescent,
 		TacticalUnguardedQ
 	};
 	static constexpr array<int, 32> Tactical = {  // tuner: type=array, var=51, active=0
@@ -1495,13 +1520,16 @@ namespace Params
 		KnightOutpost,
 		KnightOutpostProtected,
 		KnightOutpostPawnAtt,
-		KnightOutpostNoMinor
+		KnightOutpostNoMinor,
+		KnightPawnSpread
 	};
-	static constexpr array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
+	static constexpr array<int, 20> KnightSpecial = {  // tuner: type=array, var=26, active=0
 		40, 40, 24, 0,
 		41, 40, 0, 0,
 		44, 44, 18, 0,
-		41, 40, 0, 0 };
+		41, 40, 0, 0,
+		0, 6, 25, -10
+	};
 }
 namespace Values
 {
@@ -1510,6 +1538,7 @@ namespace Values
 	VALUE(KnightOutpostProtected);
 	VALUE(KnightOutpostPawnAtt);
 	VALUE(KnightOutpostNoMinor);
+	VALUE(KnightPawnSpread);
 #undef VALUE
 }
 
@@ -1728,18 +1757,18 @@ template<bool me> int NBZ(const uint64& x)
 	return me ? MSBZ(x) : LSBZ(x);
 }
 
-INLINE int FileSpan(uint64* occ)
+INLINE uint8 FileOcc(uint64 occ)
 {
-	*occ |= *occ >> 32;
-	*occ |= *occ >> 16;
-	*occ |= *occ >> 8;
-	*occ &= 0xFF;	// now it is the file population
-	return RO->SpanWidth[static_cast<size_t>(*occ)];
+	uint64 t = occ;
+	t |= t >> 32;
+	t |= t >> 16;
+	t |= t >> 8;
+	return static_cast<uint8>(t & 0xFF);
 }
+
 INLINE int FileSpan(const uint64& occ)
 {
-	uint64 temp = occ;
-	return FileSpan(&temp);
+	return RO->SpanWidth[FileOcc(occ)];
 }
 
 #if TB_SEAGULL
@@ -1842,6 +1871,14 @@ struct MemEntry_
 };
 array<MemEntry_, TheMemorySize> TheImages;
 thread_local int TheImageLoc = 0;
+
+void CheckMaterialIndex(int theo)
+{
+	theo &= ~FlagUnusualMaterial;
+	for (int ii = 0; ii < 64; ++ii)
+		theo -= RO->MatCode[PieceAt(ii)];
+	assert(!theo);
+}
 
 struct MoveScope_
 {
@@ -2082,7 +2119,7 @@ void init_misc(CommonData_* data)
 	for (int i = 0; i < 16; ++i)
 		data->LogDist[i] = (int)(10.0 * log(1.01 + i));
 	for (int i = 1; i < 256; ++i)
-		data->SpanWidth[i] = 1 + msb(i) - lsb(i);
+		data->SpanWidth[i] = msb(i) - lsb(i);
 	data->SpanWidth[0] = 0;
 
 	data->UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
@@ -3258,9 +3295,9 @@ void calc_material(int index, GMaterial& material)
 			}
 			else if (F(pawns[me]) && T(pawns[opp]))
 			{
-				if (F(NonPawnKing(opp)) && Single(Pawn(opp)))
+				if (tot[opp] == 0 && pawns[opp] == 1)
 					material.eval[me] = TEMPLATE_ME(eval_kqkpx);
-				else if (Rook(opp))
+				else if (rooks[opp] == 1)
 					material.eval[me] = TEMPLATE_ME(eval_kqkrpx);
 			}
 		}
@@ -3695,18 +3732,18 @@ template<bool me> void do_move(int move)
 				Next->pawn_key ^= pKey[from] ^ pKey[to];
 
 			PawnEntry = &PawnHash[Next->pawn_key & PAWN_HASH_MASK];
-			prefetch(PawnEntry);
+			Prefetch(PawnEntry);
 		}
 		else if (piece >= WhiteKing)
 		{
 			Next->pawn_key ^= pKey[from] ^ pKey[to];
 			PawnEntry = &PawnHash[Next->pawn_key & PAWN_HASH_MASK];
-			prefetch(PawnEntry);
+			Prefetch(PawnEntry);
 		}
 		else if (capture < WhiteKnight)
 		{
 			PawnEntry = &PawnHash[Next->pawn_key & PAWN_HASH_MASK];
-			prefetch(PawnEntry);
+			Prefetch(PawnEntry);
 		}
 
 		if (Current->castle_flags && (piece >= WhiteRook || capture >= WhiteRook))
@@ -3716,7 +3753,7 @@ template<bool me> void do_move(int move)
 			Next->pawn_key ^= RO->CastleKey[Current->castle_flags] ^ RO->CastleKey[Next->castle_flags];
 		}
 		if (F(Next->material & FlagUnusualMaterial))
-			prefetch(&RO->Material[Next->material]);
+			Prefetch(&RO->Material[Next->material]);
 		if (Current->ep_square)
 			Next->key ^= RO->EPKey[FileOf(Current->ep_square)];
 		Next->ply = 0;
@@ -3762,7 +3799,7 @@ template<bool me> void do_move(int move)
 				}
 			}
 			PawnEntry = &PawnHash[Next->pawn_key & PAWN_HASH_MASK];
-			prefetch(PawnEntry);
+			Prefetch(PawnEntry);
 		}
 		else
 		{
@@ -3778,7 +3815,7 @@ template<bool me> void do_move(int move)
 				{
 					Next->pawn_key ^= pKey[to] ^ pKey[from];
 					PawnEntry = &PawnHash[Next->pawn_key & PAWN_HASH_MASK];
-					prefetch(PawnEntry);
+					Prefetch(PawnEntry);
 				}
 			}
 
@@ -3805,7 +3842,7 @@ template<bool me> void do_move(int move)
 
 	Next->key ^= RO->TurnKey;
 	Entry = Hash + (High32(Next->key) & hash_mask);
-	prefetch(Entry);
+	Prefetch(Entry);
 	++sp;
 	Stack[sp] = Next->key;
 	Next->move = move;
@@ -3889,7 +3926,7 @@ void do_null()
 	Next = Current + 1;
 	Next->key = Current->key ^ RO->TurnKey;
 	Entry = Hash + (High32(Next->key) & hash_mask);
-	prefetch(Entry);
+	Prefetch(Entry);
 	Next->pawn_key = Current->pawn_key;
 	Next->eval_key = 0;
 	Next->turn = Current->turn ^ 1;
@@ -4110,10 +4147,8 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 		}
 	}
 
-	uint64 files = Pawn(me) | (Pawn(me) >> 32);
-	files |= files >> 16;
-	files = (files | (files >> 8)) & 0xFF;
-	int file_span = (files ? (msb(files) - lsb(files)) : 0);
+	uint8 files = FileOcc(Pawn(me));
+	int file_span = RO->SpanWidth[files];
 	IncV(PEI.score, Values::PawnFileSpan * file_span);
 	PawnEntry->draw[me] = (7 - file_span) * Max(5 - pop(files), 0);
 }
@@ -4429,6 +4464,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 					IncV(EI.score, Values::KnightOutpostNoMinor);
 			}
 		}
+		DecV(EI.score, FileSpan(Pawn(White) ^ Pawn(Black)) * Values::KnightPawnSpread);
 	}
 }
 
@@ -4468,13 +4504,14 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 13, 10, 2, 0 };
+	static constexpr array<int, 4> PHASE = { 12, 8, 2, 0 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
 	int cl = (PHASE[3] * adjusted) / 16;
 	KA_E += (adjusted - KA_E) / (++KA_N);
 	IncV(EI.score, Pack4(op, md, eg, cl));
+	EI.king_att[me] = adjusted;	// store again for later use
 }
 
 template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
@@ -4734,7 +4771,7 @@ template<class POP> void evaluation()
 				EI.material->eval[Black](EI, pop.Imp());
 #ifndef THREE_PHASE
 			else if (EI.mul <= 32)
-				EI.mul = Min(EI.mul, 35 - clx / 4);
+				EI.mul = Min(EI.mul, 37 - clx / 8);
 #endif
 			Current->score += (Min<int>(-Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64;
 		}
@@ -5879,27 +5916,27 @@ INLINE bool can_castle(const uint64& occ, bool me, bool kingside)
 template<bool me> int* gen_quiet_moves(int* list)
 {
 	uint64 u, v;
-	auto safe3 = [&](int loc) { return HasBit(Current->att[opp] & ~Current->att[me], loc) ? 0 : FlagCastling; };
 
 	uint64 occ = PieceAll();
 	if (me == White)
 	{
 		if (can_castle(occ, me, true))
-			list = AddHistoryP(list, IKing[White], 4, 6, FlagCastling);
+			list = AddHistoryP(list, IKing[White], 4, 6, FlagPriority);
 		if (can_castle(occ, me, false))
-			list = AddHistoryP(list, IKing[White], 4, 2, FlagCastling);
+			list = AddHistoryP(list, IKing[White], 4, 2, FlagPriority);
 	}
 	else
 	{
 		if (can_castle(occ, me, true))
-			list = AddHistoryP(list, IKing[Black], 60, 62, FlagCastling);
+			list = AddHistoryP(list, IKing[Black], 60, 62, FlagPriority);
 		if (can_castle(occ, me, false))
-			list = AddHistoryP(list, IKing[Black], 60, 58, FlagCastling);
+			list = AddHistoryP(list, IKing[Black], 60, 58, FlagPriority);
 	}
 
 	uint64 free = ~occ;
+	// for pawns, we distinguish threat moves
 	auto pTarget = PawnJoins<me>();
-	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
+	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagPriority : 0; };
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
@@ -5908,13 +5945,14 @@ template<bool me> int* gen_quiet_moves(int* list)
 		list = AddHistoryP(list, IPawn[me], to - Push[me], to, pFlag(to));
 	}
 
+	// for all other pieces, we distinguish threat moves
 	for (u = Knight(me); T(u); Cut(u))
 	{
 		int from = lsb(u);
 		for (v = free & RO->NAtt[from]; T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = RO->NAtt[to] & Major(opp) ? FlagCastling : 0;
+			int flag = RO->NAtt[to] & Major(opp) ? FlagPriority : 0;
 			list = AddHistoryP(list, IKnight[me], from, to, flag);
 		}
 	}
@@ -5937,7 +5975,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & RookAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = (RO->PAtt[opp][to] & Pawn(me)) && (RO->RMask[to] & Queen(opp)) ? FlagCastling : 0;
+			int flag = (RO->PAtt[opp][to] & Pawn(me)) && (RO->RMask[to] & Queen(opp)) ? FlagPriority : 0;
 			list = AddHistoryP(list, IRook[me], from, to, flag);
 		}
 	}
@@ -5945,14 +5983,19 @@ template<bool me> int* gen_quiet_moves(int* list)
 	{
 		//uint64 qTarget = RO->NAtt[lsb(King(opp))];	// try to get next to this
 		int from = lsb(u);
+		int flag = HasBit(Current->threat, from) ? FlagPriority : 0;
 		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
-		{
-			int to = lsb(v);
-			list = AddHistoryP(list, IQueen[me], from, to, 0);	// RO->KAtt[to] & qTarget ? FlagCastling : 0);
-		}
+			list = AddHistoryP(list, IQueen[me], from, lsb(v), flag);
 	}
+
+	int from = lsb(King(me));
+	auto kTarget = Shift<opp>(Current->passer);	// behind ours, ahead of his
+	auto kFlag = [&](int to) {return HasBit(kTarget, to) ? FlagPriority : 0; };
 	for (v = RO->KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
-		list = AddHistoryP(list, IKing[me], lsb(King(me)), lsb(v), 0);
+	{
+		int to = lsb(v);
+		list = AddHistoryP(list, IKing[me], from, to, kFlag(to));
+	}
 
 	return NullTerminate(list);
 }
@@ -6951,6 +6994,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		}
 		bool check;
 		ext = extension<me>(0, move, depth, &check);
+
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -6963,16 +7007,16 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				}
 				if (depth >= 6)
 				{
-					int reduction = msb(cnt);
+					int reduction = msb(Square(Square(cnt))) / 3;
 					if (move == Current->ref[0] || move == Current->ref[1])
-						reduction = Max(0, reduction - 1);
+						--reduction;
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 						reduction += reduction / 2;
 					if (new_depth - reduction > 3 && !see<me>(move, -SeeThreshold, SeeValue))
 						reduction += 2;
 					if (reduction == 1 && new_depth > 4)
 						reduction = cnt > 3 ? 2 : 0;
-					new_depth = Max(3, new_depth - reduction);
+					new_depth = Max(3, new_depth - Max(0, reduction));
 				}
 			}
 			if (!check)
@@ -7213,8 +7257,8 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 				}
 				else
 				{
-					value = -scout<opp, 0>(1 - beta, new_depth,
-						FlagHaltCheck | FlagHashCheck | ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0) | ExtToFlag(ext));
+					int flags = FlagHaltCheck | FlagHashCheck | ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0) | ExtToFlag(ext);
+					value = -scout<opp, 0>(1 - beta, new_depth, flags);
 					undo_move<me>(move);
 					if (value > score)
 					{
@@ -9158,13 +9202,15 @@ ostream& operator<<(ostream& dst, const WriteMove_& m)
 
 void Test1(const char* fen, int max_depth, const char* solution)
 {
-	static const int DEPTH_LIMIT = 24;
+	static const int DEPTH_LIMIT = 124;
 	max_depth = Min(max_depth, DEPTH_LIMIT);
 	init_search(1);
 	get_board(fen);
 	auto cmd = _strdup("go infinite");
 	get_time_limit(cmd);
 	free(cmd);
+	evaluate(); 
+	cout << "Position eval = " << Current->score << "\n";
 	for (int depth = Min(4, max_depth); depth <= max_depth; ++depth)
 	{
 		auto score = Current->turn
@@ -9191,33 +9237,37 @@ int main(int argc, char *argv[])
 
 	Console = true;
 
-	Test1("R7/6k1/8/8/6P1/6K1/8/7r w - - 0 1", 24, "g4-g5");
-	Test1("kr6/p7/8/8/8/8/8/BBK5 w - - 0 1", 24, "g4-g5");
+	Test1("1r2b1k1/5pp1/q3p1p1/b2pP3/p2P4/Pr2RN1P/1PR2PP1/2QN2K1 w - - 0 1", 30, "a1-a1");	// Roc finds 0.49, Gull 0.14
+	//Test1("5q2/7k/6b1/Q1nN4/P1Bbp1P1/1P4B1/7K/8 b - - 0 1", 30, "a1-a1");	// appears to have crashed in this position, but cannot reproduce
+	//Test1("rnbqk2r/pp3ppp/2pb1n2/3p4/2PPp3/4P3/PPB1NPPP/RNBQ1RK1 b - - 0 1", 40, "d6-h2");
 
-	Test1("4kbnr/2pr1ppp/p1Q5/4p3/4P3/2Pq1b1P/PP1P1PP1/RNB2RK1 w - - 0 1", 20, "f1-e1");	// why didn't Roc keep the rook pinned?
+	//Test1("R7/6k1/8/8/6P1/6K1/8/7r w - - 0 1", 24, "g4-g5");
+	//Test1("kr6/p7/8/8/8/8/8/BBK5 w - - 0 1", 24, "g4-g5");
 
-	Test1("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1", 20, "a7-a8");
-	Test1("4r1k1/4ppbp/r5p1/3Np3/2PnP3/3P2Pq/1R3P2/2BQ1RK1 w - - 0 1", 20, "b2-b1");
+	//Test1("4kbnr/2pr1ppp/p1Q5/4p3/4P3/2Pq1b1P/PP1P1PP1/RNB2RK1 w - - 0 1", 20, "f1-e1");	// why didn't Roc keep the rook pinned?
 
-	Test1("8/4p3/8/3P3p/P2pK3/6P1/7b/3k4 w - - 0 1", 24, "d5-d6");
-	Test1("rq2r1k1/5pp1/p7/4bNP1/1p2P2P/5Q2/PP4K1/5R1R w - - 0 1", 4, "f5-g7");
-	Test1("6k1/2b2p1p/ppP3p1/4p3/PP1B4/5PP1/7P/7K w - - 0 1", 31, "d4-b6");			// Slizzard fails
-	Test1("5r1k/p1q2pp1/1pb4p/n3R1NQ/7P/3B1P2/2P3P1/7K w - - 0 1", 26, "e5-e6");	// Slizzard finds at depth 21
-	Test1("5r1k/1P4pp/3P1p2/4p3/1P5P/3q2P1/Q2b2K1/B3R3 w - - 0 1", 36, "a2-f7");	// Slizzard finds at depth 35
-	Test1("3B4/8/2B5/1K6/8/8/3p4/3k4 w - - 0 1", 15, "b5-a6");						// Slizzard fails until depth 17
-	Test1("1k1r4/1pp4p/2n5/P6R/2R1p1r1/2P2p2/1PP2B1P/4K3 b - - 0 1", 18, "e4-e3");
-	Test1("6k1/p3q2p/1nr3pB/8/3Q1P2/6P1/PP5P/3R2K1 b - - 0 1", 12, "c6-d6");
-	Test1("2krr3/1p4pp/p1bRpp1n/2p5/P1B1PP2/8/1PP3PP/R1K3B1 w - - 0 1", 15, "d6-c6");
-	Test1("r5k1/pp2p1bp/6p1/n1p1P3/2qP1NP1/2PQB3/P5PP/R4K2 b - - 0 1", 18, "g6-g5");
-	Test1("2r3k1/1qr1b1p1/p2pPn2/nppPp3/8/1PP1B2P/P1BQ1P2/5KRR w - - 0 1", 25, "g1-g7");
-	Test1("1br3k1/p4p2/2p1r3/3p1b2/3Bn1p1/1P2P1Pq/P3Q1BP/2R1NRK1 b - - 0 1", 20, "h3-h2");
-	Test1("8/pp3k2/2p1qp2/2P5/5P2/1R2p1rp/PP2R3/4K2Q b - - 0 1", 11, "e6-e4");
-	Test1("3b2k1/1pp2rpp/r2n1p1B/p2N1q2/3Q4/6R1/PPP2PPP/4R1K1 w - - 0 1", 15, "d5-b4");
-	Test1("3r1rk1/1p3pnp/p3pBp1/1qPpP3/1P1P2R1/P2Q3R/6PP/6K1 w - - 0 1", 24, "h3-h7");
-	Test1("4k1rr/ppp5/3b1p1p/4pP1P/3pP2N/3P3P/PPP5/2KR2R1 w kq - 0 1", 16, "g1-g6");
+	//Test1("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1", 20, "a7-a8");
+	//Test1("4r1k1/4ppbp/r5p1/3Np3/2PnP3/3P2Pq/1R3P2/2BQ1RK1 w - - 0 1", 20, "b2-b1");
+
+	//Test1("8/4p3/8/3P3p/P2pK3/6P1/7b/3k4 w - - 0 1", 24, "d5-d6");					// Roc finds at depth 23
+	//Test1("rq2r1k1/5pp1/p7/4bNP1/1p2P2P/5Q2/PP4K1/5R1R w - - 0 1", 4, "f5-g7");
+	//Test1("6k1/2b2p1p/ppP3p1/4p3/PP1B4/5PP1/7P/7K w - - 0 1", 31, "d4-b6");			// Roc fails
+	//Test1("5r1k/p1q2pp1/1pb4p/n3R1NQ/7P/3B1P2/2P3P1/7K w - - 0 1", 26, "e5-e6");	// Roc finds at depth 26
+	//Test1("5r1k/1P4pp/3P1p2/4p3/1P5P/3q2P1/Q2b2K1/B3R3 w - - 0 1", 36, "a2-f7");	// Roc fails
+	//Test1("3B4/8/2B5/1K6/8/8/3p4/3k4 w - - 0 1", 15, "b5-a6");						// Roc fails
+	//Test1("1k1r4/1pp4p/2n5/P6R/2R1p1r1/2P2p2/1PP2B1P/4K3 b - - 0 1", 18, "e4-e3");	// Roc finds at depth 16
+	//Test1("6k1/p3q2p/1nr3pB/8/3Q1P2/6P1/PP5P/3R2K1 b - - 0 1", 12, "c6-d6");		// Roc finds at depth 11
+	//Test1("2krr3/1p4pp/p1bRpp1n/2p5/P1B1PP2/8/1PP3PP/R1K3B1 w - - 0 1", 15, "d6-c6");	// Roc finds at depth 14
+	//Test1("r5k1/pp2p1bp/6p1/n1p1P3/2qP1NP1/2PQB3/P5PP/R4K2 b - - 0 1", 18, "g6-g5");	// Roc fails (finds at depth 16 then switches away)
+	//Test1("2r3k1/1qr1b1p1/p2pPn2/nppPp3/8/1PP1B2P/P1BQ1P2/5KRR w - - 0 1", 25, "g1-g7");	// Roc finds at depth 18
+	//Test1("1br3k1/p4p2/2p1r3/3p1b2/3Bn1p1/1P2P1Pq/P3Q1BP/2R1NRK1 b - - 0 1", 20, "h3-h2");	// Roc finds at depth 20
+	//Test1("8/pp3k2/2p1qp2/2P5/5P2/1R2p1rp/PP2R3/4K2Q b - - 0 1", 11, "e6-e4");				// Roc finds at depth 11
+	//Test1("3b2k1/1pp2rpp/r2n1p1B/p2N1q2/3Q4/6R1/PPP2PPP/4R1K1 w - - 0 1", 15, "d5-b4");		// Roc finds at depth 15
+	//Test1("3r1rk1/1p3pnp/p3pBp1/1qPpP3/1P1P2R1/P2Q3R/6PP/6K1 w - - 0 1", 24, "h3-h7");		// Roc finds at depth 24
+	Test1("4k1rr/ppp5/3b1p1p/4pP1P/3pP2N/3P3P/PPP5/2KR2R1 w kq - 0 1", 16, "g1-g6");		
 	Test1("r1b3k1/ppp3pp/2qpp3/2r3N1/2R5/8/P1Q2PPP/2B3K1 b - - 0 1", 4, "g7-g6");
-	Test1("4r1k1/p1qr1p2/2pb1Bp1/1p5p/3P1n1R/3B1P2/PP3PK1/2Q4R w - - 0 1", 20, "c1-f4");
-	Test1("3r2k1/pp4B1/6pp/PP1Np2n/2Pp1p2/3P2Pq/3QPPbP/R4RK1 b - - 0 1", 42, "g3-f3");	// fails to find f3
+	Test1("4r1k1/p1qr1p2/2pb1Bp1/1p5p/3P1n1R/3B1P2/PP3PK1/2Q4R w - - 0 1", 20, "c1-f4");	// Roc finds at depth 19
+	Test1("3r2k1/pp4B1/6pp/PP1Np2n/2Pp1p2/3P2Pq/3QPPbP/R4RK1 b - - 0 1", 32, "g3-f3");		// Roc finds at depth 28
 	Test1("r4rk1/5p2/1n4pQ/2p5/p5P1/P4N2/1qb1BP1P/R3R1K1 w - - 0 1", 23, "a1-a2");
 	Test1("r4rk1/pb3p2/1pp4p/2qn2p1/2B5/6BP/PPQ2PP1/3RR1K1 w - - 0 1", 15, "e1-e6");
 	Test1("rnb1k2r/pp2qppp/3p1n2/2pp2B1/1bP5/2N1P3/PP2NPPP/R2QKB1R w KQkq - 0 1", 4, "a2-a3");
