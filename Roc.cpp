@@ -27,6 +27,7 @@
 #include <thread>
 #include <cmath>
 #include <algorithm>
+#include <bitset>
 #include "setjmp.h"
 #include <windows.h>
 #undef min
@@ -453,6 +454,7 @@ struct GMaterial
 	array<eval_special_t, 2> eval;
 	array<uint8, 2> mul;
 	uint8 phase;
+	bitset<2> pawnsForPiece;
 };
 
 static const int MAGIC_SIZE = 107648;
@@ -537,8 +539,7 @@ INLINE const uint64& OwnLine(bool me, int n)
 static const int PliesToEvalCut = 50;	// halfway to 50-move
 static const int KingSafetyNoQueen = 8;	// numerator; denominator is 16
 static const int SeeThreshold = 40 * CP_EVAL;
-static const int DrawCapConstant = 100 * CP_EVAL;
-static const int DrawCapLinear = 0;	// numerator; denominator is 64
+static const int DrawCap = 100 * CP_EVAL;
 static const int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
 static const int TBMinDepth = 7;
 
@@ -1068,7 +1069,7 @@ enum
 };
 
 // pawn, knight, bishop, rook, queen, pair
-static constexpr array<int, 6> MatLinear = { 36, -20, -2, 86, -15, -1 };
+static constexpr array<int, 6> MatLinear = { 21, -20, -8, 86, -15, -1 };
 static constexpr int MatWinnable = 160;
 
 // T(pawn), pawn, knight, bishop, rook, queen
@@ -1280,14 +1281,19 @@ namespace Params
 		IsolatedClosed,
 		IsolatedBlocked,
 		IsolatedDoubledOpen,
-		IsolatedDoubledClosed
+		IsolatedDoubledClosed,
+		IsolatedForPiece,
+		JoinedForPiece
 	};
-	static constexpr array<int, 20> Isolated = {
+	static constexpr array<int, 28> Isolated = {
 		36, 28, 19, 1,
 		40, 21, 1, 12,
 		-40, -20, -3, -3,
 		0, 10, 45, 3,
-		27, 27, 36, 8 };
+		27, 27, 36, 8,
+		40, 40, 40, 10,
+		5, 20, 40, 0
+	};
 }
 namespace Values
 {
@@ -1297,6 +1303,8 @@ namespace Values
 	VALUE(IsolatedBlocked);
 	VALUE(IsolatedDoubledOpen);
 	VALUE(IsolatedDoubledClosed);
+	VALUE(IsolatedForPiece);
+	VALUE(JoinedForPiece);
 #undef VALUE
 }
 
@@ -1520,8 +1528,7 @@ namespace Params
 		KnightOutpost,
 		KnightOutpostProtected,
 		KnightOutpostPawnAtt,
-		KnightOutpostNoMinor,
-		KnightPawnSpread
+		KnightOutpostNoMinor
 	};
 	static constexpr array<int, 20> KnightSpecial = {  // tuner: type=array, var=26, active=0
 		40, 40, 24, 0,
@@ -1538,7 +1545,6 @@ namespace Values
 	VALUE(KnightOutpostProtected);
 	VALUE(KnightOutpostPawnAtt);
 	VALUE(KnightOutpostNoMinor);
-	VALUE(KnightPawnSpread);
 #undef VALUE
 }
 
@@ -1580,8 +1586,8 @@ namespace Params
 	};
 	static constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 		17, 26, 33, -2,
-		-14, 15, 42, 0,
-		43, 14, -9, -1 };
+		0, 15, 42, 0,
+		46, 8, 0, -1 };
 }
 namespace Values
 {
@@ -3039,7 +3045,6 @@ template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 //		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
 }
 
-
 void calc_material(int index, GMaterial& material)
 {
 	array<int, 2> pawns, knights, light, dark, rooks, queens, bishops, major, minor, tot, count, mat, mul, closed;
@@ -3303,6 +3308,8 @@ void calc_material(int index, GMaterial& material)
 		}
 		else if (major[opp] + minor[opp] == 0)
 			material.eval[me] = eval_null;	// just force the stalemate check
+
+		material.pawnsForPiece[me] = tot[me] < tot[opp] && major[me] + minor[me] < major[opp] + minor[opp] &&  pawns[me] > pawns[opp];
 	}
 }
 
@@ -3987,7 +3994,7 @@ typedef struct
 	packed_t score;
 } GPawnEvalInfo;
 
-template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawnEvalInfo& PEI)
+template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawnEvalInfo& PEI, bool pawns_for_piece)
 {
 	static const array<array<uint64, 2>, 2> RFileBlockMask = { array<uint64, 2>({ 0x0202000000000000, 0x8080000000000000 }), array<uint64, 2>({ 0x0202, 0x8080 }) };
 	POP pop;
@@ -4082,6 +4089,8 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 				DecV(PEI.score, Values::IsolatedBlocked);
 			if (doubled)
 				DecV(PEI.score, open ? Values::IsolatedDoubledOpen : Values::IsolatedDoubledClosed);
+			if (pawns_for_piece)
+				DecV(PEI.score, Values::IsolatedForPiece);
 		}
 		else
 		{
@@ -4089,6 +4098,8 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 				DecV(PEI.score, open ? Values::DoubledOpen : Values::DoubledClosed);
 			if (rrank >= 3 && (b & (RO->File[2] | RO->File[3] | RO->File[4] | RO->File[5])) && next != IPawn[opp] && (RO->PIsolated[file] & RO->Line[rank] & Pawn(me)))
 				IncV(PEI.score, Values::PawnChainLinear * (rrank - 3) + Values::PawnChain);
+			if (pawns_for_piece)
+				IncV(PEI.score, Values::JoinedForPiece);
 		}
 		int backward = 0;
 		if (!(RO->PSupport[me][sq] & Pawn(me)))
@@ -4168,8 +4179,8 @@ template<class POP> INLINE void eval_pawn_structure(const GEvalInfo& EI, GPawnEn
 	PEI.king[Black] = EI.king[Black];
 	PEI.score = 0;
 
-	eval_pawns<White, POP>(PawnEntry, PEI);
-	eval_pawns<Black, POP>(PawnEntry, PEI);
+	eval_pawns<White, POP>(PawnEntry, PEI, EI.material && EI.material->pawnsForPiece[White]);
+	eval_pawns<Black, POP>(PawnEntry, PEI, EI.material && EI.material->pawnsForPiece[Black]);
 
 	PawnEntry->score = PEI.score;
 }
@@ -4433,8 +4444,8 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 {
 	POP pop;
-	uint64 u, b;
-	for (u = Knight(me); T(u); u ^= b)
+	uint64 b;
+	for (uint64 u = Knight(me); T(u); u ^= b)
 	{
 		int sq = lsb(u);
 		b = Bit(sq);
@@ -4464,7 +4475,6 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 					IncV(EI.score, Values::KnightOutpostNoMinor);
 			}
 		}
-		DecV(EI.score, FileSpan(Pawn(White) ^ Pawn(Black)) * Values::KnightPawnSpread);
 	}
 }
 
@@ -4504,7 +4514,7 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 12, 8, 2, 0 };
+	static constexpr array<int, 4> PHASE = { 13, 10, 2, 0 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
@@ -4752,7 +4762,6 @@ template<class POP> void evaluation()
 
 		if (Current->ply >= PliesToEvalCut)
 			Current->score /= 2;
-		const int drawCap = DrawCapConstant + (DrawCapLinear * abs(Current->score)) / 64;  // drawishness of positions can cancel this much of the score
 		if (Current->score > 0)
 		{
 			EI.mul = EI.material->mul[White];
@@ -4762,7 +4771,7 @@ template<class POP> void evaluation()
 			else if (EI.mul <= 32)
 				EI.mul = Min(EI.mul, 37 - clx / 8);
 #endif
-			Current->score -= (Min<int>(Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64;
+			Current->score -= (Min<int>(Current->score, DrawCap) * EI.PawnEntry->draw[White]) / 64;
 		}
 		else if (Current->score < 0)
 		{
@@ -4773,7 +4782,7 @@ template<class POP> void evaluation()
 			else if (EI.mul <= 32)
 				EI.mul = Min(EI.mul, 37 - clx / 8);
 #endif
-			Current->score += (Min<int>(-Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64;
+			Current->score += (Min<int>(-Current->score, DrawCap) * EI.PawnEntry->draw[Black]) / 64;
 		}
 		else
 			EI.mul = Min(EI.material->mul[White], EI.material->mul[Black]);
@@ -7007,16 +7016,16 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				}
 				if (depth >= 6)
 				{
-					int reduction = msb(Square(Square(cnt))) / 3;
+					int reduction = msb(cnt);
 					if (move == Current->ref[0] || move == Current->ref[1])
-						--reduction;
+						reduction = Max(0, reduction - 1);
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 						reduction += reduction / 2;
 					if (new_depth - reduction > 3 && !see<me>(move, -SeeThreshold, SeeValue))
 						reduction += 2;
 					if (reduction == 1 && new_depth > 4)
 						reduction = cnt > 3 ? 2 : 0;
-					new_depth = Max(3, new_depth - Max(0, reduction));
+					new_depth = Max(3, new_depth - reduction);
 				}
 			}
 			if (!check)
