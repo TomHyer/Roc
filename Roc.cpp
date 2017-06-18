@@ -4514,7 +4514,7 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 13, 10, 2, 0 };
+	static constexpr array<int, 4> PHASE = { 12, 8, 2, -2 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
