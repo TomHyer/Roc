@@ -1606,14 +1606,15 @@ static constexpr array<int, 2> PushW = { 7, -9 };
 static constexpr array<int, 2> Push = { 8, -8 };
 static constexpr array<int, 2> PushE = { 9, -7 };
 
-static constexpr uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
-static constexpr uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
+static constexpr uint16 KingNFlag = 64, KingQFlag = KingNFlag << 2;
+static constexpr uint32 KingNAttack1 = UPack(KingNFlag + 1, KingAttackWeight[0]);
+static constexpr uint32 KingNAttack = UPack(KingNFlag + 2, KingAttackWeight[1]);
 static constexpr uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
 static constexpr uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
 static constexpr uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
 static constexpr uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
-static constexpr uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
-static constexpr uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
+static constexpr uint32 KingQAttack1 = UPack(KingQFlag + 1, KingAttackWeight[6]);
+static constexpr uint32 KingQAttack = UPack(KingQFlag + 2, KingAttackWeight[7]);
 static constexpr uint32 KingPAttack = UPack(2, 0);
 static constexpr uint32 KingAttack = UPack(1, 0);
 static constexpr uint32 KingAttackSquare = KingAttackWeight[8];
@@ -4483,7 +4484,10 @@ static double KA_E = 0, KA_N = 0;
 template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	POP pop;
-	uint16 cnt = Min<uint16>(15, UUnpack1(EI.king_att[me]));
+	uint16 head = UUnpack1(EI.king_att[me]);
+	uint16 cnt = Min<uint16>(15, head & (KingNFlag - 1));
+	bool myN = T(head & (KingQFlag - KingNFlag));
+	bool myQ = head > KingQFlag;
 	uint16 score = UUnpack2(EI.king_att[me]);
 	if (cnt >= 2 && T(Queen(me)))
 	{
@@ -4493,7 +4497,11 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		if (!(RO->KAtt[EI.king[opp]] & (~(Piece(opp) | Current->att[me]))))
 			score += KingNoMoves;
 	}
+
 	int adjusted = ((score * RO->KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
+	if (myN && (myQ || cnt > 6))
+		adjusted += adjusted / 3;
+
 	int kf = FileOf(EI.king[opp]);
 	if (kf > 3)
 		kf = 7 - kf;
@@ -5992,9 +6000,11 @@ template<bool me> int* gen_quiet_moves(int* list)
 	{
 		//uint64 qTarget = RO->NAtt[lsb(King(opp))];	// try to get next to this
 		int from = lsb(u);
-		int flag = HasBit(Current->threat, from) ? FlagPriority : 0;
 		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
-			list = AddHistoryP(list, IQueen[me], from, lsb(v), flag);
+		{
+			int to = lsb(v);
+			list = AddHistoryP(list, IQueen[me], from, to, HasBit(Current->att[opp], to) ? 0 : FlagPriority);
+		}
 	}
 
 	int from = lsb(King(me));
