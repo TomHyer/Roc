@@ -9,7 +9,7 @@
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
-//#define TB 1
+#define TB 1
 //#define HNI
 
 #ifdef W32_BUILD
@@ -28,13 +28,12 @@
 #include <thread>
 #include <cmath>
 #include <algorithm>
-#include "setjmp.h"
 #include <windows.h>
 #undef min
 #undef max
 #include <intrin.h>
 #include <assert.h>
-
+template<class T> std::string Str(const T& src) { return std::to_string(src); }
 // Windows-specific
 typedef HANDLE mutex_t;
 typedef HANDLE event_t;
@@ -230,11 +229,11 @@ inline void SetScore(int* move, uint16 score)
 	*move = (*move & 0xFFFF) | (score << 16);
 }  // notice this operates on long-form (int) moves
 
-static const uint64 Filled = 0xFFFFFFFFFFFFFFFF;
-static const uint64 Interior = 0x007E7E7E7E7E7E00;
-static const uint64 Boundary = ~Interior;
-static const uint64 LightArea = 0x55AA55AA55AA55AA;
-static const uint64 DarkArea = ~LightArea;
+constexpr uint64 Filled = 0xFFFFFFFFFFFFFFFF;
+constexpr uint64 Interior = 0x007E7E7E7E7E7E00;
+constexpr uint64 Boundary = ~Interior;
+constexpr uint64 LightArea = 0x55AA55AA55AA55AA;
+constexpr uint64 DarkArea = ~LightArea;
 
 INLINE uint32 High32(const uint64& x)
 {
@@ -245,18 +244,18 @@ INLINE uint32 Low32(const uint64& x)
 	return (uint32)(x);
 }
 
-static const int N_KILLER = 2;
+constexpr int N_KILLER = 2;
 
-static const int MAX_PHASE = 128;
-static const int MIDDLE_PHASE = 64;
-static const int PHASE_M2M = MAX_PHASE - MIDDLE_PHASE;
+constexpr int MAX_PHASE = 128;
+constexpr int MIDDLE_PHASE = 64;
+constexpr int PHASE_M2M = MAX_PHASE - MIDDLE_PHASE;
 
-static const int MAX_HEIGHT = 128;
+constexpr int MAX_HEIGHT = 128;
 
 typedef sint16 score_t;
 
-static const score_t CP_EVAL = 4;	// numeric value of 1 centipawn, in eval phase
-static const score_t CP_SEARCH = 4;	// numeric value of 1 centipawn, in search phase (# of value equivalence classes in 1-cp interval)
+constexpr score_t CP_EVAL = 4;	// numeric value of 1 centipawn, in eval phase
+constexpr score_t CP_SEARCH = 4;	// numeric value of 1 centipawn, in search phase (# of value equivalence classes in 1-cp interval)
 
 // helper to divide intermediate quantities to form scores
 // note that straight integer division (a la Gull) creates an attractor at 0
@@ -265,52 +264,52 @@ template<int DEN, int SINK = DEN> struct Div_
 {
 	int operator()(int x) const
 	{
-		static const int shift = std::numeric_limits<int>::max() / (2 * DEN);
-		static const int shrink = (SINK - DEN) / 2;
+		constexpr int shift = std::numeric_limits<int>::max() / (2 * DEN);
+		constexpr int shrink = (SINK - DEN) / 2;
 		const int y = x > 0 ? Max(0, x - shrink) : Min(0, x + shrink);
 		return (y + DEN * shift) / DEN - shift;
 	}
 };
 
-static const uint8 White = 0;
-static const uint8 Black = 1;
-static const uint8 WhitePawn = 2;
-static const uint8 BlackPawn = 3;
-static const uint8 IPawn[2] = { WhitePawn, BlackPawn };
-static const uint8 WhiteKnight = 4;
-static const uint8 BlackKnight = 5;
-static const uint8 IKnight[2] = { WhiteKnight, BlackKnight };
-static const uint8 WhiteLight = 6;
-static const uint8 BlackLight = 7;
-static const uint8 ILight[2] = { WhiteLight, BlackLight };
-static const uint8 WhiteDark = 8;
-static const uint8 BlackDark = 9;
-static const uint8 IDark[2] = { WhiteDark, BlackDark };
-static const uint8 WhiteRook = 10;
-static const uint8 BlackRook = 11;
-static const uint8 IRook[2] = { WhiteRook, BlackRook };
-static const uint8 WhiteQueen = 12;
-static const uint8 BlackQueen = 13;
-static const uint8 IQueen[2] = { WhiteQueen, BlackQueen };
-static const uint8 WhiteKing = 14;
-static const uint8 BlackKing = 15;
-static const uint8 IKing[2] = { WhiteKing, BlackKing };
+constexpr uint8 White = 0;
+constexpr uint8 Black = 1;
+constexpr uint8 WhitePawn = 2;
+constexpr uint8 BlackPawn = 3;
+constexpr uint8 IPawn[2] = { WhitePawn, BlackPawn };
+constexpr uint8 WhiteKnight = 4;
+constexpr uint8 BlackKnight = 5;
+constexpr uint8 IKnight[2] = { WhiteKnight, BlackKnight };
+constexpr uint8 WhiteLight = 6;
+constexpr uint8 BlackLight = 7;
+constexpr uint8 ILight[2] = { WhiteLight, BlackLight };
+constexpr uint8 WhiteDark = 8;
+constexpr uint8 BlackDark = 9;
+constexpr uint8 IDark[2] = { WhiteDark, BlackDark };
+constexpr uint8 WhiteRook = 10;
+constexpr uint8 BlackRook = 11;
+constexpr uint8 IRook[2] = { WhiteRook, BlackRook };
+constexpr uint8 WhiteQueen = 12;
+constexpr uint8 BlackQueen = 13;
+constexpr uint8 IQueen[2] = { WhiteQueen, BlackQueen };
+constexpr uint8 WhiteKing = 14;
+constexpr uint8 BlackKing = 15;
+constexpr uint8 IKing[2] = { WhiteKing, BlackKing };
 INLINE bool IsBishop(uint8 piece)
 {
 	return piece >= WhiteLight && piece < WhiteRook;
 }
 
-static const uint8 CanCastle_OO = 1;
-static const uint8 CanCastle_oo = 2;
-static const uint8 CanCastle_OOO = 4;
-static const uint8 CanCastle_ooo = 8;
+constexpr uint8 CanCastle_OO = 1;
+constexpr uint8 CanCastle_oo = 2;
+constexpr uint8 CanCastle_OOO = 4;
+constexpr uint8 CanCastle_ooo = 8;
 
-static const uint16 FlagCastling = 0x1000;  // also overloaded to flag "joins", desirable quiet moves
-static const uint16 FlagEP = 0x2000;
-static const uint16 FlagPKnight = 0x4000;
-static const uint16 FlagPBishop = 0x6000;
-static const uint16 FlagPRook = 0xA000;
-static const uint16 FlagPQueen = 0xC000;
+constexpr uint16 FlagCastling = 0x1000;  // also overloaded to flag "joins", desirable quiet moves
+constexpr uint16 FlagEP = 0x2000;
+constexpr uint16 FlagPKnight = 0x4000;
+constexpr uint16 FlagPBishop = 0x6000;
+constexpr uint16 FlagPRook = 0xA000;
+constexpr uint16 FlagPQueen = 0xC000;
 
 INLINE bool IsPromotion(uint16 move)
 {
@@ -412,20 +411,20 @@ struct pop1_
 };
 #endif
 
-static const int MatWQ = 1;
-static const int MatBQ = 3 * MatWQ;
-static const int MatWR = 3 * MatBQ;
-static const int MatBR = 3 * MatWR;
-static const int MatWL = 3 * MatBR;
-static const int MatBL = 2 * MatWL;
-static const int MatWD = 2 * MatBL;
-static const int MatBD = 2 * MatWD;
-static const int MatWN = 2 * MatBD;
-static const int MatBN = 3 * MatWN;
-static const int MatWP = 3 * MatBN;
-static const int MatBP = 9 * MatWP;
-static const int TotalMat = 2 * (MatWQ + MatBQ) + MatWL + MatBL + MatWD + MatBD + 2 * (MatWR + MatBR + MatWN + MatBN) + 8 * (MatWP + MatBP) + 1;
-static const int FlagUnusualMaterial = 1 << 30;
+constexpr int MatWQ = 1;
+constexpr int MatBQ = 3 * MatWQ;
+constexpr int MatWR = 3 * MatBQ;
+constexpr int MatBR = 3 * MatWR;
+constexpr int MatWL = 3 * MatBR;
+constexpr int MatBL = 2 * MatWL;
+constexpr int MatWD = 2 * MatBL;
+constexpr int MatBD = 2 * MatWD;
+constexpr int MatWN = 2 * MatBD;
+constexpr int MatBN = 3 * MatWN;
+constexpr int MatWP = 3 * MatBN;
+constexpr int MatBP = 9 * MatWP;
+constexpr int TotalMat = 2 * (MatWQ + MatBQ) + MatWL + MatBL + MatWD + MatBD + 2 * (MatWR + MatBR + MatWN + MatBN) + 8 * (MatWP + MatBP) + 1;
+constexpr int FlagUnusualMaterial = 1 << 30;
 
 struct GMaterial;
 struct GPawnEntry;
@@ -456,7 +455,7 @@ struct GMaterial
 	uint8 phase;
 };
 
-static const int MAGIC_SIZE = 107648;
+constexpr int MAGIC_SIZE = 107648;
 struct CommonData_
 {
 	array<GMaterial, TotalMat> Material;
@@ -535,41 +534,41 @@ INLINE const uint64& OwnLine(bool me, int n)
 }
 
 // Constants controlling play
-static const int PliesToEvalCut = 50;	// halfway to 50-move
-static const int KingSafetyNoQueen = 8;	// numerator; denominator is 16
-static const int SeeThreshold = 40 * CP_EVAL;
-static const int DrawCapConstant = 100 * CP_EVAL;
-static const int DrawCapLinear = 0;	// numerator; denominator is 64
-static const int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
-static const int TBMinDepth = 7;
+constexpr int PliesToEvalCut = 50;	// halfway to 50-move
+constexpr int KingSafetyNoQueen = 8;	// numerator; denominator is 16
+constexpr int SeeThreshold = 40 * CP_EVAL;
+constexpr int DrawCapConstant = 100 * CP_EVAL;
+constexpr int DrawCapLinear = 0;	// numerator; denominator is 64
+constexpr int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
+constexpr int TBMinDepth = 7;
 
 inline int MapPositive(int scale, int param)
 {
 	return param > scale ? param : (scale * scale) / (2 * scale - param);
 }
 
-static const int FailLoInit = 22;
-static const int FailHiInit = 31;
-static const int FailLoGrowth = 37;	// numerator; denominator is 64
-static const int FailHiGrowth = 26;	// numerator; denominator is 64
-static const int FailLoDelta = 27;
-static const int FailHiDelta = 24;
-static const int AspirationEpsilon = 10;
-static const int InitiativeConst = 3 * CP_SEARCH;
-static const int InitiativePhase = 3 * CP_SEARCH;
-static const int FutilityThreshold = 50 * CP_SEARCH;
+constexpr int FailLoInit = 22;
+constexpr int FailHiInit = 31;
+constexpr int FailLoGrowth = 37;	// numerator; denominator is 64
+constexpr int FailHiGrowth = 26;	// numerator; denominator is 64
+constexpr int FailLoDelta = 27;
+constexpr int FailHiDelta = 24;
+constexpr int AspirationEpsilon = 10;
+constexpr int InitiativeConst = 3 * CP_SEARCH;
+constexpr int InitiativePhase = 3 * CP_SEARCH;
+constexpr int FutilityThreshold = 50 * CP_SEARCH;
 
 #define IncV(var, x) (me ? (var -= (x)) : (var += (x)))
 #define DecV(var, x) IncV(var, -(x))
 
-static const sint16 KpkValue = 300 * CP_EVAL;
-static const sint16 EvalValue = 30000;
-static const sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
+constexpr sint16 KpkValue = 300 * CP_EVAL;
+constexpr sint16 EvalValue = 30000;
+constexpr sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
 #if TB
-static const sint16 TBMateValue = 31380;
-static const sint16 TBCursedMateValue = 13;
+constexpr sint16 TBMateValue = 31380;
+constexpr sint16 TBCursedMateValue = 13;
 const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
-static const int NominalTbDepth = 33;
+constexpr int NominalTbDepth = 33;
 inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 127); }
 #endif
 
@@ -586,25 +585,25 @@ delta move:
 12 - 15: flags
 16 - 31: sint16 delta + (sint16)0x4000
 */
-const int MvvLvaVictim[16] = { 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3, 3 };
-const int MvvLvaAttacker[16] = { 0, 0, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 1, 1, 6, 6 };
-const int MvvLvaAttackerKB[16] = { 0, 0, 9, 9, 7, 7, 5, 5, 5, 5, 3, 3, 1, 1, 11, 11 };
+constexpr array<int, 16> MvvLvaVictim = { 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3, 3 };
+constexpr array<int, 16> MvvLvaAttacker = { 0, 0, 5, 5, 4, 4, 3, 3, 3, 3, 2, 2, 1, 1, 6, 6 };
+constexpr array<int, 16> MvvLvaAttackerKB = { 0, 0, 9, 9, 7, 7, 5, 5, 5, 5, 3, 3, 1, 1, 11, 11 };
 
 INLINE int PawnCaptureMvvLva(int attacker) { return MvvLvaAttacker[attacker]; }
-static const int MaxPawnCaptureMvvLva = MvvLvaAttacker[15];  // 6
+constexpr int MaxPawnCaptureMvvLva = MvvLvaAttacker[15];  // 6
 INLINE int KnightCaptureMvvLva(int attacker) { return MaxPawnCaptureMvvLva + MvvLvaAttackerKB[attacker]; }
-static const int MaxKnightCaptureMvvLva = MaxPawnCaptureMvvLva + MvvLvaAttackerKB[15];  // 17
+constexpr int MaxKnightCaptureMvvLva = MaxPawnCaptureMvvLva + MvvLvaAttackerKB[15];  // 17
 INLINE int BishopCaptureMvvLva(int attacker) { return MaxPawnCaptureMvvLva + MvvLvaAttackerKB[attacker] + 1; }
-static const int MaxBishopCaptureMvvLva = MaxPawnCaptureMvvLva + MvvLvaAttackerKB[15] + 1;  // usually 18
+constexpr int MaxBishopCaptureMvvLva = MaxPawnCaptureMvvLva + MvvLvaAttackerKB[15] + 1;  // usually 18
 INLINE int RookCaptureMvvLva(int attacker) { return MaxBishopCaptureMvvLva + MvvLvaAttacker[attacker]; }
-static const int MaxRookCaptureMvvLva = MaxBishopCaptureMvvLva + MvvLvaAttacker[15];  // usually 24
+constexpr int MaxRookCaptureMvvLva = MaxBishopCaptureMvvLva + MvvLvaAttacker[15];  // usually 24
 INLINE int QueenCaptureMvvLva(int attacker) { return MaxRookCaptureMvvLva + MvvLvaAttacker[attacker]; }
 
 INLINE int MvvLvaPromotionCap(int capture) { return RO->MvvLva[((capture) < WhiteRook) ? WhiteRook : ((capture) >= WhiteQueen ? WhiteKing : WhiteKnight)][BlackQueen]; }
 INLINE int MvvLvaPromotionKnightCap(int capture) { return RO->MvvLva[WhiteKing][capture]; }
 INLINE int MvvLvaXrayCap(int capture) { return RO->MvvLva[WhiteKing][capture]; }
-static const int RefOneScore = (0xFF << 16) | (3 << 24);
-static const int RefTwoScore = (0xFF << 16) | (2 << 24);
+constexpr int RefOneScore = (0xFF << 16) | (3 << 24);
+constexpr int RefTwoScore = (0xFF << 16) | (2 << 24);
 
 INLINE int ExtToFlag(int ext)
 {
@@ -614,13 +613,13 @@ INLINE int ExtFromFlag(int flags)
 {
 	return (flags >> 16) & 0xF;
 }
-static const int FlagHashCheck = 1 << 20;  // first 20 bits are reserved for the hash killer and extension
-static const int FlagHaltCheck = 1 << 21;
-static const int FlagCallEvaluation = 1 << 22;
-static const int FlagDisableNull = 1 << 23;
-static const int FlagNeatSearch = FlagHashCheck | FlagHaltCheck | FlagCallEvaluation;
-static const int FlagNoKillerUpdate = 1 << 24;
-static const int FlagReturnBestMove = 1 << 25;
+constexpr int FlagHashCheck = 1 << 20;  // first 20 bits are reserved for the hash killer and extension
+constexpr int FlagHaltCheck = 1 << 21;
+constexpr int FlagCallEvaluation = 1 << 22;
+constexpr int FlagDisableNull = 1 << 23;
+constexpr int FlagNeatSearch = FlagHashCheck | FlagHaltCheck | FlagCallEvaluation;
+constexpr int FlagNoKillerUpdate = 1 << 24;
+constexpr int FlagReturnBestMove = 1 << 25;
 
 typedef struct
 {
@@ -674,8 +673,8 @@ typedef struct
 } GData;
 __declspec(align(64)) GData Data[MAX_HEIGHT];
 GData* Current = Data;
-static const uint8 FlagSort = 1 << 0;
-static const uint8 FlagNoBcSort = 1 << 1;
+constexpr uint8 FlagSort = 1 << 0;
+constexpr uint8 FlagNoBcSort = 1 << 1;
 GData SaveData[1];
 
 enum
@@ -697,20 +696,28 @@ enum
 	r_checks,
 	r_none
 };
-static const int StageNone = (1 << s_none) | (1 << e_none) | (1 << r_none);
+constexpr int StageNone = (1 << s_none) | (1 << e_none) | (1 << r_none);
 
-typedef struct
+struct Progress_
+{
+	uint8 count_;	// packed W,B
+	constexpr Progress_() : count_(0) {}
+	constexpr Progress_(uint8 nw, uint8 nb) : count_((nw - 1) << 4 | (nb - 1)) {}
+	bool Reachable() const;	// implementation after SHARED is declared
+};
+inline Progress_ Progress() { return Progress_(popcnt(Piece(White)), popcnt(Piece(Black))); }
+
+struct GEntry
 {
 	uint32 key;
 	uint16 date;
 	uint16 move;
 	score_t low;
 	score_t high;
-	uint16 flags;
 	uint8 low_depth;
 	uint8 high_depth;
-} GEntry;
-static GEntry NullEntry = { 0, 1, 0, 0, 0, 0, 0, 0 };
+};
+constexpr GEntry NullEntry = { 0, 1, 0, 0, 0, 0, 0 };
 
 struct GPawnEntry
 {
@@ -719,10 +726,10 @@ struct GPawnEntry
 	array<sint16, 2> shelter;
 	array<uint8, 2> passer, draw;
 };
-static const GPawnEntry NullPawnEntry = { 0, 0,{ 0, 0 },{ 0, 0 },{ 0, 0 } };
-static const int N_PAWN_HASH = 1 << 20;
+constexpr GPawnEntry NullPawnEntry = { 0, 0,{ 0, 0 },{ 0, 0 },{ 0, 0 } };
+constexpr int N_PAWN_HASH = 1 << 20;
 array<GPawnEntry, N_PAWN_HASH> PawnHash;
-static const int PAWN_HASH_MASK = N_PAWN_HASH - 1;
+constexpr int PAWN_HASH_MASK = N_PAWN_HASH - 1;
 
 typedef struct
 {
@@ -736,10 +743,10 @@ typedef struct
 	uint8 depth;
 	uint8 ex_depth;
 } GPVEntry;
-static const GPVEntry NullPVEntry = { 0, 0, 0, 1, 0, 0, 0, 0, 0 };
-static const int N_PV_HASH = 1 << 20;
-static const int PV_CLUSTER = 1 << 2;
-static const int PV_HASH_MASK = N_PV_HASH - PV_CLUSTER;
+constexpr GPVEntry NullPVEntry = { 0, 0, 0, 1, 0, 0, 0, 0, 0 };
+constexpr int N_PV_HASH = 1 << 20;
+constexpr int PV_CLUSTER = 1 << 2;
+constexpr int PV_HASH_MASK = N_PV_HASH - PV_CLUSTER;
 
 array<int, 256> RootList;
 
@@ -922,7 +929,8 @@ sint64 LastSpeed;
 int PVN, PVHashing = 1, SearchMoves, SMPointer, Previous;
 typedef struct
 {
-	int Bad, Change, Singular, Early, FailLow, FailHigh;
+	int Change, Singular, Early, FailLow, FailHigh;
+	bool Bad;
 } GSearchInfo;
 GSearchInfo CurrentSI[1], BaseSI[1];
 #ifdef CPU_TIMING
@@ -930,18 +938,18 @@ int CpuTiming = 0, UciMaxDepth = 0, UciMaxKNodes = 0, UciBaseTime = 1000, UciInc
 int GlobalTime[2] = { 0, 0 };
 int GlobalInc[2] = { 0, 0 };
 int GlobalTurn = 0;
-static const sint64 CyclesPerMSec = 3400000;
+constexpr sint64 CyclesPerMSec = 3400000;
 #endif
-static const int Aspiration = 1, LargePages = 1;
-static const int TimeSingTwoMargin = 20;
-static const int TimeSingOneMargin = 30;
-static const int TimeNoPVSCOMargin = 60;
-static const int TimeNoChangeMargin = 70;
-static const int TimeRatio = 120;
-static const int PonderRatio = 120;
-static const int MovesTg = 30;
-static const int InfoLag = 5000;
-static const int InfoDelay = 1000;
+constexpr int Aspiration = 1, LargePages = 1;
+constexpr int TimeSingTwoMargin = 20;
+constexpr int TimeSingOneMargin = 30;
+constexpr int TimeNoPVSCOMargin = 60;
+constexpr int TimeNoChangeMargin = 70;
+constexpr int TimeRatio = 120;
+constexpr int PonderRatio = 120;
+constexpr int MovesTg = 26;
+constexpr int InfoLag = 5000;
+constexpr int InfoDelay = 1000;
 sint64 StartTime, InfoTime, CurrTime;
 uint16 SMoves[256];
 
@@ -1590,7 +1598,7 @@ static constexpr array<int, 4> XKingCenterScale = { 51, 50, 58, 55 };
 
 // END EVAL WEIGHTS
 
-sint64 get_time()
+uint64 get_time()
 {
 #ifdef W32_BUILD
 	return GetTickCount();
@@ -1617,9 +1625,9 @@ void delete_object(void *addr, size_t size)
 // SMP
 
 // Windows threading routines
-static const size_t PAGE_SIZE = 4096;
-static const int PIPE_BUF = 4096;
-static const int PATH_MAX = 4096;
+constexpr size_t PAGE_SIZE = 4096;
+constexpr int PIPE_BUF = 4096;
+constexpr int PATH_MAX = 4096;
 inline size_t size_to_page(size_t size)
 {
 	return ((size - 1) / PAGE_SIZE) * PAGE_SIZE + PAGE_SIZE;
@@ -1831,7 +1839,7 @@ bool get_line(char *line, unsigned linelen, DWORD timeout)
 	}
 }
 
-static void put_line(char *line, unsigned linelen)
+static void put_line(const char *line, size_t linelen)
 {
 	if (linelen > PIPE_BUF)
 	{
@@ -1840,7 +1848,7 @@ static void put_line(char *line, unsigned linelen)
 	}
 	HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
 	DWORD len;
-	if (!WriteFile(handle, line, linelen, &len, NULL) || len != linelen)
+	if (!WriteFile(handle, line, (DWORD)linelen, &len, NULL) || len != linelen)
 		error_msg("failed to write output (%d)", GetLastError());
 	FlushFileBuffers(handle);
 }
@@ -1855,13 +1863,13 @@ vector<GHandleInfo> MyHandles;
 void* init_object_ex(const char *mapping_name, size_t true_size, void *addr, bool create, bool readonly, const void *value)
 {
 	size_t size = size_to_page(true_size);
+	DWORD access = readonly && !value ? FILE_MAP_READ : FILE_MAP_ALL_ACCESS;
 	HANDLE handle = INVALID_HANDLE_VALUE;
 	if (mapping_name)
 	{
 		if (create)
 		{
-			//fprintf(stderr, "Creating at %s\n", mapping_name);
-			handle = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, (DWORD)(size >> 32), (DWORD)(size & 0xFFFFFFFF), mapping_name);
+			handle = CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE, (DWORD)(size >> 32), (DWORD)(size & 0xFFFFFFFF), mapping_name);
 			GHandleInfo hi;
 			hi.handle = handle;
 			strncpy(hi.name, mapping_name, sizeof(hi.name) - 1);
@@ -1869,8 +1877,7 @@ void* init_object_ex(const char *mapping_name, size_t true_size, void *addr, boo
 		}
 		else
 		{
-			//fprintf(stderr, "Opening %s\n", mapping_name);
-			handle = OpenFileMapping(FILE_MAP_ALL_ACCESS, FALSE, mapping_name);
+			handle = OpenFileMapping(access, FALSE, mapping_name);
 		}
 	}
 	else
@@ -1878,7 +1885,6 @@ void* init_object_ex(const char *mapping_name, size_t true_size, void *addr, boo
 
 	if ((handle == INVALID_HANDLE_VALUE || handle == NULL) && (create || GetLastError() != ERROR_ALREADY_EXISTS))
 		error_msg("failed to open file mapping \"%s\" (%d)", mapping_name, GetLastError());
-	DWORD access = readonly && !value ? FILE_MAP_READ : FILE_MAP_READ | FILE_MAP_WRITE;
 	void* ptr = MapViewOfFileEx(handle, access, 0, 0, size, addr);
 	if (!ptr)
 		error_msg("failed to map file mapping \"%s\" (%d)", mapping_name, GetLastError());
@@ -1894,9 +1900,26 @@ void* init_object_ex(const char *mapping_name, size_t true_size, void *addr, boo
 	return ptr;
 }
 
+void* share_object_ex(const char *mapping_name, void *addr, bool readonly)
+{
+	DWORD access = readonly ? FILE_MAP_READ : FILE_MAP_ALL_ACCESS;
+	HANDLE handle = OpenFileMapping(access, FALSE, mapping_name);
+	if ((handle == INVALID_HANDLE_VALUE || handle == NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
+		error_msg("failed to open file mapping \"%s\" (%d)", mapping_name, GetLastError());
+	void* ptr = MapViewOfFileEx(handle, access, 0, 0, 0, addr);
+	if (!ptr)
+		error_msg("failed to map file mapping \"%s\" (%d)", mapping_name, GetLastError());
+	CloseHandle(handle);
+	return ptr;
+}
+
 template<class T_> T_* init_object(T_* base_addr, const char *object, bool create, bool readonly, size_t n = 1, const T_* value = nullptr)
 {
 	return reinterpret_cast<T_*>(init_object_ex(object, n * sizeof(T_), base_addr, create, readonly, value));
+}
+template<class T_> T_* share_object(T_* base_addr, const char *object, bool readonly)
+{
+	return reinterpret_cast<T_*>(share_object_ex(object, base_addr, readonly));
 }
 
 void remove_object(const char *object)
@@ -1921,19 +1944,18 @@ void event_signal(event_t* event)
 }
 
 #ifdef DEBUG
-static const int maxNumThreads = 1;
+constexpr int maxNumThreads = 1;
 #else
 #ifdef W32_BUILD
-static const int maxNumThreads = 32;  // mustn't exceed 32
+constexpr int maxNumThreads = 32;  // mustn't exceed 32
 #else
-static const int maxNumThreads = 256;
+constexpr int maxNumThreads = 256;
 #endif
 #endif
 
-static const int MAX_PV_LEN = 256;
+constexpr int MAX_PV_LEN = 256;
 struct ThreadOwn_
 {
-	bool newGame;
 	size_t nodes;
 	size_t tbHits;
 	int pid;
@@ -1943,12 +1965,13 @@ struct ThreadOwn_
 	int bestMove;
 	int bestScore;
 	int PV[MAX_PV_LEN];
+	bool newGame;
 };
 vector<ThreadOwn_*> THREADS;
 ThreadOwn_* INFO = 0;
 uint64 check_node;
 
-static const size_t HASH_CLUSTER = 4;
+constexpr size_t HASH_CLUSTER = 4;
 struct Settings_
 {
 	int nThreads = 1;
@@ -2003,7 +2026,9 @@ struct SharedInfo_
 	WorkerList_ working;
 	bool stopAll;
 	uint16_t date;
+	Progress_ rootProgress;
 	mutex_t mutex = NULL;
+	mutex_t outMutex = NULL;
 	event_t goEvent = NULL;
 	int rootDepth;
 	int depthLimit;
@@ -2021,24 +2046,33 @@ struct SharedInfo_
 };
 
 SharedInfo_* SHARED = 0;
+inline bool Progress_::Reachable() const
+{
+	assert(SHARED);
+	if ((count_ >> 4) > (SHARED->rootProgress.count_ >> 4))
+		return false;
+	if ((count_ & 0xF) > (SHARED->rootProgress.count_ & 0xF))
+		return false;
+	return true;
+}
 
 void mutex_lock1(mutex_t *mutex, int lineno)
 {
 	mutex_lock0(mutex);
-	if (!SHARED)
-		return;
-	if (!SHARED->working.Empty())
+	if (SHARED && !SHARED->working.Empty())
 	{
-		char line[64];
-		int len = snprintf(line, sizeof(line) - 1, "id name locked to %d at %d\n", GetCurrentProcessId(), lineno);
-		put_line(line, len);
+		string what = "id name locked to " + Str(GetCurrentProcessId()) + " at " + Str(lineno) + "\n";
+		put_line(what.c_str(), what.size());
 	}
 }
 void mutex_unlock1(mutex_t *mutex, int lineno)
 {
-	char line[64];
-	int len = snprintf(line, sizeof(line) - 1, "id name unlocked by %d at %d\n", GetCurrentProcessId(), lineno);
-	put_line(line, len);
+	if (SHARED && !SHARED->stopAll)
+	{
+		char line[64];
+		int len = snprintf(line, sizeof(line) - 1, "id name unlocked by %d at %d\n", GetCurrentProcessId(), lineno);
+		put_line(line, len);
+	}
 	mutex_unlock0(mutex);
 }
 
@@ -2051,15 +2085,23 @@ struct SharedLock_
 	int line_;
 	SharedLock_(int line) : line_(line)
 	{
-		mutex_lock1(&SHARED->mutex, line);
+		mutex_lock0(&SHARED->mutex);
 	}
 	~SharedLock_()
 	{
-		mutex_unlock1(&SHARED->mutex, line_);
+		mutex_unlock0(&SHARED->mutex);
 	}
 };
 #define LOCK_SHARED SharedLock_ _(__LINE__);
 
+void Say(const string& what)
+{
+	if (SHARED)
+		mutex_lock0(&SHARED->outMutex);
+	put_line(what.c_str(), what.size());
+	if (SHARED)
+		mutex_unlock0(&SHARED->outMutex);
+}
 
 GEntry* HASH = 0;
 GPVEntry* PVHASH = 0;
@@ -2067,6 +2109,7 @@ GPawnEntry* PAWNHASH = 0;
 
 void move_to_string(int move, char string[])
 {
+	assert(move);
 	int pos = 0;
 	string[pos++] = ((move >> 6) & 7) + 'a';
 	string[pos++] = ((move >> 9) & 7) + '1';
@@ -2235,7 +2278,7 @@ static bool boardExists = 0;
 static bool debugWK = 1;
 static bool debugBK = 1;
 static std::ofstream SHOUT("C:\\dev\\debug.txt");
-static const int TheMemorySize = 200;
+constexpr int TheMemorySize = 200;
 struct MemEntry_
 {
 	GData d_;
@@ -2256,7 +2299,7 @@ struct MoveScope_
 };
 void AccessViolation(uint64 seed)	// any nonzero input should fail
 {
-	cout << Current->patt[(seed >> 32) | (seed << 32)];
+	Say(Str(Current->patt[(seed >> 32) | (seed << 32)]));
 }
 void UpdateDebug(int line)
 {
@@ -2282,8 +2325,8 @@ void UpdateDebug(int line)
 
 void init_misc(CommonData_* data)
 {
-	static const uint64 FileA = 0x0101010101010101;
-	static const uint64 Line0 = 0x00000000000000FF;
+	constexpr uint64 FileA = 0x0101010101010101;
+	constexpr uint64 Line0 = 0x00000000000000FF;
 	array<uint64, 64> HLine;
 	array<uint64, 64> NDiag;
 	array<uint64, 64> SDiag;
@@ -3729,8 +3772,8 @@ void create_child
 
 static void create_children(const Settings_& settings)
 {
-	static const size_t maxNHash = ((size_t)1 << 43) / sizeof(GEntry);   // <= 8TB
-	static const int maxSyzygyProbeDepth = 64;
+	constexpr size_t maxNHash = ((size_t)1 << 43) / sizeof(GEntry);   // <= 8TB
+	constexpr int maxSyzygyProbeDepth = 64;
 
 	int nThreads = Min(maxNumThreads, settings.nThreads);
 	int tbMinDepth = Min(maxSyzygyProbeDepth, settings.tbMinDepth);
@@ -3761,6 +3804,7 @@ static void create_children(const Settings_& settings)
 	string sharedName = object_name("SHARED", pid, 0);
 	SHARED = init_object(SHARED, sharedName.c_str(), true, false);
 	SHARED->mutex = mutex_init();
+	SHARED->outMutex = mutex_init();
 	SHARED->goEvent = event_init();
 	SHARED->working.Init();
 	SHARED->stopAll = true;
@@ -3787,7 +3831,7 @@ static void create_children(const Settings_& settings)
 	INFO = init_object(INFO, nullptr, true, false);
 	INFO->pid = GetCurrentProcessId();
 #if TB
-	tb_init(settings.tbPath);%
+	tb_init(settings.tbPath);
 #endif
 
 	// Wait for threads to finish initializing:
@@ -3826,9 +3870,7 @@ static void nuke_children(void)
 	delete_object(HASH, SETTINGS->nHash * sizeof(*HASH));
 	delete_object(PVHASH, N_PV_HASH * sizeof(*PVHASH));
 	delete_object(PAWNHASH, N_PAWN_HASH * sizeof(*PAWNHASH));
-	//	mutex_discard(&SHARED->mutex);
 	//	event_discard(&SHARED->goEvent);
-	//	event_discard(&SHARED->initEvent);
 	for (size_t i = 0; i < SETTINGS->nThreads; i++)
 		delete_object(THREADS[i], sizeof(*THREADS[i]));
 	delete_object(DATA, sizeof(*DATA));
@@ -3859,19 +3901,10 @@ static void emergency_stop(void)
 	reset(*SETTINGS);
 	if (go)
 	{
-		char line[32], moveStr[16];
+		char moveStr[16];
 		move_to_string(bestMove, moveStr);
-		int len = snprintf(line, sizeof(line) - 1, "bestmove %s\n", moveStr);
-		if (len > 0 && len < sizeof(line) - 1)
-			put_line(line, len);
-		else
-		{
-			// Giveup:
-			char reply[] = "bestmove 0\n";
-			put_line(reply, sizeof(reply));
-		}
+		Say("bestmove " + string(moveStr) + "\n");
 	}
-	mutex_lock(&SHARED->mutex);
 }
 
 void wait_for_stop()
@@ -3882,39 +3915,24 @@ void wait_for_stop()
 	{
 		Sleep(1);
 		currTime = get_time();
-		if (mutex_try_lock(&SHARED->mutex, (currTime - stopTime > maxStopTime ? 5 : maxStopTime - (currTime - stopTime))))
-			mutex_unlock(&SHARED->mutex);
-		else
-		{
-			emergency_stop();
-			return;
-		}
-
+		LOCK_SHARED;
 		if (SHARED->working.Empty())
-		{
-			if (SHARED->best.move)
-			{
-				// workers failed low, get the best cached move
-				char rescueMove[64], moveStr[16];
-				move_to_string(SHARED->best.move, moveStr);
-				int len = snprintf(rescueMove, sizeof(rescueMove) - 1, "bestmove %s\n", moveStr);
-				put_line(rescueMove, len);
-				SHARED->best = { 0, 0, 0, 0 };
-			}
-			break;
-		}
-
-		if (currTime - stopTime > maxStopTime)
-		{
-			emergency_stop();
-			return;
-		}
+			break;	// we are done
+	}
+	if (SHARED->best.move)
+	{
+		// workers failed low, get the best cached move
+		LOCK_SHARED;
+		char moveStr[16];
+		move_to_string(SHARED->best.move, moveStr);
+		Say("bestmove " + string(moveStr) + "\n");
+		SHARED->best = { 0, 0, 0, 0 };
 	}
 }
 
 static void stop()
 {
-	LOCK_SHARED;
+	//LOCK_SHARED;
 	SHARED->stopAll = true;
 }
 
@@ -3945,8 +3963,8 @@ static void go()
 			int bestMove = (TB_GET_FROM(res) << 6) | to | flags;
 			char movStr[16];
 			move_to_string(bestMove, movStr);
-			cout << "info depth 1 seldepth 1 score cp " << (bestScore / CP_SEARCH) << " nodes 1 tbhits 1 pv " << movStr << "\n";
-			cout << "bestmove " << movStr << "\n";
+			Say("info depth 1 seldepth 1 score cp " +  Str(bestScore / CP_SEARCH) + " nodes 1 tbhits 1 pv " + string(movStr) + "\n");
+			Say("bestmove " + string(movStr) + "\n");
 			return;
 		}
 	}
@@ -4152,7 +4170,10 @@ void init_search(int clear_hash)
 {
 	for (int ip = 0; ip < 16; ++ip)
 		for (int it = 0; it < 64; ++it)
-			fill(HistoryVals[ip][it].begin(), HistoryVals[ip][it].end(), (1 << 8) | 2);	
+		{
+			HistoryVals[ip][it][0] = (1 << 8) | 2;
+			HistoryVals[ip][it][1] = (1 << 8) | 2;
+		}
 
 	memset(DeltaVals, 0, 16 * 4096 * sizeof(sint16));
 	memset(Ref, 0, 16 * 64 * sizeof(GRef));
@@ -5607,6 +5628,19 @@ template<bool me> bool draw_in_pv()
 	return false;
 }
 
+INLINE int HashMerit(int date, uint8 depth)
+{
+	return 8 * date + depth;
+}
+inline int HashMerit(const GEntry& entry)
+{
+	return HashMerit(entry.date, Max<int>(entry.high_depth, entry.low_depth));
+}
+INLINE int HashMerit(const GPVEntry& entry)
+{
+	return HashMerit(entry.date, entry.depth);
+}
+
 void hash_high(int value, int depth)
 {
 	int i;
@@ -5635,7 +5669,7 @@ void hash_high(int value, int depth)
 			}
 			return;
 		}
-		int merit = 8 * static_cast<int>(Entry->date)  + static_cast<int>(Max(Entry->high_depth, Entry->low_depth));
+		int merit = HashMerit(*Entry);
 		if (merit < minMerit)
 		{
 			minMerit = merit;
@@ -5649,7 +5683,6 @@ void hash_high(int value, int depth)
 	best->low = 0;
 	best->low_depth = 0;
 	best->move = 0;
-	best->flags = 0;
 	return;
 }
 
@@ -5659,7 +5692,7 @@ int hash_low(int move, int value, int depth)
 	int i;
 	GEntry* best, *Entry;
 
-	int min_score = 0x70000000;
+	int min_merit = 0x70000000;
 	move &= 0xFFFF;
 	for (i = 0, best = Entry = HASH + (High32(Current->key) & SETTINGS->hashMask); i < HASH_CLUSTER; ++i, ++Entry)
 	{
@@ -5686,10 +5719,10 @@ int hash_low(int move, int value, int depth)
 				Entry->move = move;
 			return value;
 		}
-		int score = (static_cast<int>(Entry->date) << 3) + static_cast<int>(Max(Entry->high_depth, Entry->low_depth));
-		if (score < min_score)
+		int merit = HashMerit(*Entry);
+		if (merit < min_merit)
 		{
-			min_score = score;
+			min_merit = merit;
 			best = Entry;
 		}
 	}
@@ -5700,17 +5733,16 @@ int hash_low(int move, int value, int depth)
 	best->low = value;
 	best->low_depth = depth;
 	best->move = move;
-	best->flags = 0;
 	return value;
 }
 
 void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int knodes)
 {
-	int i, score, min_score;
 	GPVEntry* best;
 	GPVEntry* PVEntry;
+	int i;
 
-	min_score = 0x70000000;
+	int minMerit = 0x70000000;
 	for (i = 0, best = PVEntry = PVHASH + (High32(Current->key) & PV_HASH_MASK); i < PV_CLUSTER; ++i, ++PVEntry)
 	{
 		if (PVEntry->key == Low32(Current->key))
@@ -5731,10 +5763,10 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 			}
 			return;
 		}
-		score = (static_cast<int>(PVEntry->date) << 3) + static_cast<int>(PVEntry->depth);
-		if (score < min_score)
+		int merit = HashMerit(*PVEntry);
+		if (merit < minMerit)
 		{
-			min_score = score;
+			minMerit = merit;
 			best = PVEntry;
 		}
 	}
@@ -5753,7 +5785,7 @@ template<bool me> int extension(int pv, int move, int depth, bool* check = nullp
 {
 	if (is_check<me>(move))
 	{
-		static const array<array<int, 2>, 2> DepthCut = { { {{16, 16}}, {{50, 50}} } };
+		constexpr array<array<int, 2>, 2> DepthCut = { { {{16, 16}}, {{50, 50}} } };
 		if (check) *check = true;
 		const bool isQ = (PieceAt(From(move)) & ~Black) == WhiteQueen;
 		return see<me>(move, -SeeThreshold, SeeValue) + T(depth < DepthCut[pv][T(isQ)]);
@@ -5818,7 +5850,7 @@ INLINE int pick_move()
 INLINE void apply_wobble(int* move, int depth)
 {
 	int mp = (((*move & 0xFFFF) * 529) >> 9) & 1;
-	*move += (mp + depth) % (SETTINGS->wobble + 1);	// (minimal) bonus for right parity
+	*move += (mp + depth + INFO->id) % (SETTINGS->wobble + 1);	// (minimal) bonus for right parity
 }
 
 INLINE bool is_killer(uint16 move)
@@ -6512,12 +6544,12 @@ template<bool me> int* gen_quiet_moves(int* list)
 	}
 	for (u = Queen(me); T(u); Cut(u))
 	{
-		//uint64 qTarget = RO->NAtt[lsb(King(opp))];	// try to get next to this
 		int from = lsb(u);
 		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			list = AddHistoryP(list, IQueen[me], from, to, 0);	// RO->KAtt[to] & qTarget ? FlagCastling : 0);
+			//int flag = Pst(IQueen[me], to) > Pst(IQueen[me], from) ? FlagCastling : 0;
+			list = AddHistoryP(list, IQueen[me], from, to, 0);
 		}
 	}
 	for (v = RO->KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
@@ -7122,13 +7154,13 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		Current->best = hash_move = flags & 0xFFFF;
 		if (GEntry* Entry = probe_hash())
 		{
+			if (Entry->high < beta && Entry->high_depth >= depth)
+				return Entry->high;
 			if (Entry->high_depth > high_depth)
 			{
 				high_depth = Entry->high_depth;
 				high_value = Entry->high;
 			}
-			if (Entry->high < beta && Entry->high_depth >= depth)
-				return Entry->high;
 			if (T(Entry->move) && Entry->low_depth > hash_depth)
 			{
 				Current->best = hash_move = Entry->move;
@@ -7601,13 +7633,9 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		flags |= ExtToFlag(1);
 		if (F(RootList[0]))
 			return 0;
-		if (INFO->id == 0)
-		{
-			fprintf(stdout, "info depth %d\n", (depth / 2));
-			if (time_to_stop(CurrentSI, LastTime, false))
-				stop();	// will break the outer loop
-			fflush(stdout);
-		}
+		if (time_to_stop(CurrentSI, LastTime, false))
+			stop();	// will break the outer loop
+
 		auto p = &RootList[0];
 		while (*p) ++p;
 		sort_moves(&RootList[0], p);
@@ -7763,7 +7791,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 					INFO->bestMove = move;
 					INFO->bestScore = value;
 					if (depth >= 8)
-						send_pv(depth / 2, old_alpha, beta);
+						send_pv(depth, old_alpha, beta);
 				}
 				Current->best = move;
 				if (value >= beta)
@@ -7777,7 +7805,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				CurrentSI->Singular = 0;
 				INFO->bestScore = value;
 				if (depth >= 8)
-					send_pv(depth / 2, old_alpha, beta);
+					send_pv(depth, old_alpha, beta);
 			}
 		}
 	}
@@ -7863,7 +7891,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				INFO->bestMove = move;
 				INFO->bestScore = value;
 				if (depth >= 8)
-					send_pv(depth / 2, old_alpha, beta);
+					send_pv(depth, old_alpha, beta);
 			}
 			Current->best = move;
 			if (value >= beta)
@@ -7908,19 +7936,34 @@ template<bool me> void root()
 	INFO->bestMove = RootList[0];
 	if (F(INFO->bestMove))
 	{
-		LOCK_SHARED;
-		SHARED->stopAll = true;
+		stop();
 		return;
 	}
-	if (!RootList[1])
+	if (F(RootList[1]))
 	{
-		if (T(INFO->id))
-			return;	// let the master take care of it
-		INFO->bestScore = pv_search<me, 1>(-MateValue, MateValue, 4, FlagNeatSearch);
-		LastDepth = MAX_HEIGHT;
-		send_pv(6, -MateValue, MateValue);
-		LOCK_SHARED;
-		SHARED->stopAll = true;
+		if (F(SHARED->best.move))
+		{
+			LOCK_SHARED;
+			if (F(SHARED->best.move))
+			{
+				ScopedMove_ next(RootList[0]);
+				const score_t* score = nullptr;
+				if (GEntry* Entry = probe_hash())
+				{
+					if (Entry->low_depth)
+						score = &Entry->low;
+					else if (Entry->high_depth)
+						score = &Entry->high;
+				}
+				if (!score)
+				{
+					evaluate();
+					score = &Current->score;
+				}
+				SHARED->best = { 1, -*score, RootList[0], INFO->id };
+				stop();
+			}
+		}
 		return;
 	}
 
@@ -7938,13 +7981,14 @@ template<bool me> void root()
 			knodes = PVEntry->knodes;
 		}
 	}
+	LastTime = 0;
 	if (hash_depth > 0 && PVN == 1)
 	{
 		Previous = INFO->bestScore = hash_value;
 		depth = hash_depth;
 		if (PVHashing)
 		{
-			send_pv(depth / 2, -MateValue, MateValue);
+			send_pv(depth, -MateValue, MateValue);
 			start_depth = (depth + 2) & (~1);
 		}
 		if ((depth >= LastDepth - 8 || T(store_time)) && LastValue >= LastExactValue && hash_value >= LastExactValue && T(LastTime) && T(LastSpeed))
@@ -7965,69 +8009,18 @@ template<bool me> void root()
 			time_est = Max(time_est, store_time);
 			//		set_prev_time:
 			LastTime = prev_time = time_est;
-#if 0
-			// This is broken so disable for now...
-			if (prev_time >= time)
-			{
-				InstCnt++;
-				if (time_est <= store_time) InstCnt = 0;
-				if (InstCnt > 2)
-				{
-					if (T(store_time) && store_time < time_est)
-					{
-						time_est = store_time;
-						goto set_prev_time;
-					}
-					LastSpeed = 0;
-					LastTime = 0;
-					prev_time = 0;
-					goto set_jump;
-				}
-				if (hash_value > 0 && Current->ply >= 2 &&
-					F(Square(To(INFO->bestMove))) &&
-					F(INFO->bestMove & 0xF000) &&
-					PrevMove ==
-					((To(INFO->bestMove) << 6) | From(INFO->bestMove)))
-					goto set_jump;
-				do_move<me>(INFO->bestMove);
-				if (Current->ply >= 100)
-				{
-					undo_move<me>(INFO->bestMove);
-					goto set_jump;
-				}
-				for (i = 4; i <= Current->ply; i += 2)
-				{
-					if (Stack[sp - i] == Current->key)
-					{
-						undo_move<me>(INFO->bestMove);
-						goto set_jump;
-					}
-				}
-				undo_move<me>(INFO->bestMove);
-				LastDepth = depth;
-				LastTime = prev_time;
-				LastValue = LastExactValue = hash_value;
-				mutex_lock(&SHARED->mutex);
-				INFO->stop = true;
-				mutex_unlock(&SHARED->mutex);
-				return;
-			}
-			else
-#endif
-				goto set_jump;
+		}
 	}
-}
-	LastTime = 0;
 
-set_jump:
 	memcpy(SaveBoard, Board, sizeof(GBoard));
 	memcpy(SaveData, Data, sizeof(GData));
 	save_sp = sp;
+	int skipped = 0;
 	for (depth = start_depth; !SHARED->stopAll && depth < SHARED->depthLimit && depth < 256; depth += 2)
 	{
-		static const double SkipProb = (3 - sqrt(5.0)) / 2;
-		const int ii = depth * INFO->id;
-		if (int(ii * SkipProb) > int((ii - 1) * SkipProb))
+		if (INFO->id == 0)
+			Say("info depth " + Str(depth / 2) + "\n");
+		if (SHARED->best.depth > depth)	// we have fallen too far behind
 			continue;
 
 		memset(Data + 1, 0, 127 * sizeof(GData));
@@ -8035,19 +8028,33 @@ set_jump:
 		CurrentSI->Change = CurrentSI->FailHigh = CurrentSI->FailLow = CurrentSI->Singular = 0;
 		if (PVN > 1)
 			value = multipv<me>(depth);
-		else if ((depth / 2) < 7 || F(Aspiration))
+		else if ((depth / 2) < 7 || F(Aspiration) || INFO->id < 0)
+		{
 			LastValue = LastExactValue = value = pv_search<me, 1>(-MateValue, MateValue, depth, FlagNeatSearch);
+			send_pv(depth, -MateValue, MateValue);
+		}
 		else
 		{
 			int deltaLo = FailLoInit, deltaHi = FailHiInit;
+			if (SHARED->best.depth == depth)
+			{
+				Previous = SHARED->best.value;
+				deltaLo /= 2;
+				deltaHi /= 2;
+			}
 			alpha = Previous - deltaLo;
 			if (alpha >= 0 && alpha < AspirationEpsilon)
 				alpha = -1, deltaLo = Previous - alpha;
 			beta = Previous + deltaHi;
 			if (beta <= 0 && -beta < AspirationEpsilon)
 				beta = 1, deltaHi = beta - Previous;
-			for (; ; )	// loop:
+			for ( ; ; )	// loop:
 			{
+				if (SHARED->best.depth > depth)	// search has moved beyond us
+				{
+					Previous = value = SHARED->best.value;
+					break;
+				}
 				if (Max(deltaLo, deltaHi) >= 1300)
 				{
 					LastValue = LastExactValue = value = pv_search<me, 1>(-MateValue, MateValue, depth, FlagNeatSearch);
@@ -8062,6 +8069,11 @@ set_jump:
 					deltaLo += (deltaLo * FailLoGrowth) / 64 + FailLoDelta;
 					LastValue = value;
 					memcpy(BaseSI, CurrentSI, sizeof(GSearchInfo));
+					if (time_to_stop(CurrentSI, LastTime, false))
+					{
+						stop();	// will break the outer loop
+						break;
+					}
 					continue;
 				}
 				else if (value >= beta)
@@ -8079,7 +8091,7 @@ set_jump:
 					if (depth + 2 < SHARED->depthLimit)
 						depth += 2;
 					InstCnt = 0;
-					if (INFO->id == 0 && time_to_stop(CurrentSI, LastTime, false))
+					if (time_to_stop(CurrentSI, LastTime, false))
 					{
 						stop();	// will break the outer loop
 						break;
@@ -8099,7 +8111,7 @@ set_jump:
 
 		if (!SHARED->stopAll)
 		{
-			CurrentSI->Bad = T(value < Previous - 50);
+			CurrentSI->Bad = value < Previous - 12 * CP_SEARCH;
 			memcpy(BaseSI, CurrentSI, sizeof(GSearchInfo));
 			LastDepth = depth;
 			LastTime = Max(prev_time, int(get_time() - SHARED->startTime));
@@ -8128,8 +8140,7 @@ set_jump:
 template<bool me> int multipv(int depth)
 {
 	int move, low = MateValue, value, i, cnt, ext, new_depth = depth;
-	fprintf(stdout, "info depth %d\n", (depth / 2));
-	fflush(stdout);
+	Say("info depth " + Str(depth / 2) + "\n");
 	for (cnt = 0; cnt < PVN && T(move = (MultiPV[cnt] & 0xFFFF)); ++cnt)
 	{
 		MultiPV[cnt] = move;
@@ -8201,7 +8212,10 @@ static void send_pv
 	else if (bestScore < -EvalValue)
 		bestScore = -(bestScore + MateValue + 1) / 2;
 	else
+	{
 		scoreType = "cp";
+		bestScore /= CP_SEARCH;
+	}
 
 	uint64_t currTime = get_time();
 	uint64_t elapsedTime = currTime - startTime;
@@ -8236,31 +8250,25 @@ static void send_pv
 	}
 	pvStr[pvPos++] = '\0';
 
-	char line[PIPE_BUF];
-	int len = snprintf
-			(line, sizeof(line) - 1, "info depth %d seldepth %d score %s %d nodes %Iu nps %Iu tbhits %Iu time %Iu pv%s\n",
-				depth / 2, selDepth / 2, scoreType, bestScore / CP_SEARCH, nodes, nps, tbHits, currTime - startTime, pvStr);
-	// if (len < 0 || len >= sizeof(line) - 1)		return;
-	put_line(line, len);
+	Say("info depth " + Str(depth / 2) + " seldepth " + Str(selDepth) + " score " + string(scoreType) + " " + Str(bestScore) + " nodes " + Str(nodes) + " nps " + Str(nps) + " tbhits " + Str(tbHits) + " time " + Str(currTime - startTime) + " pv" + string(pvStr) + "\n");
 }
 
 void send_pv(int depth, int alpha, int beta)
 {
-	int sel_depth;
-	for (sel_depth = 1; sel_depth < 127 && T((Data + sel_depth)->att[0]);
-		sel_depth++);
-	sel_depth--;
+	int sel_depth = 0;
+	while (sel_depth < 126 && T((Data + sel_depth + 1)->att[0]))
+		++sel_depth;
 	int move = (INFO->bestMove == 0 ? RootList[0] : INFO->bestMove);
 	bool isBest = false;
+	INFO->selDepth = sel_depth;
+	INFO->PV[0] = move;
+	do_move(T(Current->turn), move);
+	unsigned pvPtr = 1, pvLen = 64;
+	pick_pv(pvPtr, pvLen);
+	undo_move(F(Current->turn), move);
+	// find out whether this is the best candidate move so far
 	{
 		LOCK_SHARED;
-		INFO->selDepth = sel_depth;
-		INFO->PV[0] = move;
-		if (Current->turn) do_move<1>(move); else do_move<0>(move);
-		unsigned pvPtr = 1, pvLen = 64;
-		pick_pv(pvPtr, pvLen);
-		undo_move(F(Current->turn), move);
-		// also while SHARED is locked, find out whether this is the best candidate move so far
 		isBest = depth > SHARED->best.depth
 			|| (depth == SHARED->best.depth && move != SHARED->best.move && (INFO->bestScore > SHARED->best.value || (INFO->bestScore == SHARED->best.value && INFO->id == 0)));
 		if (isBest)
@@ -8294,84 +8302,71 @@ void send_curr_move(int move, int cnt)
 		currTime - InfoTime <= InfoDelay)
 		return;
 	InfoTime = currTime;
-	char moveStr[16], line[PIPE_BUF];
+	char moveStr[16];
 	move_to_string(move, moveStr);
-	int len = snprintf(line, sizeof(line) - 1,
-		"info currmove %s currmovenumber %d\n", moveStr, cnt);
-	if (len > 0 && len < sizeof(line) - 1)
-		put_line(line, len);
+	Say("info currmove " + string(moveStr) + " currmovenumber " + Str(cnt) + "\n");
 }
 
-void send_best_move
-	(bool have_lock, 
-	 const int* PV,
-	 size_t nodes,
-	 size_t tbHits,
-	 int bestScore,
-	 int bestMove,
-	 uint64_t startTime)
+void send_move_info(int bestScore)
 {
-	if (have_lock)
-		SHARED->best = { 0, 0, 0, 0 };
-	else
+	size_t nodes = 1, tbHits = 0;
+	for (int i = 0; i < SETTINGS->nThreads; i++)
 	{
-		LOCK_SHARED;
-		SHARED->best = { 0, 0, 0, 0 };
+		nodes += THREADS[i]->nodes;
+		tbHits += THREADS[i]->tbHits;
 	}
-
 	uint64_t stopTime = get_time();
-
-	if (nodes == 0)
-		nodes = 1;
+	uint64_t time = stopTime - SHARED->startTime;
+	uint64_t nps = (nodes / Max(time / 1000, 1ull));
 	const char *scoreType = "mate";
 	if (bestScore > EvalValue)
 		bestScore = (MateValue - bestScore + 1) / 2;
 	else if (bestScore < -EvalValue)
 		bestScore = -(bestScore + MateValue + 1) / 2;
 	else
+	{
 		scoreType = "cp";
+		bestScore /= CP_SEARCH;
+	}
 
-	char line[PIPE_BUF];
-	uint64_t time = stopTime - startTime;
-	uint64_t nps = (nodes / Max(time / 1000, 1ull));
-	int len = snprintf(line, sizeof(line) - 1, "info nodes %Iu tbhits %Iu time %Iu nps %Iu score %s %d\n", nodes, tbHits, time, nps, scoreType, bestScore / CP_SEARCH);
-	if (len > 0 && len < sizeof(line) - 1)
-		put_line(line, len);
+	Say("info nodes " + Str(nodes) + " tbhits " + Str(tbHits) + " time " + Str(time) + " nps " + Str(nps) + " score " + string(scoreType) + " " + Str(bestScore) + "\n");
+}
 
-	char moveStr[16], ponderStr[16];
-	int ponder = (PV[0] == 0 ? 0 : PV[1]);
-	move_to_string(bestMove, moveStr);
-	if (ponder != 0)
+template<class T_> void send_best_move(T_ best)
+{
+	char moveStr[16];
+	move_to_string(best.move, moveStr);
+	const int* PV = nullptr;
+	int pvd = 0;
+	for (int i = 0; i < THREADS.size(); ++i)
+		if (THREADS[i]->PV[0] == best.move && THREADS[i]->depth > pvd)
+			PV = &THREADS[i]->PV[0];
+	if (PV && PV[0] && PV[1])
 	{
-		move_to_string(ponder, ponderStr);
-		len = snprintf(line, sizeof(line) - 1, "bestmove %s ponder %s\n",
-			moveStr, ponderStr);
+		char ponderStr[16];
+		move_to_string(PV[1], ponderStr);
+		Say("bestmove " + string(moveStr) + " ponder " + string(ponderStr) + "\n");
 	}
 	else
-		len = snprintf(line, sizeof(line) - 1, "bestmove %s\n", moveStr);
-	if (len > 0 && len < sizeof(line) - 1)
-		put_line(line, len);
-	else
-	{
-		// Giveup:
-		char reply[] = "bestmove 0\n";
-		put_line(reply, sizeof(reply));
-	}
+		Say("bestmove " + string(moveStr) + "\n");
 }
 
 void send_best_move(bool have_lock = false)
 {
-	size_t nodes = THREADS[0]->nodes, tbHits = THREADS[0]->tbHits;
-	ThreadOwn_* bestThread = THREADS[0];
-
-	for (int i = 1; i < SETTINGS->nThreads; i++)
+	assert(SHARED->best.move);
+	if (have_lock)
 	{
-		nodes += THREADS[i]->nodes;
-		tbHits += THREADS[i]->tbHits;
-		if (THREADS[i]->depth > bestThread->depth && bestThread->depth == 0)
-			bestThread = THREADS[i];
+		send_move_info(SHARED->best.value);
+		send_best_move(SHARED->best);
+		SHARED->best = { 0, 0, 0, 0 };
 	}
-	send_best_move(have_lock, bestThread->PV, nodes, tbHits, bestThread->bestScore, bestThread->bestMove, SHARED->startTime);
+	else
+	{
+		LOCK_SHARED;
+		send_move_info(SHARED->best.value);
+		send_best_move(SHARED->best);
+		SHARED->best = { 0, 0, 0, 0 };
+	}
 }
 
 void get_position(char string[])
@@ -8577,6 +8572,7 @@ void uci(void)
 				SHARED->depthLimit = 2 * depth + 2;
 				SHARED->startTime = currTime;
 			}
+			SHARED->rootProgress = Progress();
 			go();
 			// children start working; we wait until they are done
 			for (int i = 1; ; ++i)
@@ -8584,17 +8580,20 @@ void uci(void)
 				Sleep(i);
 				if (SHARED->working.Empty())
 					break;
+				if (get_time() > SHARED->startTime + SHARED->hardTimeLimit)
+				{
+					//LOCK_SHARED;
+					SHARED->stopAll = true;
+				}
 			}
 		}
 		else if (strcmp(token, "isready") == 0)
 		{
-			char reply[] = "readyok\n";
-			put_line(reply, sizeof(reply) - 1);
+			Say("readyok\n");
 		}
 		else if (strcmp(token, "stop") == 0)
 		{
-			fprintf(stdout, "id name stop requested\n");
-			fflush(stdout);
+			Say("id name stop requested\n");
 			{
 				LOCK_SHARED;
 				if (!SHARED->working.Empty())
@@ -8602,18 +8601,17 @@ void uci(void)
 					for (int ii = 0; ii < SETTINGS->nThreads; ++ii)
 					{
 						if (SHARED->working.vals_[ii].next_ != ii)
-							fprintf(stdout, "id name worker %d still active\n", ii);
+							Say("id name worker " + Str(ii) + " still active\n");
 					}
 				}
 				if (SHARED->stopAll)
-					fprintf(stdout, "id name stop requested\n");
+					Say("id name stop requested\n");
 				else
-					fprintf(stdout, "id name no stop requested\n");
+					Say("id name no stop requested\n");
 				if (SHARED->best.move)
-					fprintf(stdout, "id name stored candidate is move %d depth %d score %d worker %d\n", SHARED->best.move, SHARED->best.depth, SHARED->best.value, SHARED->best.worker);
+					Say("id name stored candidate is move " + Str(SHARED->best.move) + " depth " + Str(SHARED->best.depth) + " score " + Str(SHARED->best.value) + " worker " + Str(SHARED->best.worker) + "\n");
 				else
-					fprintf(stdout, "id name no stored candidate\n");
-				fflush(stdout);
+					Say("id name no stored candidate\n");
 			}
 			if (SHARED->working.Empty())
 				continue;
@@ -8705,7 +8703,6 @@ void uci(void)
 			if (!SHARED->working.Empty())
 				continue;
 			init_search(true);
-			LOCK_SHARED;
 			for (int i = 0; i < SETTINGS->nThreads; i++)
 				THREADS[i]->newGame = true;
 		}
@@ -8722,7 +8719,7 @@ void uci(void)
 				"uciok\n";
 			char* dst = &reply[12];
 			for (const char* src = &Version::now[0]; *src; ++src, ++dst) *dst = *src;
-			put_line(reply, sizeof(reply) - 1);
+			Say(reply);
 		}
 		else if (strcmp(token, "quit") == 0)
 		{
@@ -8774,14 +8771,10 @@ void worker()
 		}
 		catch (...) {}	// reserve the right to use exceptions to halt work
 
-		bool done = false;
-		{
-			LOCK_SHARED;
-			SHARED->working.Remove(INFO->id);
-			done = SHARED->working.Empty();
-		}
-		if (done)
-			send_best_move();
+		LOCK_SHARED;
+		SHARED->working.Remove(INFO->id);
+		if (SHARED->working.Empty())
+			send_best_move(true);
 	}
 }
 
@@ -8833,13 +8826,13 @@ int main(int argc, char **argv)
 			*settingsStr = argv[6],
 			*sharedStr = argv[7],
 			*infoStr = argv[8];
-		RO = DATA = init_object(DATA, dataStr, false, true);
-		SETTINGS = init_object(SETTINGS, settingsStr, false, true);
-		SHARED = init_object(SHARED, sharedStr, false, false);
-		HASH = init_object(HASH, hashStr, false, false, SETTINGS->nHash);
-		PVHASH = init_object(PVHASH, pvHashStr, false, false, N_PV_HASH);
-		PAWNHASH = init_object(PAWNHASH, pawnHashStr, false, false, N_PAWN_HASH);
-		INFO = init_object(INFO, infoStr, false, false);
+		RO = DATA = share_object(DATA, dataStr, true);
+		SETTINGS = share_object(SETTINGS, settingsStr, true);
+		SHARED = share_object(SHARED, sharedStr, false);
+		HASH = share_object(HASH, hashStr, false);
+		PVHASH = share_object(PVHASH, pvHashStr, false);
+		PAWNHASH = share_object(PAWNHASH, pawnHashStr, false);
+		INFO = share_object(INFO, infoStr, false);
 		INFO->pid = GetCurrentProcessId();
 #if TB
 		tb_init(SETTINGS->tbPath);
@@ -8900,14 +8893,14 @@ int main(int argc, char **argv)
 			send_best_move();
 			nodes += INFO->nodes;
 		}
-		cout << "TIME : " << get_time() - t0 << "\nNODES: " << nodes << "\n";
+		Say("TIME : " + Str(get_time() - t0) + "\nNODES: " + Str(nodes) + "\n");
 		exit(EXIT_SUCCESS);
 	}
 	else if (argc > 1)
 		goto usage;
 
 	// PARENT:
-	cout << "Roc " << Version::now << "\n";
+	Say("Roc " + string(Version::now) + "\n");
 	init_os();
 
 	// Read override parameters from the environment (useful for debugging)
@@ -8964,21 +8957,22 @@ ostream& operator<<(ostream& dst, const WriteMove_& m)
 
 void Test1(const char* fen, int max_depth, const char* solution)
 {
-	static const int DEPTH_LIMIT = 24;
+	constexpr int DEPTH_LIMIT = 24;
 	max_depth = Min(max_depth, DEPTH_LIMIT);
 	init_search(1);
 	get_board(fen);
 	auto cmd = _strdup("go infinite");
-	get_time_limit(cmd);
 	free(cmd);
+	char moveStr[16];
 	for (int depth = Min(4, max_depth); depth <= max_depth; ++depth)
 	{
 		auto score = Current->turn
 			? pv_search<true, true>(-MateValue, MateValue, depth, FlagNeatSearch)
 			: pv_search<false, true>(-MateValue, MateValue, depth, FlagNeatSearch);
-		cout << WriteMove_(best_move) << ":  " << score << ", " << nodes << " nodes\n";
+		move_to_string(INFO->bestMove, moveStr);
+		Say(string(moveStr) + ":  " + Str(score) + ", " + Str(INFO->nodes) + " nodes\n");
 	}
-	cout << KA_N << " samples; mean " << KA_E << "\n";
+	Say(Str(KA_N) + " samples; mean " + Str(KA_E) + "\n");
 	KA_N = 0;
 	cin.ignore();
 }
@@ -8989,13 +8983,22 @@ int main(int argc, char *argv[])
 	__cpuid(CPUInfo, 1);
 	HardwarePopCnt = (CPUInfo[2] >> 23) & 1;
 
-	init();
+	init_os();
+
+	// Read override parameters from the environment (useful for debugging)
+	Settings_ startInfo;
+	startInfo.parentPid = GetCurrentProcessId();
+	startInfo.nHash = (1 << 24) / sizeof(GEntry);     // 16MB
+	startInfo.nHash = Bit(msb(startInfo.nHash));
+	startInfo.hashMask = startInfo.nHash - HASH_CLUSTER;
+	startInfo.nThreads = get_num_cpus();
+	startInfo.tbPath[0] = 0;
+	PVN = 1;        // XXX NYI
+
+	create_children(startInfo);
+	init_search(false);
 
 	fprintf(stdout, "Roc (regression mode)\n");
-
-	init_hash();
-
-	Console = true;
 
 	Test1("R7/6k1/8/8/6P1/6K1/8/7r w - - 0 1", 24, "g4-g5");
 	Test1("kr6/p7/8/8/8/8/8/BBK5 w - - 0 1", 24, "g4-g5");
