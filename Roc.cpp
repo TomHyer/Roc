@@ -40,28 +40,6 @@ typedef HANDLE event_t;
 
 //#include "TunerParams.inc"
 
-#if TB
-#include "src\tbconfig.h"
-#include "src\tbcore.h"
-#include "src\tbprobe.h"
-#undef LOCK
-#undef UNLOCK
-
-template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
-{
-	return func(Piece(White), Piece(Black),
-		King(White) | King(Black),
-		Queen(White) | Queen(Black),
-		Rook(White) | Rook(Black),
-		Bishop(White) | Bishop(Black),
-		Knight(White) | Knight(Black),
-		Pawn(White) | Pawn(Black),
-		Current->ply,
-		Current->castle_flags,
-		Current->ep_square,
-		(me == White), std::forward<Args_>(args)...);
-}
-#endif
 
 using namespace std;
 #define INLINE __forceinline
@@ -257,9 +235,9 @@ typedef sint16 score_t;
 constexpr score_t CP_EVAL = 4;	// numeric value of 1 centipawn, in eval phase
 constexpr score_t CP_SEARCH = 4;	// numeric value of 1 centipawn, in search phase (# of value equivalence classes in 1-cp interval)
 
-// helper to divide intermediate quantities to form scores
-// note that straight integer division (a la Gull) creates an attractor at 0
-// we support this, especially for weights inherited from Gull which have not been tuned for Roc
+									// helper to divide intermediate quantities to form scores
+									// note that straight integer division (a la Gull) creates an attractor at 0
+									// we support this, especially for weights inherited from Gull which have not been tuned for Roc
 template<int DEN, int SINK = DEN> struct Div_
 {
 	int operator()(int x) const
@@ -353,28 +331,28 @@ INLINE int popcnt(uint64 x)
 
 #else
 INLINE int lsb(uint64 x) {
-_asm {
-	mov eax, dword ptr x[0]
-	test eax, eax
-	jz l_high
-	bsf eax, eax
-	jmp l_ret
-	l_high : bsf eax, dword ptr x[4]
-	add eax, 20h
-	l_ret :
+	_asm {
+		mov eax, dword ptr x[0]
+		test eax, eax
+		jz l_high
+		bsf eax, eax
+		jmp l_ret
+		l_high : bsf eax, dword ptr x[4]
+				 add eax, 20h
+				 l_ret :
 	}
 }
 
 INLINE int msb(uint64 x) {
-_asm {
-	mov eax, dword ptr x[4]
-	test eax, eax
-	jz l_low
-	bsr eax, eax
-	add eax, 20h
-	jmp l_ret
-	l_low : bsr eax, dword ptr x[0]
-	l_ret :
+	_asm {
+		mov eax, dword ptr x[4]
+		test eax, eax
+		jz l_low
+		bsr eax, eax
+		add eax, 20h
+		jmp l_ret
+		l_low : bsr eax, dword ptr x[0]
+				l_ret :
 	}
 }
 
@@ -411,6 +389,67 @@ struct pop1_
 };
 #endif
 
+#ifdef TB
+constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
+extern unsigned TB_LARGEST;
+bool tb_init_fwd(const char*);
+
+#define TB_CUSTOM_POP_COUNT pop1
+#define TB_CUSTOM_LSB lsb
+#define TB_CUSTOM_BSWAP32 _byteswap_ulong 
+template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
+{
+	return func(Piece(White), Piece(Black),
+		King(White) | King(Black),
+		Queen(White) | Queen(Black),
+		Rook(White) | Rook(Black),
+		Bishop(White) | Bishop(Black),
+		Knight(White) | Knight(Black),
+		Pawn(White) | Pawn(Black),
+		Current->ply,
+		Current->castle_flags,
+		Current->ep_square,
+		(me == White), std::forward<Args_>(args)...);
+}
+
+
+
+unsigned tb_probe_root_fwd(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _ep,
+	bool     _turn);
+
+static inline unsigned tb_probe_root_checked(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _castling,
+	unsigned _ep,
+	bool     _turn)
+{
+	if (_castling != 0)
+		return TB_RESULT_FAILED;
+	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
+}
+
+int GetTBMove(unsigned res, int* best_score);
+
+#endif
+
 constexpr int MatWQ = 1;
 constexpr int MatBQ = 3 * MatWQ;
 constexpr int MatWR = 3 * MatBQ;
@@ -434,6 +473,7 @@ struct GEvalInfo
 	GPawnEntry* PawnEntry;
 	const GMaterial* material;
 	packed_t score;
+	packed_t king_score[2];
 	uint32 king_att[2];
 	int king[2], mul;
 };
@@ -486,7 +526,7 @@ struct CommonData_
 	array<int, 16> MatCode;
 	array<array<sint16, 8>, 3> Shelter;
 	array<uint16, 16> KingAttackScale;
-	array<int, 4> KingCenterScale;
+	array<int, 8> KingCenterScale;
 	array<uint8, 16> LogDist;
 	array<sint16, 8> PasserAtt, PasserDef, PasserAttLog, PasserDefLog;
 	array<sint16, 4> StormBlocked, StormShelterAtt, StormConnected, StormOpen, StormFree;
@@ -553,7 +593,6 @@ constexpr int FailLoGrowth = 37;	// numerator; denominator is 64
 constexpr int FailHiGrowth = 26;	// numerator; denominator is 64
 constexpr int FailLoDelta = 27;
 constexpr int FailHiDelta = 24;
-constexpr int AspirationEpsilon = 10;
 constexpr int InitiativeConst = 3 * CP_SEARCH;
 constexpr int InitiativePhase = 3 * CP_SEARCH;
 constexpr int FutilityThreshold = 50 * CP_SEARCH;
@@ -880,8 +919,8 @@ INLINE sint16& DeltaM(int move)
 INLINE int* AddCDeltaP(int* list, int margin, int piece, int from, int to, int flags)
 {
 	return DeltaScore(piece, from, to) < margin
-			? list
-			: AddMove(list, from, to, flags, (DeltaScore(piece, from, to) + 0x4000) << 16);
+		? list
+		: AddMove(list, from, to, flags, (DeltaScore(piece, from, to) + 0x4000) << 16);
 }
 
 typedef struct
@@ -978,7 +1017,7 @@ static constexpr int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 
 
 #define V(x) (x)
 
-INLINE constexpr int ArrayIndex(int width, int row, int column) 
+INLINE constexpr int ArrayIndex(int width, int row, int column)
 {
 	return row * width + column;
 }
@@ -1127,34 +1166,34 @@ namespace PstW
 
 	static constexpr Weights_ Pawn = {
 		{ { -48, -275, 165, 0 },{ -460, -357, -359, 437 },{ 69, -28 } },
-		{ {-85, -171, 27, 400},{ -160, -133, 93, 1079 },{ 13, -6 }},
-		{ {-80, -41, -85, 782},{ 336, 303, 295, 1667 },{ -35, 13 }},
-		{ {2, 13, 11, 23},{ 6, 14, 37, -88 },{ 14, -2 }} };
+	{ { -85, -171, 27, 400 },{ -160, -133, 93, 1079 },{ 13, -6 } },
+	{ { -80, -41, -85, 782 },{ 336, 303, 295, 1667 },{ -35, 13 } },
+	{ { 2, 13, 11, 23 },{ 6, 14, 37, -88 },{ 14, -2 } } };
 	static constexpr Weights_ Knight = {
 		{ { -134, 6, -12, -72 },{ -680, -343, -557, 1128 },{ -32, 14 } },
-		{ { -315, -123, -12, -90 },{ -449, -257, -390, 777 },{ -24, -3 } },
-		{ { -501, -246, -12, -107 },{ 61, -274, -357, 469 },{ -1, -16 } },
-		{ { -12, -5, -2, -22 },{ 96, 69, -64, -23 },{ -5, -8 } } };
+	{ { -315, -123, -12, -90 },{ -449, -257, -390, 777 },{ -24, -3 } },
+	{ { -501, -246, -12, -107 },{ 61, -274, -357, 469 },{ -1, -16 } },
+	{ { -12, -5, -2, -22 },{ 96, 69, -64, -23 },{ -5, -8 } } };
 	static constexpr Weights_ Bishop = {
 		{ { -123, -62, 54, -116 },{ 24, -486, -350, -510 },{ 8, -58 } },
-		{ { -168, -49, 24, -48 },{ -323, -289, -305, -254 },{ -7, -21 } },
-		{ { -249, -33, 4, -14 },{ -529, -232, -135, 31 },{ -32, 0 } },
-		{ { 4, -10, 9, -13 },{ 91, -43, -34, 29 },{ -13, -10 } } };
+	{ { -168, -49, 24, -48 },{ -323, -289, -305, -254 },{ -7, -21 } },
+	{ { -249, -33, 4, -14 },{ -529, -232, -135, 31 },{ -32, 0 } },
+	{ { 4, -10, 9, -13 },{ 91, -43, -34, 29 },{ -13, -10 } } };
 	static constexpr Weights_ Rook = {
 		{ { -260, 12, -49, 324 },{ -777, -223, 245, 670 },{ -7, -25 } },
-		{ { -148, -88, -9, 165 },{ -448, -278, -63, 580 },{ -7, 0 } },
-		{ { 13, -149, 14, 46 },{ -153, -225, -246, 578 },{ -6, 16 } },
-		{ { 0, 8, -15, 8 },{ -32, -29, 10, -51 },{ -6, -23 } } };
+	{ { -148, -88, -9, 165 },{ -448, -278, -63, 580 },{ -7, 0 } },
+	{ { 13, -149, 14, 46 },{ -153, -225, -246, 578 },{ -6, 16 } },
+	{ { 0, 8, -15, 8 },{ -32, -29, 10, -51 },{ -6, -23 } } };
 	static constexpr Weights_ Queen = {
 		{ { -270, -18, -19, -68 },{ -520, 444, 474, -186 },{ 18, -6 } },
-		{ { -114, -209, 21, -103 },{ -224, -300, 73, 529 },{ -13, 1 } },
-		{ { 2, -341, 58, -160 },{ 40, -943, -171, 1328 },{ -34, 27 } },
-		{ { -3, -26, 9, 5 },{ -43, -18, -107, 60 },{ 5, 12 } } };
+	{ { -114, -209, 21, -103 },{ -224, -300, 73, 529 },{ -13, 1 } },
+	{ { 2, -341, 58, -160 },{ 40, -943, -171, 1328 },{ -34, 27 } },
+	{ { -3, -26, 9, 5 },{ -43, -18, -107, 60 },{ 5, 12 } } };
 	static constexpr Weights_ King = {
 		{ { -266, -694, -12, 170 },{ 1077, 3258, 20, -186 },{ -18, 3 } },
-		{ { -284, -451, -31, 43 },{ 230, 1219, -425, 577 },{ -1, 5 } },
-		{ { -334, -157, -67, -93 },{ -510, -701, -863, 1402 },{ 37, -8 } },
-		{ { 22, 14, -16, 0 },{ 7, 70, 40,  78 } ,{ 9, -3 } } };
+	{ { -284, -451, -31, 43 },{ 230, 1219, -425, 577 },{ -1, 5 } },
+	{ { -334, -157, -67, -93 },{ -510, -701, -863, 1402 },{ 37, -8 } },
+	{ { 22, 14, -16, 0 },{ 7, 70, 40,  78 } ,{ 9, -3 } } };
 }
 
 // coefficient (Linear, Log, Locus) * phase (4)
@@ -1202,7 +1241,7 @@ static constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, a
 	-96, 204, 504, 0,
 	0, 130, 260,  0,
 	128, 176, 224,  0,
-	108, 44, -20,  0,
+	36, 14, -6,  0,
 	128, 32, -64, 0,
 	52, 34, 16,  0,
 	4, 4, 4, 0 };
@@ -1212,7 +1251,7 @@ static constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512,
 	712, 582, 452, 0,
 	808, 434, 60, 0,
 	-244, -80, 84, 0,
-	372, 518, 664, 0,
+	124, 172, 221, 0,
 	344, 356, 368, 0,
 	108, 122, 136, 0,
 	-72, -50, -28, 0 };
@@ -1243,8 +1282,8 @@ static constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100,
 };
 namespace Values
 {
-	static constexpr packed_t PasserOpRookBlock = 
-			Pack4(0, Av(PasserSpecial, 3, ::PasserOpRookBlock, 0), Av(PasserSpecial, 3, ::PasserOpRookBlock, 1), Av(PasserSpecial, 3, ::PasserOpRookBlock, 2));
+	static constexpr packed_t PasserOpRookBlock =
+		Pack4(0, Av(PasserSpecial, 3, ::PasserOpRookBlock, 0), Av(PasserSpecial, 3, ::PasserOpRookBlock, 1), Av(PasserSpecial, 3, ::PasserOpRookBlock, 2));
 }
 
 namespace Params
@@ -1463,10 +1502,10 @@ namespace Values
 
 namespace Params
 {
-	enum 
-	{ 
-		BishopPawnBlock, 
-		BishopOppPawnOffColor, 
+	enum
+	{
+		BishopPawnBlock,
+		BishopOppPawnOffColor,
 		BishopOppPawnBlock,
 		BishopOutpostNoMinor
 	};
@@ -1592,7 +1631,6 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 	return retval;
 }
 static constexpr array<uint16, 16> XKingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
-static constexpr array<int, 4> XKingCenterScale = { 51, 50, 58, 55 };
 
 // tuner: stop
 
@@ -1987,7 +2025,7 @@ Settings_* SETTINGS = 0;
 
 struct WorkerList_
 {
-	struct Record_ 
+	struct Record_
 	{
 		int pvs_, next_;
 	};
@@ -2041,6 +2079,7 @@ struct SharedInfo_
 	unsigned rootSp;
 	struct {
 		int depth, value, move, worker;
+		bool failLow;
 	} best;
 	uint64_t rootStack[1024];
 };
@@ -2221,11 +2260,11 @@ INLINE bool IsCheck(bool me)
 };
 INLINE bool IsRepetition(int margin, int move)
 {
-	return margin > 0 
-		&& Current->ply >= 2 
-		&& (Current - 1)->move == ((To(move) << 6) | From(move)) 
-		&& F(PieceAt(To(move))) 
-		&& F((move)& 0xF000);
+	return margin > 0
+		&& Current->ply >= 2
+		&& (Current - 1)->move == ((To(move) << 6) | From(move))
+		&& F(PieceAt(To(move)))
+		&& F((move) & 0xF000);
 };
 
 inline uint64 XBMagicAttacks(const CommonData_* data, int i, uint64 occ)
@@ -2849,8 +2888,8 @@ uint64 make_klocus(int k_loc, double center_weight, double spine_weight)
 }
 
 template<class T_> void init_mobility
-	(const array<int, 12>& coeffs,
-	 T_* mob)
+(const array<int, 12>& coeffs,
+	T_* mob)
 {
 	// ordering of coeffs is (linear*4, log*4, locus*4)
 	auto m1 = [&](int phase, int pop)->sint16
@@ -2944,7 +2983,7 @@ void init_eval(CommonData_* data)
 	}
 
 	data->KingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
-	data->KingCenterScale = { 62, 61, 70, 68 };
+	data->KingCenterScale = { 64, 65, 74, 70, 68, 70, 61, 62 };	// would be better if this were symmetric, but I want to keep king off queenside
 }
 
 // all these special-purpose endgame evaluators
@@ -3252,7 +3291,27 @@ template<bool me> bool eval_stalemate(GEvalInfo& EI)
 	return retval;
 }
 
-template<bool me> void eval_pawns_only(GEvalInfo& EI, pop_func_t pop)
+template<bool me> void eval_single_pawn(GEvalInfo& EI, pop_func_t pop)
+{
+	int kOpp = EI.king[opp];
+	int sq = FileOf(kOpp) <= 3 ? (me ? 0 : 56) : (me ? 7 : 63);
+
+	if (T(Pawn(me) & RO->PWay[opp][sq]))
+	{
+		if ((RO->KAtt[sq] | Bit(sq)) & King(opp))
+			EI.mul = 0;
+		else if ((RO->KAtt[sq] & RO->KAtt[kOpp] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+			EI.mul = 0;
+	}
+	else if ((King(opp) & (OwnLine(me, 6) | OwnLine(me, 7))) && T(Pawn(me) & RO->PSupport[me][sq]) &&
+		(Pawn(me) & OwnLine(me, 5) & Shift<opp>(Pawn(opp))))
+		EI.mul = 0;
+	EI.mul = Min(EI.mul, kpkx<me>());
+	if (Piece(opp) == King(opp) && EI.mul == 32)
+		IncV(Current->score, KpkValue);
+}
+
+template<bool me> void eval_plural_pawns(GEvalInfo& EI, pop_func_t pop)
 {
 	int number = pop(Pawn(me));
 	int kOpp = lsb(King(opp));
@@ -3262,17 +3321,20 @@ template<bool me> void eval_pawns_only(GEvalInfo& EI, pop_func_t pop)
 	{
 		if ((RO->KAtt[sq] | Bit(sq)) & King(opp))
 			EI.mul = 0;
-		else if ((RO->KAtt[sq] & RO->KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+		else if ((RO->KAtt[sq] & RO->KAtt[kOpp] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
 			EI.mul = 0;
 	}
-	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
+	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
 		(Pawn(me) & OwnLine(me, 5) & Shift<opp>(Pawn(opp))))
 		EI.mul = 0;
-	if (number == 1)
+	if (number - pop(Pawn(opp)) == 1)
 	{
-		EI.mul = Min(EI.mul, kpkx<me>());
-		if (Piece(opp) == King(opp) && EI.mul == 32)
-			IncV(Current->score, KpkValue);
+		uint64 occ = Pawn(me);
+		occ |= occ >> 32;
+		occ |= occ >> 16;
+		occ |= occ >> 8;	// now low bits are file occupancy
+		if (F(occ & (occ >> 1)))	// all isolated pawns
+			EI.mul = min(EI.mul, 35 - 7 * number);
 	}
 }
 
@@ -3408,8 +3470,8 @@ template<bool me> void eval_krkpx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Rook(me) && Single(Rook(me)) && F(Pawn(me)) && Pawn(opp));
 	EI.mul = Min(EI.mul, krkpx<me>());
-//	if (T(Minor(opp)))
-//		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Rook(me) ? 6 : 0);
+	//	if (T(Minor(opp)))
+	//		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Rook(me) ? 6 : 0);
 }
 template<bool me> void eval_krpkrx(GEvalInfo& EI, pop_func_t pop)
 {
@@ -3443,8 +3505,8 @@ template<bool me> void eval_kqkpx(GEvalInfo& EI, pop_func_t pop)
 template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, kqkrpx<me>());
-//	if (T(Minor(opp)))
-//		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
+	//	if (T(Minor(opp)))
+	//		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
 }
 
 
@@ -3638,10 +3700,10 @@ void calc_material(int index, GMaterial& material)
 			else if (!pawns[me] && knights[me] == 2 && !bishops[me])
 				mat[me] = (!tot[opp] && pawns[opp]) ? 6 : 0;
 		}
-//		else if (F(queens[me] + queens[opp] + minor[opp] + pawns[opp]) && rooks[me] == rooks[opp] && minor[me] == 1 && T(pawns[me]))	// RNP or RBP vs R
-//			mat[me] += 24 / (pawns[me] + rooks[me]);
-//		else if (F(queens[me] + minor[me] + major[opp] + pawns[opp]) && rooks[me] == minor[opp] && T(pawns[me]))	// RP vs minor
-//			mat[me] = 40;
+		//		else if (F(queens[me] + queens[opp] + minor[opp] + pawns[opp]) && rooks[me] == rooks[opp] && minor[me] == 1 && T(pawns[me]))	// RNP or RBP vs R
+		//			mat[me] += 24 / (pawns[me] + rooks[me]);
+		//		else if (F(queens[me] + minor[me] + major[opp] + pawns[opp]) && rooks[me] == minor[opp] && T(pawns[me]))	// RP vs minor
+		//			mat[me] = 40;
 
 		if (!mul[me])
 			mat[me] = 0;
@@ -3671,7 +3733,7 @@ void calc_material(int index, GMaterial& material)
 	for (int me = 0; me < 2; ++me)
 	{
 		if (F(major[me] + minor[me]))
-			material.eval[me] = TEMPLATE_ME(eval_pawns_only);
+			material.eval[me] = pawns[me] > 1 ? TEMPLATE_ME(eval_plural_pawns) : TEMPLATE_ME(eval_single_pawn);
 		else if (F(major[me]) && minor[me] == 1)
 		{
 			if (bishops[me])
@@ -3734,7 +3796,7 @@ void init_data(CommonData_* dst)
 
 
 void create_child
-	(const char *hashName,
+(const char *hashName,
 	const char *pvHashName,
 	const char *pawnHashName,
 	const char *dataName,
@@ -3831,7 +3893,7 @@ static void create_children(const Settings_& settings)
 	INFO = init_object(INFO, nullptr, true, false);
 	INFO->pid = GetCurrentProcessId();
 #if TB
-	tb_init(settings.tbPath);
+	tb_init_fwd(settings.tbPath);
 #endif
 
 	// Wait for threads to finish initializing:
@@ -3941,29 +4003,14 @@ static void go()
 #if TB
 	if (popcnt(PieceAll()) <= int(TB_LARGEST))
 	{
-		auto res = TBProbe(tb_probe_root, T(Current->turn));
+		auto res = TBProbe(tb_probe_root_checked, T(Current->turn));
 		if (res != TB_RESULT_FAILED)
 		{
-			int bestScore = TbValues[TB_GET_WDL(res)];
-			int flags = 0;
-			unsigned to = TB_GET_TO(res);
-			switch (TB_GET_PROMOTES(res))
-			{
-			case TB_PROMOTES_QUEEN:
-				flags |= FlagPQueen; break;
-			case TB_PROMOTES_ROOK:
-				flags |= FlagPRook; break;
-			case TB_PROMOTES_BISHOP:
-				flags |= FlagPBishop; break;
-			case TB_PROMOTES_KNIGHT:
-				flags |= FlagPKnight; break;
-			default:
-				break;
-			}
-			int bestMove = (TB_GET_FROM(res) << 6) | to | flags;
+			int bestScore;
+			int bestMove = GetTBMove(res, &bestScore);
 			char movStr[16];
 			move_to_string(bestMove, movStr);
-			Say("info depth 1 seldepth 1 score cp " +  Str(bestScore / CP_SEARCH) + " nodes 1 tbhits 1 pv " + string(movStr) + "\n");
+			Say("info depth 1 seldepth 1 score cp " + Str(bestScore / CP_SEARCH) + " nodes 1 tbhits 1 pv " + string(movStr) + "\n");
 			Say("bestmove " + string(movStr) + "\n");
 			return;
 		}
@@ -4086,8 +4133,8 @@ void setup_board()
 			Current->pst += Pst(PieceAt(i), i);
 		}
 	}
-	if (popcnt(Piece(WhiteKnight)) > 2 || popcnt(Piece(WhiteLight)) > 1 || popcnt(Piece(WhiteDark)) > 1 || popcnt(Piece(WhiteRook)) > 2 || popcnt(Piece(WhiteQueen)) > 2 ||
-		popcnt(Piece(BlackKnight)) > 2 || popcnt(Piece(BlackLight)) > 1 || popcnt(Piece(BlackDark)) > 1 || popcnt(Piece(BlackRook)) > 2 || popcnt(Piece(BlackQueen)) > 2)
+	if (popcnt(Piece(WhiteKnight)) > 2 || Multiple(Piece(WhiteLight)) || Multiple(Piece(WhiteDark)) || popcnt(Piece(WhiteRook)) > 2 || popcnt(Piece(WhiteQueen)) > 2 ||
+		popcnt(Piece(BlackKnight)) > 2 || Multiple(Piece(BlackLight)) || Multiple(Piece(BlackDark)) || popcnt(Piece(BlackRook)) > 2 || popcnt(Piece(BlackQueen)) > 2)
 		Current->material |= FlagUnusualMaterial;
 	Current->capture = 0;
 	for (int ik = 1; ik <= N_KILLER; ++ik) Current->killer[ik] = 0;
@@ -4223,7 +4270,7 @@ INLINE GPVEntry* probe_pv_hash()
 template<bool me> void do_move(int move)
 {
 	MOVING
-	GEntry* Entry;
+		GEntry* Entry;
 	GPawnEntry* PawnEntry;
 	int from, to, piece, capture;
 	GData* Next;
@@ -4640,7 +4687,12 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 		else
 		{
 			if (doubled)
-				DecV(PEI.score, open ? Values::DoubledOpen : Values::DoubledClosed);
+			{
+				if (!(Pawn(me) & RO->PCone[opp][sq]))
+					DecV(PEI.score, open ? Values::IsolatedDoubledOpen : Values::IsolatedDoubledClosed);	// unsupportable trailing pawn is as bad as isolated
+				else
+					DecV(PEI.score, open ? Values::DoubledOpen : Values::DoubledClosed);
+			}
 			if (rrank >= 3 && (b & (RO->File[2] | RO->File[3] | RO->File[4] | RO->File[5])) && next != IPawn[opp] && (RO->PIsolated[file] & RO->Line[rank] & Pawn(me)))
 				IncV(PEI.score, Values::PawnChainLinear * (rrank - 3) + Values::PawnChain);
 		}
@@ -4670,7 +4722,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 				if (rrank <= 2)
 				{
 					DecV(PEI.score, Values::PasserTarget);
-					if (rrank <= 1) 
+					if (rrank <= 1)
 						DecV(PEI.score, Values::PasserTarget);
 				}	// Gull 3 was thinking of removing this term, because fitted weight is negative
 
@@ -4755,7 +4807,7 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-//						if (piece < WhiteRook)	// double major attack is handled elsewhere
+						//						if (piece < WhiteRook)	// double major attack is handled elsewhere
 						{
 							IncV(EI.score, Values::SelfPiecePin);
 							katt = 1;
@@ -4821,7 +4873,7 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-//						if (piece < WhiteRook)	// double major attack is handled elsewhere
+						//						if (piece < WhiteRook)	// double major attack is handled elsewhere
 						{
 							IncV(EI.score, Values::SelfPiecePin);
 							katt = 1;
@@ -4977,12 +5029,12 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		DecV(EI.score, Values::BishopPawnBlock * pop(v));
 		DecV(EI.score, Values::BishopOppPawnOffColor * pop(Pawn(opp) & ~myArea));
 		DecV(EI.score, Values::BishopOppPawnBlock * pop(Pawn(opp) & myArea & ~EI.free[me]));
-		if (T(b & Outpost[me]) 
-			&& F(Knight(opp)) 
+		if (T(b & Outpost[me])
+			&& F(Knight(opp))
 			&& T(Current->patt[me] & b)
 			&& F(Pawn(opp) & RO->PIsolated[FileOf(sq)] & RO->Forward[me][RankOf(sq)])
 			&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
-					IncV(EI.score, Values::BishopOutpostNoMinor);
+			IncV(EI.score, Values::BishopOutpostNoMinor);
 	}
 }
 
@@ -5023,8 +5075,6 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 	}
 }
 
-static double KA_E = 0, KA_N = 0;
-
 template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	POP pop;
@@ -5040,13 +5090,11 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	}
 	int adjusted = ((score * RO->KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
 	int kf = FileOf(EI.king[opp]);
-	if (kf > 3)
-		kf = 7 - kf;
 	adjusted = (adjusted * RO->KingCenterScale[kf]) / 64;
 	if (!Queen(me))
 		adjusted = (adjusted * KingSafetyNoQueen) / 16;
 	// add a correction for defense-in-depth
-	if (adjusted > 1)
+	if (adjusted > 10)
 	{
 		uint64 holes = RO->KingFrontal[EI.king[opp]] & ~Current->att[opp];
 		int nHoles = pop(holes);
@@ -5056,16 +5104,17 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		uint64 awol = personnel ^ guards;
 		int nGuards = pop(guards) + pop(guards & Queen(opp));
 		int nAwol = pop(awol) + pop(awol & Queen(opp));
-		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
+		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 13, 10, 2, 0 };
+	static constexpr array<int, 4> PHASE = { 15, 12, 2, 0 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
 	int cl = (PHASE[3] * adjusted) / 16;
-	KA_E += (adjusted - KA_E) / (++KA_N);
-	IncV(EI.score, Pack4(op, md, eg, cl));
+	auto inc = Pack4(op, md, eg, cl);
+	IncV(EI.score, inc);
+	IncV(EI.king_score[me], inc);
 }
 
 template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
@@ -5107,7 +5156,9 @@ template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 					++connected;
 			}
 			if (connected)
-				IncV(EI.score, RO->PasserConnected[rank]);
+			{
+				IncV(EI.score, RO->PasserConnected[rank] * min(file + 2, 9 - file));
+			}
 			if (!hooked && !(Current->att[opp] & way))
 			{
 				IncV(EI.score, RO->PasserFree[rank]);
@@ -5153,20 +5204,17 @@ template<bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 template<class POP> void eval_unusual_material(GEvalInfo& EI)
 {
 	POP pop;
-	int wp, bp, wminor, bminor, wr, br, wq, bq;
-	wp = pop(Pawn(White));
-	bp = pop(Pawn(Black));
-	wminor = pop(Minor(White));
-	bminor = pop(Minor(Black));
-	wr = pop(Rook(White));
-	br = pop(Rook(Black));
-	wq = pop(Queen(White));
-	bq = pop(Queen(Black));
-	int phase = Min(24, (wminor + bminor) + 2 * (wr + br) + 4 * (wq + bq));
-	sint16 temp = SeeValue[WhitePawn] * (wp - bp) + SeeValue[WhiteKnight] * (wminor - bminor) + SeeValue[WhiteRook] * (wr - br) +
-		SeeValue[WhiteQueen] * (wq - bq);
-	packed_t mat_score = Pack2(temp, temp);
-	Current->score = (((Opening(mat_score + EI.score) * phase) + (Endgame(mat_score + EI.score) * (24 - phase))) / 24);
+	int wp = pop(Pawn(White));
+	int bp = pop(Pawn(Black));
+	int wminor = pop(Minor(White));
+	int bminor = pop(Minor(Black));
+	int wr = pop(Rook(White));
+	int br = pop(Rook(Black));
+	int wq = pop(Queen(White));
+	int bq = pop(Queen(Black));
+	Current->score = SeeValue[WhitePawn] * (wp - bp) + SeeValue[WhiteKnight] * (wminor - bminor) + SeeValue[WhiteRook] * (wr - br) +
+			SeeValue[WhiteQueen] * (wq - bq);
+	Current->score += Middle(EI.score);
 }
 
 template<class POP, int me> int closure_x()
@@ -5224,6 +5272,31 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 	eval_knights<me, POP>(EI);
 }
 
+template<class POP> struct PhasedScore_
+{
+#ifndef THREE_PHASE
+	int clx_;
+	PhasedScore_() : clx_(closure<POP>()) {}
+#endif
+	int operator()(packed_t score, const GMaterial& mat)
+	{
+		int op = Opening(score), eg = Endgame(score), md = Middle(score), cl = Closed(score);
+		int retval;
+		if (mat.phase > MIDDLE_PHASE)
+			retval = (op * (mat.phase - MIDDLE_PHASE) + md * (MAX_PHASE - mat.phase)) / PHASE_M2M;
+		else
+			retval = (md * mat.phase + eg * (MIDDLE_PHASE - mat.phase)) / MIDDLE_PHASE;
+		retval += static_cast<sint16>((clx_ * (Min<int>(mat.phase, MIDDLE_PHASE) * cl + MIDDLE_PHASE * mat.closed)) / 8192);	// closure is capped at 128, phase at 64
+		return retval;
+	}
+};
+
+INLINE int king_att_depreciation(int score, int my_katt, int opp_katt)
+{
+	constexpr int threshold = 110 * CP_EVAL;
+	return max(0, min(score - threshold, my_katt) / 6);
+}
+
 template<class POP> void evaluation()
 {
 	POP pop;
@@ -5275,27 +5348,17 @@ template<class POP> void evaluation()
 	}
 	else
 	{
-		const uint8& phase = EI.material->phase;
-#ifdef TWO_PHASE
-		int op = Opening(EI.score), eg = Endgame(EI.score);
-		Current->score = EI.material->score;
-		Current->score += (op * phase + eg * (MAX_PHASE - phase)) / MAX_PHASE;
-#else
-		int op = Opening(EI.score), eg = Endgame(EI.score), md = Middle(EI.score), cl = Closed(EI.score);
-		Current->score = EI.material->score;
-		if (EI.material->phase > MIDDLE_PHASE)
-			Current->score += (op * (phase - MIDDLE_PHASE) + md * (MAX_PHASE - phase)) / PHASE_M2M;
+		PhasedScore_<POP> value;
+		Current->score = EI.material->score + value(EI.score, *EI.material);
+		// cash out king attacks
+		if (Current->score > 0)
+			Current->score -= king_att_depreciation(Current->score, value(EI.king_score[White], *EI.material), value(EI.king_score[Black], *EI.material));
 		else
-			Current->score += (md * phase + eg * (MIDDLE_PHASE - phase)) / MIDDLE_PHASE;
-#ifndef THREE_PHASE
-		int clx = closure<POP>();
-		Current->score += static_cast<sint16>((clx * (Min<int>(phase, MIDDLE_PHASE) * cl + MIDDLE_PHASE * EI.material->closed)) / 8192);	// closure is capped at 128, phase at 64
-#endif
-#endif
-																																			// apply contempt before drawishness
+			Current->score += king_att_depreciation(-Current->score, value(EI.king_score[Black], *EI.material), value(EI.king_score[White], *EI.material));
+		// apply contempt before drawishness
 		if (SETTINGS->contempt > 0)
 		{
-			int maxContempt = (phase * SETTINGS->contempt * CP_EVAL) / 64;
+			int maxContempt = (EI.material->phase * SETTINGS->contempt * CP_EVAL) / 64;
 			int mySign = F(Data->turn) ? 1 : -1;
 			if (Current->score * mySign > 2 * maxContempt)
 				Current->score += mySign * maxContempt;
@@ -5313,7 +5376,7 @@ template<class POP> void evaluation()
 				EI.material->eval[White](EI, pop.Imp());
 #ifndef THREE_PHASE
 			else if (EI.mul <= 32)
-				EI.mul = Min(EI.mul, 37 - clx / 8);
+				EI.mul = Min(EI.mul, 37 - value.clx_ / 8);
 #endif
 			Current->score -= (Min<int>(Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64;
 		}
@@ -5324,7 +5387,7 @@ template<class POP> void evaluation()
 				EI.material->eval[Black](EI, pop.Imp());
 #ifndef THREE_PHASE
 			else if (EI.mul <= 32)
-				EI.mul = Min(EI.mul, 35 - clx / 4);
+				EI.mul = Min(EI.mul, 37 - value.clx_ / 8);
 #endif
 			Current->score += (Min<int>(-Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64;
 		}
@@ -5781,20 +5844,19 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 	best->ply = Current->ply;
 }
 
-template<bool me> int extension(int pv, int move, int depth, bool* check = nullptr)
+template<bool me, bool pv> int extension(int move, int depth, bool* check = nullptr)
 {
 	if (is_check<me>(move))
 	{
-		constexpr array<array<int, 2>, 2> DepthCut = { { {{16, 16}}, {{50, 50}} } };
+		constexpr array<array<int, 2>, 2> DepthCut = { { { { 16, 16 } },{ { 50, 50 } } } };
 		if (check) *check = true;
-		const bool isQ = (PieceAt(From(move)) & ~Black) == WhiteQueen;
-		return see<me>(move, -SeeThreshold, SeeValue) + T(depth < DepthCut[pv][T(isQ)]);
+		return see<me>(move, -SeeThreshold, SeeValue) + T(depth < DepthCut[pv][0]);	// Can't find a useful criterion here
 	}
 	if (check) *check = false;
 	int from = From(move);
-	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
+	constexpr array<int, 8> PushExtendDepth = { -1, 0, 0, 10, 12, 20, 8, -1 };
+	if (HasBit(Current->passer, from) && depth < PushExtendDepth[OwnRank(T(Current->turn), from)])
 	{
-		if (depth < 16)
 			return 1 + pv;
 	}
 
@@ -5950,7 +6012,7 @@ template<bool me, bool root> int get_move(int depth)
 		Current->current++;
 		return move;
 	}
-	for ( ; ; )
+	for (; ; )
 	{
 		if (F(*Current->current))
 		{
@@ -6735,7 +6797,7 @@ template<bool me> int SingularExtension(int ext, int prev_ext, int margin_one, i
 	return singular;
 }
 
-template<bool me> INLINE uint64 capture_margin_mask(int alpha, int* score) 
+template<bool me> INLINE uint64 capture_margin_mask(int alpha, int* score)
 {
 	uint64 retval = Piece(opp);
 	if (Current->score + 200 * CP_SEARCH < alpha) {
@@ -6866,8 +6928,8 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 						alpha = value;
 					}
 				}
-				if (F(Bit(To(hash_move)) & Current->mask) 
-					&& F(hash_move & 0xE000) 
+				if (F(Bit(To(hash_move)) & Current->mask)
+					&& F(hash_move & 0xE000)
 					&& !pv
 					&& alpha >= beta - 1
 					&& (depth < -2 || depth <= -1 && Current->score + FutilityThreshold < alpha))
@@ -6948,7 +7010,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 					{
 						if (N_KILLER >= 1 && Current->killer[1] != move)
 						{
-							for (int jk = N_KILLER; jk > 1; --jk) 
+							for (int jk = N_KILLER; jk > 1; --jk)
 								Current->killer[jk] = Current->killer[jk - 1];
 							Current->killer[1] = move;
 						}
@@ -6962,7 +7024,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 		}
 	}
 	return finish(score);
-}
+	}
 
 template<bool me, bool pv> int q_evasion(int alpha, int beta, int depth, int flags)
 {
@@ -7083,7 +7145,7 @@ template<bool exclusion> int cut_search(int move, int hash_move, int score, int 
 	{
 		if (Current->killer[1] != move && F(flags & FlagNoKillerUpdate))
 		{
-			for (int jk = N_KILLER; jk > 1; --jk) 
+			for (int jk = N_KILLER; jk > 1; --jk)
 				Current->killer[jk] = Current->killer[jk - 1];
 			Current->killer[1] = move;
 		}
@@ -7256,7 +7318,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = extension<me>(0, move, depth);
+				ext = extension<me, 0>(move, depth);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -7331,7 +7393,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			continue;
 		}
 		bool check;
-		ext = extension<me>(0, move, depth, &check);
+		ext = extension<me, 0>(move, depth, &check);
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -7529,7 +7591,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = Max(pext, extension<me>(0, move, depth));
+				ext = Max(pext, extension<me, 0>(move, depth));
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -7562,7 +7624,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			}
 		}
 	}
-	
+
 	// done with hash move
 	moves_to_play = 3 + ((depth * depth) / 6);
 	Current->ref[0] = RefM(Current->move).check_ref[0];
@@ -7582,7 +7644,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			continue;
 		}
 		bool check;
-		ext = Max(pext, extension<me>(0, move, depth, &check));
+		ext = Max(pext, extension<me, 0>(move, depth, &check));
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -7752,7 +7814,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			if (INFO->id == 0)
 				send_curr_move(move, cnt);
 		}
-		ext = Max(pext, extension<me>(1, move, depth));
+		ext = Max(pext, extension<me, 1>(move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
 			int margin_one = hash_value - ExclSingle(depth);
@@ -7805,7 +7867,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				CurrentSI->Singular = 0;
 				INFO->bestScore = value;
 				if (depth >= 8)
-					send_pv(depth, old_alpha, beta);
+					send_pv(depth, old_alpha, beta, true);
 			}
 		}
 	}
@@ -7844,7 +7906,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		}
 		if (IsRepetition(alpha + 1, move))
 			continue;
-		ext = Max(pext, extension<me>(1, move, depth));
+		ext = Max(pext, extension<me, 1>(move, depth));
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
@@ -7874,7 +7936,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			value = -pv_search<opp, 0>(-beta, -alpha, new_depth, ExtToFlag(ext));
 			if (root)
 			{
-				if (value <= alpha) 
+				if (value <= alpha)
 					INFO->bestMove = old_best;
 			}
 		}
@@ -8016,7 +8078,7 @@ template<bool me> void root()
 	memcpy(SaveData, Data, sizeof(GData));
 	save_sp = sp;
 	int skipped = 0;
-	for (depth = start_depth; !SHARED->stopAll && depth < SHARED->depthLimit && depth < 256; depth += 2)
+	for (depth = start_depth; !SHARED->stopAll && depth < SHARED->depthLimit && depth < 126; depth += 2)
 	{
 		if (INFO->id == 0)
 			Say("info depth " + Str(depth / 2) + "\n");
@@ -8039,16 +8101,17 @@ template<bool me> void root()
 			if (SHARED->best.depth == depth)
 			{
 				Previous = SHARED->best.value;
-				deltaLo /= 2;
-				deltaHi /= 2;
+				if (SHARED->best.failLow)
+					deltaHi = 0;
+				else
+				{
+					deltaLo /= 2;
+					deltaHi /= 2;
+				}
 			}
 			alpha = Previous - deltaLo;
-			if (alpha >= 0 && alpha < AspirationEpsilon)
-				alpha = -1, deltaLo = Previous - alpha;
 			beta = Previous + deltaHi;
-			if (beta <= 0 && -beta < AspirationEpsilon)
-				beta = 1, deltaHi = beta - Previous;
-			for ( ; ; )	// loop:
+			for (; ; )	// loop:
 			{
 				if (SHARED->best.depth > depth)	// search has moved beyond us
 				{
@@ -8145,7 +8208,7 @@ template<bool me> int multipv(int depth)
 	{
 		MultiPV[cnt] = move;
 		send_curr_move(move, cnt);
-		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
+		new_depth = depth - 2 + (ext = extension<me, 1>(move, depth));
 		do_move<me>(move);
 		value = -pv_search<opp, 0>(-MateValue, MateValue, new_depth, ExtToFlag(ext));
 		MultiPV[cnt] |= value << 16;
@@ -8168,7 +8231,7 @@ template<bool me> int multipv(int depth)
 	{
 		MultiPV[cnt] = move;
 		send_curr_move(move, cnt);
-		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
+		new_depth = depth - 2 + (ext = extension<me, 1>(move, depth));
 		do_move<me>(move);
 		value = -scout<opp, 0>(-low, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value > low)
@@ -8198,13 +8261,13 @@ template<bool me> int multipv(int depth)
 
 static void send_pv
 	(const int* PV,
-	size_t nodes,
-	size_t tbHits,
-	int depth,
-	int selDepth,
-	int bestScore,
-	int bestMove,
-	uint64_t startTime)
+	 size_t nodes,
+	 size_t tbHits,
+	 int depth,
+	 int selDepth,
+	 int bestScore,
+	 int bestMove,
+	 uint64_t startTime)
 {
 	const char *scoreType = "mate";
 	if (bestScore > EvalValue)
@@ -8253,7 +8316,7 @@ static void send_pv
 	Say("info depth " + Str(depth / 2) + " seldepth " + Str(selDepth) + " score " + string(scoreType) + " " + Str(bestScore) + " nodes " + Str(nodes) + " nps " + Str(nps) + " tbhits " + Str(tbHits) + " time " + Str(currTime - startTime) + " pv" + string(pvStr) + "\n");
 }
 
-void send_pv(int depth, int alpha, int beta)
+void send_pv(int depth, int alpha, int beta, bool fail_low = false)
 {
 	int sel_depth = 0;
 	while (sel_depth < 126 && T((Data + sel_depth + 1)->att[0]))
@@ -8269,10 +8332,14 @@ void send_pv(int depth, int alpha, int beta)
 	// find out whether this is the best candidate move so far
 	{
 		LOCK_SHARED;
-		isBest = depth > SHARED->best.depth
-			|| (depth == SHARED->best.depth && move != SHARED->best.move && (INFO->bestScore > SHARED->best.value || (INFO->bestScore == SHARED->best.value && INFO->id == 0)));
+		isBest = depth > SHARED->best.depth;
+		if (depth == SHARED->best.depth && move != SHARED->best.move)
+		{
+			double delta = INFO->bestScore - SHARED->best.value + (SHARED->best.failLow ? 65536 : 0) - (fail_low ? 65536 : 0) + (INFO->id ? 0 : 0.5);
+			isBest = delta > 0;
+		}
 		if (isBest)
-			SHARED->best = { depth, INFO->bestScore, move, INFO->id };
+			SHARED->best = { depth, INFO->bestScore, move, INFO->id, fail_low };
 	}
 	if (!isBest)
 		return;
@@ -8479,8 +8546,8 @@ void uci(void)
 		while (true)
 		{
 			DWORD timeout = numeric_limits<DWORD>::max();
-//			if (!SHARED->working.Empty())
-//				timeout = 100;          // 100ms
+			//			if (!SHARED->working.Empty())
+			//				timeout = 100;          // 100ms
 
 			bool timedout = get_line(line, sizeof(line) - 1, timeout);
 			currTime = get_time();
@@ -8489,7 +8556,7 @@ void uci(void)
 				mutex_unlock(&SHARED->mutex);
 			else
 				emergency_stop();
-			if (!SHARED->working.Empty() &&	currTime >= SHARED->startTime + SHARED->hardTimeLimit / 2)
+			if (!SHARED->working.Empty() && currTime >= SHARED->startTime + SHARED->hardTimeLimit / 2)
 			{
 				stop();
 				wait_for_stop();
@@ -8739,10 +8806,10 @@ void worker()
 	while (true)
 	{
 		Current = Data;
-//		while (!SHARED->stopAll)
-//			Sleep(1);	// can get here if we finish the search before timing out
-//		while (SHARED->stopAll)
-			wait_for_go();
+		//		while (!SHARED->stopAll)
+		//			Sleep(1);	// can get here if we finish the search before timing out
+		//		while (SHARED->stopAll)
+		wait_for_go();
 
 		bool newGame = INFO->newGame;
 		INFO->newGame = false;
@@ -8835,7 +8902,7 @@ int main(int argc, char **argv)
 		INFO = share_object(INFO, infoStr, false);
 		INFO->pid = GetCurrentProcessId();
 #if TB
-		tb_init(SETTINGS->tbPath);
+		tb_init_fwd(SETTINGS->tbPath);
 #endif
 		THREADS.resize(SETTINGS->nThreads);
 		for (int i = 0; i < SETTINGS->nThreads; i++)
@@ -8943,7 +9010,7 @@ int main(int argc, char **argv)
 struct WriteMove_
 {
 	int m_;
-	WriteMove_(int m) : m_(m) {HI BYE}
+	WriteMove_(int m) : m_(m) { HI BYE }
 };
 ostream& operator<<(ostream& dst, const WriteMove_& m)
 {
@@ -8972,14 +9039,12 @@ void Test1(const char* fen, int max_depth, const char* solution)
 		move_to_string(INFO->bestMove, moveStr);
 		Say(string(moveStr) + ":  " + Str(score) + ", " + Str(INFO->nodes) + " nodes\n");
 	}
-	Say(Str(KA_N) + " samples; mean " + Str(KA_E) + "\n");
-	KA_N = 0;
 	cin.ignore();
 }
 
 int main(int argc, char *argv[])
 {
-	int CPUInfo[4] = { -1, 0, 0, 0};
+	int CPUInfo[4] = { -1, 0, 0, 0 };
 	__cpuid(CPUInfo, 1);
 	HardwarePopCnt = (CPUInfo[2] >> 23) & 1;
 
@@ -9042,5 +9107,56 @@ int main(int argc, char *argv[])
 	cin.ignore();
 	return 0;
 }
+#endif
+
+// Fathom/Syzygy code at end where its #defines cannot screw us up
+#if TB
+#undef LOCK
+#undef UNLOCK
+#include "src\tbconfig.h"
+#include "src\tbcore.h"
+#include "src\tbprobe.c"
+#undef LOCK
+#undef UNLOCK
+
+int GetTBMove(unsigned res, int* best_score)
+{
+	*best_score = TbValues[TB_GET_WDL(res)];
+	int retval = (TB_GET_FROM(res) << 6) | TB_GET_TO(res);
+	switch (TB_GET_PROMOTES(res))
+	{
+	case TB_PROMOTES_QUEEN:
+		return retval | FlagPQueen;
+	case TB_PROMOTES_ROOK:
+		return retval | FlagPRook;
+	case TB_PROMOTES_BISHOP:
+		return retval | FlagPBishop;
+	case TB_PROMOTES_KNIGHT:
+		return retval | FlagPKnight;
+	}
+	return retval;
+}
+
+unsigned tb_probe_root_fwd(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _ep,
+	bool     _turn)
+{
+	return tb_probe_root_impl(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn, nullptr);
+}
+
+bool tb_init_fwd(const char* path)
+{
+	return tb_init(path);
+}
+
 #endif
 
