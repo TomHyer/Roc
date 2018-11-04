@@ -37,28 +37,6 @@
 
 //#include "TunerParams.inc"
 
-#if TB
-#include "src\tbconfig.h"
-#include "src\tbcore.h"
-#include "src\tbprobe.h"
-#undef LOCK
-#undef UNLOCK
-
-template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
-{
-	return func(Piece(White), Piece(Black),
-		King(White) | King(Black),
-		Queen(White) | Queen(Black),
-		Rook(White) | Rook(Black),
-		Bishop(White) | Bishop(Black),
-		Knight(White) | Knight(Black),
-		Pawn(White) | Pawn(Black),
-		Current->ply,
-		Current->castle_flags,
-		Current->ep_square,
-		(me == White), std::forward<Args_>(args)...);
-}
-#endif
 
 using namespace std;
 #define INLINE __forceinline
@@ -565,14 +543,73 @@ static const int FutilityThreshold = 50 * CP_SEARCH;
 static const sint16 KpkValue = 300 * CP_EVAL;
 static const sint16 EvalValue = 30000;
 static const sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
-#if TB
-static const sint16 TBMateValue = 31380;
-static const sint16 TBCursedMateValue = 13;
-const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
-static const int NominalTbDepth = 33;
-inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 127); }
-#endif
 
+#if TB
+constexpr sint16 TBMateValue = 31380;
+constexpr sint16 TBCursedMateValue = 13;
+const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
+constexpr int NominalTbDepth = 33;
+inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
+
+constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
+extern unsigned TB_LARGEST;
+bool tb_init_fwd(const char*);
+
+#define TB_CUSTOM_POP_COUNT pop1
+#define TB_CUSTOM_LSB lsb
+#define TB_CUSTOM_BSWAP32 _byteswap_ulong 
+template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
+{
+	return func(Piece(White), Piece(Black),
+		King(White) | King(Black),
+		Queen(White) | Queen(Black),
+		Rook(White) | Rook(Black),
+		Bishop(White) | Bishop(Black),
+		Knight(White) | Knight(Black),
+		Pawn(White) | Pawn(Black),
+		Current->ply,
+		Current->castle_flags,
+		Current->ep_square,
+		(me == White), std::forward<Args_>(args)...);
+}
+
+
+
+unsigned tb_probe_root_fwd(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _ep,
+	bool     _turn);
+
+static inline unsigned tb_probe_root_checked(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _castling,
+	unsigned _ep,
+	bool     _turn)
+{
+	if (_castling != 0)
+		return TB_RESULT_FAILED;
+	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
+}
+
+int GetTBMove(unsigned res, int* best_score);
+
+#endif
 
 /*
 general move:
@@ -1777,28 +1814,6 @@ INLINE int FileSpan(const uint64& occ)
 {
 	return RO->SpanWidth[FileOcc(occ)];
 }
-
-#if TB_SEAGULL
-#include "tbcore.h"
-#include "tbprobe.h"
-#include "tbcore.cpp"
-//#include "tbprobe.cpp"
-
-template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
-{
-	return func(Piece(White), Piece(Black),
-		King(White) | King(Black),
-		Queen(White) | Queen(Black),
-		Rook(White) | Rook(Black),
-		Bishop(White) | Bishop(Black),
-		Knight(White) | Knight(Black),
-		Pawn(White) | Pawn(Black),
-		Current->ply,
-		Current->castle_flags,
-		Current->ep_square,
-		(me == White), std::forward<Args_>(args)...);
-}
-#endif
 
 bool IsIllegal(bool me, int move)
 {
@@ -7707,31 +7722,17 @@ template<bool me> void root()
 	memcpy(Data, Current, sizeof(GData));
 	Current = Data;
 
-#ifdef TB
+#if TB
 	if (popcnt(PieceAll()) <= int(TB_LARGEST)) 
 	{
-		auto res = TBProbe(tb_probe_root, me);
+		auto res = TBProbe(tb_probe_root_checked, me);
 		if (res != TB_RESULT_FAILED) {
-			best_score = TbValues[TB_GET_WDL(res)];
-			int flags = 0;
-			unsigned to = TB_GET_TO(res);
-			switch (TB_GET_PROMOTES(res)) {
-			case TB_PROMOTES_QUEEN:
-				flags |= FlagPQueen; break;
-			case TB_PROMOTES_ROOK:
-				flags |= FlagPRook; break;
-			case TB_PROMOTES_BISHOP:
-				flags |= FlagPBishop; break;
-			case TB_PROMOTES_KNIGHT:
-				flags |= FlagPKnight; break;
-			default:
-				break;
-			}
-			best_move = (TB_GET_FROM(res) << 6) | to | flags;
-			char str[32];
-			move_to_string(best_move, str);
+			int bestScore;
+			best_move = GetTBMove(res, &bestScore);
+			char movStr[16];
+			move_to_string(best_move, movStr);
 			// TODO -- if TB mate, find # of moves to mate
-			printf("info depth 1 seldepth 1 score cp %d nodes 1 nps 0 tbhits 1 pv %s\n", best_score / CP_SEARCH, str);   // Fake PV
+			printf("info depth 1 seldepth 1 score cp %d nodes 1 nps 0 tbhits 1 pv %s\n", best_score / CP_SEARCH, movStr);   // Fake PV
 			send_best_move();
 			Searching = 0;
 			if (MaxPrN > 1) ZERO_BIT_64(Smpi->searching, 0);
@@ -9191,7 +9192,7 @@ reset_jump:
 		init_hash();
 	init_search(0);
 #ifdef TB
-	tb_init(Smpi->tb_path);
+	tb_init_fwd(Smpi->tb_path);
 #endif
 
 	if (child)
@@ -9304,3 +9305,56 @@ int main(int argc, char *argv[])
 }
 #endif
 
+#pragma optimize("gy", off)
+#define Say(x)	// mute TB query
+// Fathom/Syzygy code at end where its #defines cannot screw us up
+#if TB
+#undef LOCK
+#undef UNLOCK
+#include "src\tbconfig.h"
+#include "src\tbcore.h"
+#include "src\tbprobe.c"
+#pragma optimize("", on)
+
+int GetTBMove(unsigned res, int* best_score)
+{
+	*best_score = TbValues[TB_GET_WDL(res)];
+	int retval = (TB_GET_FROM(res) << 6) | TB_GET_TO(res);
+	switch (TB_GET_PROMOTES(res))
+	{
+	case TB_PROMOTES_QUEEN:
+		return retval | FlagPQueen;
+	case TB_PROMOTES_ROOK:
+		return retval | FlagPRook;
+	case TB_PROMOTES_BISHOP:
+		return retval | FlagPBishop;
+	case TB_PROMOTES_KNIGHT:
+		return retval | FlagPKnight;
+	}
+	return retval;
+}
+#undef LOCK
+#undef UNLOCK
+
+unsigned tb_probe_root_fwd(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _ep,
+	bool     _turn)
+{
+	return tb_probe_root_impl(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn, nullptr);
+}
+
+bool tb_init_fwd(const char* path)
+{
+	return tb_init(path);
+}
+
+#endif
