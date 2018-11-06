@@ -8780,8 +8780,10 @@ void uci(void)
 				"id author Demichev/Falcinelli/Hyer\n"
 				"option name Hash type spin min 1 max 8388608 default 128\n"
 				"option name Threads type spin min 1 max 64 default 4\n"
+				"option name Contempt type spin min 0 max 64 default 8\n"
+				"option name Wobble type spin min 0 max 8 default 0\n"
 				"option name SyzygyPath type string default <empty>\n"
-				"option name SyzygyProbeDepth type spin min 0 max 64 "
+				"option name SyzygyProbeDepth type spin min 0 max 64 default 7\n"
 				"default 1\n"
 				"uciok\n";
 			char* dst = &reply[12];
