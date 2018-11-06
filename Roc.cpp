@@ -608,7 +608,7 @@ constexpr sint16 TBMateValue = 31380;
 constexpr sint16 TBCursedMateValue = 13;
 const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
 constexpr int NominalTbDepth = 33;
-inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
+inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 127); }
 #endif
 
 
@@ -736,6 +736,15 @@ enum
 	r_none
 };
 constexpr int StageNone = (1 << s_none) | (1 << e_none) | (1 << r_none);
+
+struct Progress_
+{
+	uint8 count_;	// packed W,B
+	constexpr Progress_() : count_(0) {}
+	constexpr Progress_(uint8 nw, uint8 nb) : count_((nw - 1) << 4 | (nb - 1)) {}
+	bool Reachable() const;	// implementation after SHARED is declared
+};
+inline Progress_ Progress() { return Progress_(popcnt(Piece(White)), popcnt(Piece(Black))); }
 
 struct GEntry
 {
@@ -2055,6 +2064,7 @@ struct SharedInfo_
 	WorkerList_ working;
 	bool stopAll;
 	uint16_t date;
+	Progress_ rootProgress;
 	mutex_t mutex = NULL;
 	mutex_t outMutex = NULL;
 	event_t goEvent = NULL;
@@ -2075,6 +2085,15 @@ struct SharedInfo_
 };
 
 SharedInfo_* SHARED = 0;
+inline bool Progress_::Reachable() const
+{
+	assert(SHARED);
+	if ((count_ >> 4) > (SHARED->rootProgress.count_ >> 4))
+		return false;
+	if ((count_ & 0xF) > (SHARED->rootProgress.count_ & 0xF))
+		return false;
+	return true;
+}
 
 void mutex_lock1(mutex_t *mutex, int lineno)
 {
@@ -2206,6 +2225,28 @@ INLINE int FileSpan(const uint64& occ)
 	uint64 temp = occ;
 	return FileSpan(&temp);
 }
+
+#if TB_SEAGULL
+#include "tbcore.h"
+#include "tbprobe.h"
+#include "tbcore.cpp"
+//#include "tbprobe.cpp"
+
+template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
+{
+	return func(Piece(White), Piece(Black),
+		King(White) | King(Black),
+		Queen(White) | Queen(Black),
+		Rook(White) | Rook(Black),
+		Bishop(White) | Bishop(Black),
+		Knight(White) | Knight(Black),
+		Pawn(White) | Pawn(Black),
+		Current->ply,
+		Current->castle_flags,
+		Current->ep_square,
+		(me == White), std::forward<Args_>(args)...);
+}
+#endif
 
 bool IsIllegal(bool me, int move)
 {
@@ -3957,12 +3998,12 @@ static void stop()
 	SHARED->stopAll = true;
 }
 
-static bool go()
+static void go()
 {
 #if TB
 	if (popcnt(PieceAll()) <= int(TB_LARGEST))
 	{
-		auto res = TBProbe(tb_probe_root_checked, Current->turn);
+		auto res = TBProbe(tb_probe_root_checked, T(Current->turn));
 		if (res != TB_RESULT_FAILED)
 		{
 			int bestScore;
@@ -3971,7 +4012,7 @@ static bool go()
 			move_to_string(bestMove, movStr);
 			Say("info depth 1 seldepth 1 score cp " + Str(bestScore / CP_SEARCH) + " nodes 1 tbhits 1 pv " + string(movStr) + "\n");
 			Say("bestmove " + string(movStr) + "\n");
-			return false; // no children involved
+			return;
 		}
 	}
 #endif
@@ -3996,7 +4037,6 @@ static bool go()
 		THREADS[i]->PV[0] = 0;
 	}
 	event_signal(&SHARED->goEvent);
-	return true;
 }
 
 static void wait_for_go(void)
@@ -7213,7 +7253,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		}
 
 #if TB
-		if (hash_depth < 0 && depth >= SETTINGS->tbMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
+		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				++INFO->tbHits;
@@ -7515,7 +7555,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 				}
 			}
 #if TB
-		if (hash_depth < 0 && depth >= SETTINGS->tbMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
+		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				++INFO->tbHits;
@@ -7708,15 +7748,13 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		}
 	}
 #if TB
-	if (!root && hash_depth < 0 && depth >= SETTINGS->tbMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST)
+	if (!root && hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST)
 	{
 		auto res = TBProbe(tb_probe_wdl, me);
 		if (res != TB_RESULT_FAILED) {
 			++INFO->tbHits;
-			hash_depth = TbDepth(depth);
-			hash_value = TbValues[res];
-			hash_high(hash_value, hash_depth);
-			hash_low(0, hash_value, hash_depth);
+			hash_high(TbValues[res], TbDepth(depth));
+			hash_low(0, TbValues[res], TbDepth(depth));
 		}
 	}
 #endif
@@ -8044,18 +8082,8 @@ template<bool me> void root()
 	{
 		if (INFO->id == 0)
 			Say("info depth " + Str(depth / 2) + "\n");
-/*	this emulates LazyGull's Schedule, but results in weakness
-		else
-		{
-			int loc = SHARED->rootDepth + depth / 2;
-			int i = static_cast<int>(sqrt(double(INFO->id)) + 0.5);
-			if (loc % (2 * i) < i)
-				continue;	// mimic LazyGull's schedule
-		}
-*/
 		if (SHARED->best.depth > depth)	// we have fallen too far behind
 			continue;
-
 
 		memset(Data + 1, 0, 127 * sizeof(GData));
 		CurrentSI->Early = 1;
@@ -8611,26 +8639,23 @@ void uci(void)
 				SHARED->depthLimit = 2 * depth + 2;
 				SHARED->startTime = currTime;
 			}
-			if (go())
+			SHARED->rootProgress = Progress();
+			go();
+			// children start working; we wait until they are done
+			for (int i = 1; ; ++i)
 			{
-				// children start working; we wait until they are done
-				for (int i = 1; ; ++i)
+				Sleep(i);
+				if (SHARED->working.Empty())
+					break;
+				if (get_time() > SHARED->startTime + SHARED->hardTimeLimit)
 				{
-					Sleep(i);
-					if (SHARED->working.Empty())
-						break;
-					if (get_time() > SHARED->startTime + SHARED->hardTimeLimit)
-						SHARED->stopAll = true;
+					//LOCK_SHARED;
+					SHARED->stopAll = true;
 				}
 			}
 		}
 		else if (strcmp(token, "isready") == 0)
 		{
-			if (!SHARED->working.Empty())
-			{
-				Say("info we're all gonna die");
-				Sleep(1);
-			}
 			Say("readyok\n");
 		}
 		else if (strcmp(token, "stop") == 0)
@@ -8680,8 +8705,8 @@ void uci(void)
 			else if (strcmp(token, "startpos") == 0)
 			{
 				moves = saveptr;
-				get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-				SHARED->rootDepth = 0;
+				get_board(
+					"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 			}
 			else
 				goto bad_command;
@@ -8755,10 +8780,9 @@ void uci(void)
 				"id author Demichev/Falcinelli/Hyer\n"
 				"option name Hash type spin min 1 max 8388608 default 128\n"
 				"option name Threads type spin min 1 max 64 default 4\n"
-				"option name Contempt type spin min 0 max 64 default 8\n"
-				"option name Wobble type spin min 0 max 8 default 0\n"
 				"option name SyzygyPath type string default <empty>\n"
-				"option name SyzygyProbeDepth type spin min 0 max 64 default 7\n"
+				"option name SyzygyProbeDepth type spin min 0 max 64 "
+				"default 1\n"
 				"uciok\n";
 			char* dst = &reply[12];
 			for (const char* src = &Version::now[0]; *src; ++src, ++dst) *dst = *src;
@@ -9085,15 +9109,16 @@ int main(int argc, char *argv[])
 }
 #endif
 
-#pragma optimize("gy", off)
-#define Say(x)	// mute TB query
 // Fathom/Syzygy code at end where its #defines cannot screw us up
 #if TB
 #undef LOCK
 #undef UNLOCK
+#pragma optimize ("gy", off)
 #include "src\tbconfig.h"
 #include "src\tbcore.h"
 #include "src\tbprobe.c"
+#undef LOCK
+#undef UNLOCK
 #pragma optimize("", on)
 
 int GetTBMove(unsigned res, int* best_score)
@@ -9113,8 +9138,6 @@ int GetTBMove(unsigned res, int* best_score)
 	}
 	return retval;
 }
-#undef LOCK
-#undef UNLOCK
 
 unsigned tb_probe_root_fwd(
 	uint64_t _white,
