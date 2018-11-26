@@ -4,8 +4,6 @@
 //#define W32_BUILD
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
-//#define TWO_PHASE
-//#define THREE_PHASE
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
@@ -82,23 +80,6 @@ template<class C> INLINE bool Odd(const C& x)
 	return T(x & 1);
 }
 
-#ifdef TWO_PHASE
-typedef sint32 packed_t;
-
-INLINE packed_t Pack2(sint16 op, sint16 eg)
-{
-	return op + (static_cast<sint32>(eg) << 16);
-}
-INLINE packed_t Pack4(sint16 op, sint16 mid, sint16 eg, sint16 asym)
-{
-	return Pack2(op, eg);
-}
-
-INLINE sint16 Opening(packed_t x) { return static_cast<sint16>(x & 0xFFFF); }
-INLINE sint16 Middle(packed_t x) { return 0; }
-INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x >> 16) + ((x >> 15) & 1)); }
-INLINE sint16 Closed(packed_t x) { return 0; }
-#else
 typedef sint64 packed_t;
 
 constexpr packed_t Pack4(sint16 op, sint16 mid, sint16 eg, sint16 asym)
@@ -115,7 +96,6 @@ INLINE sint16 Middle(packed_t x) { return static_cast<sint16>((x >> 16) + ((x >>
 INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x >> 32) + ((x >> 31) & 1)); }
 INLINE sint16 Closed(packed_t x) { return static_cast<sint16>((x >> 48) + ((x >> 47) & 1)); }
 
-#endif
 
 
 // unsigned for king_att
@@ -414,6 +394,7 @@ struct GEvalInfo
 	const GMaterial* material;
 	packed_t score;
 	uint32 king_att[2];
+	packed_t king_att_val[2];
 	int king[2], mul;
 };
 
@@ -1565,7 +1546,8 @@ namespace Params
 		KnightOutpost,
 		KnightOutpostProtected,
 		KnightOutpostPawnAtt,
-		KnightOutpostNoMinor
+		KnightOutpostNoMinor,
+		KnightPawnSpread
 	};
 	static constexpr array<int, 20> KnightSpecial = {  // tuner: type=array, var=26, active=0
 		40, 40, 24, 0,
@@ -1582,6 +1564,7 @@ namespace Values
 	VALUE(KnightOutpostProtected);
 	VALUE(KnightOutpostPawnAtt);
 	VALUE(KnightOutpostNoMinor);
+	VALUE(KnightPawnSpread);
 #undef VALUE
 }
 
@@ -1637,6 +1620,7 @@ namespace Values
 
 static constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
+constexpr uint16 KingAttackThreshold = 48;
 
 static constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
 static constexpr array<int, 2> PushW = { 7, -9 };
@@ -4504,6 +4488,7 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	bool myN = T(head & (KingQFlag - KingNFlag));
 	bool myQ = head > KingQFlag;
 	uint16 score = UUnpack2(EI.king_att[me]);
+	score = score > KingAttackThreshold ? score - KingAttackThreshold : 0;
 	if (cnt >= 2 && T(Queen(me)))
 	{
 		score += (EI.PawnEntry->shelter[opp] * KingShelterQuad) / 64;
@@ -4537,15 +4522,15 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 12, 8, 2, -2 };
+	static constexpr array<int, 4> PHASE = { 13, 9, 2, -2 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
 	int cl = (PHASE[3] * adjusted) / 16;
 	KA_E += (adjusted - KA_E) / (++KA_N);
-	IncV(EI.score, Pack4(op, md, eg, cl));
-	EI.king_att[me] = adjusted;	// store again for later use
-}
+	EI.king_att_val[me] = Pack4(op, md, eg, cl);
+	IncV(EI.score, EI.king_att_val[me]);
+} 
 
 template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 {
@@ -4630,25 +4615,6 @@ template<bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 }
 
 
-template<class POP> void eval_unusual_material(GEvalInfo& EI)
-{
-	POP pop;
-	int wp, bp, wminor, bminor, wr, br, wq, bq;
-	wp = pop(Pawn(White));
-	bp = pop(Pawn(Black));
-	wminor = pop(Minor(White));
-	bminor = pop(Minor(Black));
-	wr = pop(Rook(White));
-	br = pop(Rook(Black));
-	wq = pop(Queen(White));
-	bq = pop(Queen(Black));
-	int phase = Min(24, (wminor + bminor) + 2 * (wr + br) + 4 * (wq + bq));
-	sint16 temp = SeeValue[WhitePawn] * (wp - bp) + SeeValue[WhiteKnight] * (wminor - bminor) + SeeValue[WhiteRook] * (wr - br) +
-		SeeValue[WhiteQueen] * (wq - bq);
-	packed_t mat_score = Pack2(temp, temp);
-	Current->score = (((Opening(mat_score + EI.score) * phase) + (Endgame(mat_score + EI.score) * (24 - phase))) / 24);
-}
-
 template<class POP, int me> int closure_x()
 {
 	POP pop;
@@ -4704,6 +4670,63 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 	eval_knights<me, POP>(EI);
 }
 
+template<class POP> struct UnpackScore_
+{
+	int clx_;
+	sint16 mat_, closed_;
+	uint8 phase_;
+	array<uint8, 2> mul_;
+	UnpackScore_(const GMaterial* material)  
+	{
+		if (material)
+		{
+			phase_ = material->phase;
+			mat_ = material->score;
+			mul_ = material->mul;
+			closed_ = material->closed;
+		}
+		else
+		{
+			POP pop;
+			int wp, bp, wminor, bminor, wr, br, wq, bq;
+			wp = pop(Pawn(White));
+			bp = pop(Pawn(Black));
+			wminor = pop(Minor(White));
+			bminor = pop(Minor(Black));
+			wr = pop(Rook(White));
+			br = pop(Rook(Black));
+			wq = pop(Queen(White));
+			bq = pop(Queen(Black));
+
+			int phase = Phase[PieceType[WhitePawn]] * (wp + bp)
+				+ Phase[PieceType[WhiteKnight]] * (wminor + bminor)
+				+ Phase[PieceType[WhiteRook]] * (wr + br)
+				+ Phase[PieceType[WhiteQueen]] * (wq + bq);
+			phase_ = Min((Max(phase - PhaseMin, 0) * MAX_PHASE) / (PhaseMax - PhaseMin), MAX_PHASE);
+			mat_ = SeeValue[WhitePawn] * (wp - bp) + SeeValue[WhiteKnight] * (wminor - bminor) + SeeValue[WhiteRook] * (wr - br) +
+				SeeValue[WhiteQueen] * (wq - bq);
+			mul_ = { 33, 33 };
+			closed_ = 0;
+		}
+		clx_ = closure<POP>(); 
+	}
+	sint16 operator()(packed_t score) const
+	{
+		int md = Middle(score), cl = Closed(score);
+		sint16 clVal = static_cast<sint16>((clx_ * (Min<int>(phase_, MIDDLE_PHASE) * cl + MIDDLE_PHASE * closed_)) / 8192);	// closure is capped at 128, phase at 64
+		if (phase_ > MIDDLE_PHASE)
+			return clVal + (Opening(score) * (phase_ - MIDDLE_PHASE) + md * (MAX_PHASE - phase_)) / PHASE_M2M;
+		else
+			return clVal + (md * phase_ + Endgame(score) * (MIDDLE_PHASE - phase_)) / MIDDLE_PHASE;
+	}
+};
+
+sint16 depreciate_katt(sint16 score, sint16 katt, sint16 katt_opp)
+{
+	static const sint16 CUT = 130 * CP_EVAL;
+	return score - min<sint16>(score - CUT, max<sint16>(katt, katt_opp / 3)) / 4;
+}
+
 template<class POP> void evaluation()
 {
 	POP pop;
@@ -4748,69 +4771,45 @@ template<class POP> void evaluation()
 	eval_passer<Black, POP>(EI);
 	eval_pieces<Black, POP>(EI);
 
-	if (Current->material & FlagUnusualMaterial)
+	UnpackScore_<POP> value(EI.material);
+	Current->score = value.mat_ + value(EI.score);
+																																		// apply contempt before drawishness
+	if (Contempt > 0)
 	{
-		eval_unusual_material<POP>(EI);
-		Current->score = (Current->score * CP_SEARCH) / CP_EVAL;
+		int maxContempt = (value.phase_ * Contempt * CP_EVAL) / 64;
+		int mySign = F(Data->turn) ? 1 : -1;
+		if (Current->score * mySign > 2 * maxContempt)
+			Current->score += mySign * maxContempt;
+		else if (Current->score * mySign > 0)
+			Current->score += Current->score / 2;
+	}
+
+	if (Current->ply >= PliesToEvalCut)
+		Current->score /= 2;
+	if (Current->score > 0)
+	{
+		//Current->score = depreciate_katt(Current->score, value(EI.king_att_val[White]), value(EI.king_att_val[Black]));
+		EI.mul = value.mul_[White];
+		if (EI.material && EI.material->eval[White] && !eval_stalemate<White>(EI))
+			EI.material->eval[White](EI, pop.Imp());
+		else if (EI.mul <= 32)
+			EI.mul = Min(EI.mul, 37 - value.clx_ / 8);
+		Current->score -= (Min<int>(Current->score, DrawCap) * EI.PawnEntry->draw[White]) / 64;
+	}
+	else if (Current->score < 0)
+	{
+		//Current->score = -depreciate_katt(-Current->score, value(EI.king_att_val[Black]), value(EI.king_att_val[White]));
+		EI.mul = value.mul_[Black];
+		if (EI.material && EI.material->eval[Black] && !eval_stalemate<Black>(EI))
+			EI.material->eval[Black](EI, pop.Imp());
+		else if (EI.mul <= 32)
+			EI.mul = Min(EI.mul, 37 - value.clx_ / 8);
+		Current->score += (Min<int>(-Current->score, DrawCap) * EI.PawnEntry->draw[Black]) / 64;
 	}
 	else
-	{
-		const uint8& phase = EI.material->phase;
-#ifdef TWO_PHASE
-		int op = Opening(EI.score), eg = Endgame(EI.score);
-		Current->score = EI.material->score;
-		Current->score += (op * phase + eg * (MAX_PHASE - phase)) / MAX_PHASE;
-#else
-		int op = Opening(EI.score), eg = Endgame(EI.score), md = Middle(EI.score), cl = Closed(EI.score);
-		Current->score = EI.material->score;
-		if (EI.material->phase > MIDDLE_PHASE)
-			Current->score += (op * (phase - MIDDLE_PHASE) + md * (MAX_PHASE - phase)) / PHASE_M2M;
-		else
-			Current->score += (md * phase + eg * (MIDDLE_PHASE - phase)) / MIDDLE_PHASE;
-#ifndef THREE_PHASE
-		int clx = closure<POP>();
-		Current->score += static_cast<sint16>((clx * (Min<int>(phase, MIDDLE_PHASE) * cl + MIDDLE_PHASE * EI.material->closed)) / 8192);	// closure is capped at 128, phase at 64
-#endif
-#endif
-																																			// apply contempt before drawishness
-		if (Contempt > 0)
-		{
-			int maxContempt = (phase * Contempt * CP_EVAL) / 64;
-			int mySign = F(Data->turn) ? 1 : -1;
-			if (Current->score * mySign > 2 * maxContempt)
-				Current->score += mySign * maxContempt;
-			else if (Current->score * mySign > 0)
-				Current->score += Current->score / 2;
-		}
+		EI.mul = Min(value.mul_[White], value.mul_[Black]);
+	Current->score = (Current->score * EI.mul * CP_SEARCH) / (32 * CP_EVAL);
 
-		if (Current->ply >= PliesToEvalCut)
-			Current->score /= 2;
-		if (Current->score > 0)
-		{
-			EI.mul = EI.material->mul[White];
-			if (EI.material->eval[White] && !eval_stalemate<White>(EI))
-				EI.material->eval[White](EI, pop.Imp());
-#ifndef THREE_PHASE
-			else if (EI.mul <= 32)
-				EI.mul = Min(EI.mul, 37 - clx / 8);
-#endif
-			Current->score -= (Min<int>(Current->score, DrawCap) * EI.PawnEntry->draw[White]) / 64;
-		}
-		else if (Current->score < 0)
-		{
-			EI.mul = EI.material->mul[Black];
-			if (EI.material->eval[Black] && !eval_stalemate<Black>(EI))
-				EI.material->eval[Black](EI, pop.Imp());
-#ifndef THREE_PHASE
-			else if (EI.mul <= 32)
-				EI.mul = Min(EI.mul, 37 - clx / 8);
-#endif
-			Current->score += (Min<int>(-Current->score, DrawCap) * EI.PawnEntry->draw[Black]) / 64;
-		}
-		else
-			EI.mul = Min(EI.material->mul[White], EI.material->mul[Black]);
-		Current->score = (Current->score * EI.mul * CP_SEARCH) / (32 * CP_EVAL);
-	}
 	if (Current->turn)
 		Current->score = -Current->score;
 	if (F(Current->capture) && T(Current->move) && F(Current->move & 0xE000) && Current > Data)
@@ -8141,7 +8140,9 @@ void send_pv(int depth, int alpha, int beta, int score)
 	snodes = nodes;
 #endif
 	if (nps)
-		nps = (snodes * 1000) / nps;
+		nps = (snodes * 1000ll) / nps;
+	else
+		nps = 12345;
 	if (score < beta)
 	{
 		if (score <= alpha)
