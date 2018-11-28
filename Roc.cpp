@@ -426,7 +426,7 @@ struct CommonData_
 	array<packed_t, 16 * 64> PstVals;
 	array<array<uint64, 64>, 16> PieceKey;
 	array<array<int, 16>, 16> MvvLva;  // [piece][capture]
-	array<int, 256> SpanWidth;
+	array<int, 256> SpanWidth, SpanGap;
 	array<array<uint64, 64>, 2> BishopForward, PAtt, PMove, PWay, PCone, PSupport;
 	array<uint64, 64> BMagic, BMagicMask, RMagic, RMagicMask;
 	array<uint64, 64> VLine, RMask, BMask, QMask, NAtt, KAtt, KAttAtt, NAttAtt, OneIn;
@@ -1547,14 +1547,16 @@ namespace Params
 		KnightOutpostProtected,
 		KnightOutpostPawnAtt,
 		KnightOutpostNoMinor,
-		KnightPawnSpread
+		KnightPawnSpread,
+		KnightPawnGap
 	};
 	static constexpr array<int, 20> KnightSpecial = {  // tuner: type=array, var=26, active=0
 		40, 40, 24, 0,
 		41, 40, 0, 0,
 		44, 44, 18, 0,
 		41, 40, 0, 0,
-		0, 6, 25, -10
+		0, 4, 15, -10,
+		0, 1, 4, 0
 	};
 }
 namespace Values
@@ -1565,6 +1567,7 @@ namespace Values
 	VALUE(KnightOutpostPawnAtt);
 	VALUE(KnightOutpostNoMinor);
 	VALUE(KnightPawnSpread);
+	VALUE(KnightPawnGap);
 #undef VALUE
 }
 
@@ -2125,8 +2128,18 @@ void init_misc(CommonData_* data)
 	for (int i = 0; i < 16; ++i)
 		data->LogDist[i] = (int)(10.0 * log(1.01 + i));
 	for (int i = 1; i < 256; ++i)
+	{
 		data->SpanWidth[i] = msb(i) - lsb(i);
-	data->SpanWidth[0] = 0;
+		int& gap = data->SpanGap[i] = 0;
+		for (int j = 0, last = 9; j < 8; ++j)
+		{
+			if (i & Bit(j))
+				last = j;
+			else
+				gap = max(gap, j - 1 - last);
+		}
+	}
+	data->SpanWidth[0] = data->SpanGap[0] = 0;
 
 	data->UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
 		0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
@@ -4475,6 +4488,11 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 					IncV(EI.score, Values::KnightOutpostNoMinor);
 			}
 		}
+		int pf = FileOcc(PawnAll());
+		int width = max(0, RO->SpanWidth[pf] - 2);
+		DecV(EI.score, Values::KnightPawnSpread * width);
+		int gap = max(0, Square(RO->SpanGap[pf]) - 3);
+		DecV(EI.score, Values::KnightPawnGap * gap);
 	}
 }
 
