@@ -6789,6 +6789,11 @@ INLINE int RazoringThreshold(int score, int depth, int height)
 	return score + shift + FutilityThreshold;
 }
 
+inline int reduction_n(int n)
+{
+	return msb(Square(Square(uint64(n)))) / 3;
+}
+
 template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 {
 	int i, value, cnt, flag, moves_to_play, score, move, ext, hash_move, do_split, sp_init, singular, played, high_depth, high_value, hash_value,
@@ -7058,7 +7063,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				}
 				if (depth >= 6)
 				{
-					int reduction = msb(cnt);
+					int reduction = reduction_n(cnt);
 					if (move == Current->ref[0] || move == Current->ref[1])
 						reduction = Max(0, reduction - 1);
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
@@ -7357,7 +7362,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			}
 			if (depth >= 6 && cnt > 3)
 			{
-				int reduction = msb(cnt);
+				int reduction = reduction_n(cnt);
 				if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 					reduction += reduction / 2;
 				new_depth = Max(3, new_depth - reduction);
@@ -7618,7 +7623,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
-			int reduction = msb(cnt) - 1;
+			int reduction = reduction_n(cnt) - 1;
 			if (move == Current->ref[0] || move == Current->ref[1])
 				reduction = Max(0, reduction - 1);
 			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
