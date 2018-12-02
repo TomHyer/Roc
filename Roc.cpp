@@ -1788,6 +1788,12 @@ template<bool me> int NBZ(const uint64& x)
 	return me ? MSBZ(x) : LSBZ(x);
 }
 
+template<int me> inline uint64 PAtts(uint64 p)
+{
+	uint64 temp = Shift<me>(p);
+	return ((temp & 0xFEFEFEFEFEFEFEFE) >> 1) | ((temp & 0x7F7F7F7F7F7F7F7F) << 1);
+}
+
 INLINE uint8 FileOcc(uint64 occ)
 {
 	uint64 t = occ;
@@ -2884,6 +2890,12 @@ template<bool me> void eval_pawns_only(GEvalInfo& EI, pop_func_t pop)
 		EI.mul = Min(EI.mul, kpkx<me>());
 		if (Piece(opp) == King(opp) && EI.mul == 32)
 			IncV(Current->score, KpkValue);
+	}
+	if (F(Current->passer))
+	{
+		int blocks = pop(FileOcc((Pawn(me) | PAtts<opp>(Pawn(opp))) & 0x0000FFFFFFFF0000));
+		if (EI.mul <= 32)
+			EI.mul = min(EI.mul, 43 - 3 * blocks);
 	}
 }
 
@@ -5281,6 +5293,13 @@ template<bool me> int extension(int pv, int move, int depth, bool* check = nullp
 		if (depth < 16)
 			return 1 + pv;
 	}
+	if (uint64 om = Major(opp))
+		if (T(King(me) & 0XFFC300000000C3FF) && depth < (Multiple(om) ? 12 : 6))
+		{
+			int kf = FileOf(lsb(King(me)));
+			if (T((PAtts<me>(Pawn(me) & RO->File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & RO->File[kf]) & Piece(me))))
+				return 1;
+		}
 
 	return 0;
 }
