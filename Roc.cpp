@@ -1128,8 +1128,8 @@ namespace Params
 		MatPawnOnly
 	};
 	static constexpr array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
-		52, 0, -52, 0,
-		40, 2, -36, 0,
+		52, 0, -52, -10,
+		40, 2, -36, -10,
 		32, 40, 48, 0,
 		16, 20, 24, 0,
 		20, 28, 36, 0,
@@ -1556,7 +1556,7 @@ namespace Params
 		44, 44, 18, 0,
 		41, 40, 0, 0,
 		0, 4, 15, -10,
-		0, 1, 4, 0
+		0, 2, 5, 0
 	};
 }
 namespace Values
@@ -3022,10 +3022,22 @@ template<bool me> void eval_knppkbx(GEvalInfo& EI, pop_func_t)
 	}
 }
 
+template<bool me> inline void check_forced_stalemate(int* mul, int kloc)
+{
+	if (F(RO->KAtt[kloc] & ~Current->att[me])
+		&& F(Shift<opp>(Pawn(opp)) & ~PieceAll()))
+		*mul -= (3 * *mul) / 4;
+}
+template<bool me> INLINE void check_forced_stalemate(int* mul)
+{
+	check_forced_stalemate<me>(mul, lsb(King(opp)));
+}
+
 template<bool me> void eval_krbkrx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Rook(me) && Single(Rook(me)) && Bishop(me) && Single(Bishop(me)) && Rook(opp) && Single(Rook(opp)));
 	EI.mul = Min(EI.mul, krbkrx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krkpx(GEvalInfo& EI, pop_func_t)
 {
@@ -3039,6 +3051,7 @@ template<bool me> void eval_krpkrx(GEvalInfo& EI, pop_func_t pop)
 	assert(Rook(me) && Single(Rook(me)) && Pawn(me) && Single(Pawn(me)) && Rook(opp) && Single(Rook(opp)));
 	int new_mul = krpkrx<me>();
 	EI.mul = (new_mul <= 32 ? Min(EI.mul, new_mul) : new_mul);
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krpkbx(GEvalInfo& EI, pop_func_t pop)
 {
@@ -3048,15 +3061,18 @@ template<bool me> void eval_krpkbx(GEvalInfo& EI, pop_func_t pop)
 template<bool me> void eval_krppkrx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, krppkrx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krppkrpx(GEvalInfo& EI, pop_func_t pop)
 {
 	eval_krppkrx<me>(EI, pop);
 	EI.mul = Min(EI.mul, krppkrpx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krpppkrppx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, krpppkrppx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 
 template<bool me> void eval_kqkpx(GEvalInfo& EI, pop_func_t pop)
@@ -3068,6 +3084,7 @@ template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 	EI.mul = Min(EI.mul, kqkrpx<me>());
 //	if (T(Minor(opp)))
 //		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
+	check_forced_stalemate<me>(&EI.mul);
 }
 
 void calc_material(int index, GMaterial& material)
@@ -3288,7 +3305,8 @@ void calc_material(int index, GMaterial& material)
 	for (int me = 0; me < 2; ++me)
 		material.mul[me] = mul[me];
 	material.score = (score * mat[score > 0 ? White : Black]) / 32;
-	material.closed = closed[White] - closed[Black]; // *mat[score > 0 ? White : Black]) / 32;
+	material.closed = Closed(special) + closed[White] - closed[Black]; // *mat[score > 0 ? White : Black]) / 32;
+
 	material.eval = { nullptr, nullptr };
 	for (int me = 0; me < 2; ++me)
 	{
@@ -4503,7 +4521,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		int pf = FileOcc(PawnAll());
 		int width = max(0, RO->SpanWidth[pf] - 2);
 		DecV(EI.score, Values::KnightPawnSpread * width);
-		int gap = max(0, Square(RO->SpanGap[pf]) - 3);
+		int gap = Square(RO->SpanGap[pf]) / pop(NonPawnKing(me));
 		DecV(EI.score, Values::KnightPawnGap * gap);
 	}
 }
