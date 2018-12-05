@@ -742,8 +742,8 @@ uint64 QMask[64];
 uint64 BMagicMask[64];
 uint64 RMagicMask[64];
 uint64 NAtt[64];
-uint64 RangeK1[64];
-uint64 RangeK2[64];
+uint64 KAtt[64];
+uint64 KAttAtt[64];
 uint64 NAttAtt[64];
 uint64 BishopForward[2][64];
 uint64 PAtt[2][64];
@@ -3339,7 +3339,7 @@ void init_misc()
 	for (int i = 0; i < 64; ++i)
 	{
 		HLine[i] = VLine[i] = NDiag[i] = SDiag[i] = RMask[i] = BMask[i] = QMask[i] = 0;
-		BMagicMask[i] = RMagicMask[i] = NAtt[i] = RangeK1[i] = RangeK2[i] = NAttAtt[i] = 0;
+		BMagicMask[i] = RMagicMask[i] = NAtt[i] = KAtt[i] = KAttAtt[i] = NAttAtt[i] = 0;
 		PAtt[0][i] = PAtt[1][i] = PMove[0][i] = PMove[1][i] = PWay[0][i] = PWay[1][i] = PCone[0][i] = PCone[1][i] 
 				= PSupport[0][i] = PSupport[1][i] = BishopForward[0][i] = BishopForward[1][i] = 0;
 		for (int j = 0; j < 64; ++j) 
@@ -3363,9 +3363,9 @@ void init_misc()
 				SDiag[i] |= u;
 			if (Dist(i, j) <= 2)
 			{
-				RangeK2[i] |= u;
+				KAttAtt[i] |= u;
 				if (Dist(i, j) <= 1)
-					RangeK1[i] |= u;
+					KAtt[i] |= u;
 				if (abs(RankOf(i) - RankOf(j)) + abs(FileOf(i) - FileOf(j)) == 3)
 					NAtt[i] |= u;
 			}
@@ -3606,13 +3606,13 @@ start:
 					{
 						if (turn == White)
 							goto set_draw;
-						else if (F(RangeK1[wk] & bwp))
+						else if (F(KAtt[wk] & bwp))
 							goto set_draw;
 					}
 					un = 0;
 					if (turn == Black)
 					{
-						u = RangeK1[bk] & (~(RangeK1[wk] | PAtt[White][wp]));
+						u = KAtt[bk] & (~(KAtt[wk] | PAtt[White][wp]));
 						if (F(u))
 							goto set_draw;
 						for (; T(u); Cut(u))
@@ -3628,7 +3628,7 @@ start:
 					}
 					else
 					{
-						for (u = RangeK1[wk] & (~(RangeK1[bk] | bwp)); T(u); Cut(u))
+						for (u = KAtt[wk] & (~(KAtt[bk] | bwp)); T(u); Cut(u))
 						{
 							to = lsb(u);
 							if (Kpk_gen[turn ^ 1][wp][to][bk] == 2)
@@ -3641,9 +3641,9 @@ start:
 						{
 							if (to >= 56)
 							{
-								if (F(RangeK1[to] & bbk))
+								if (F(KAtt[to] & bbk))
 									goto set_win;
-								if (RangeK1[to] & bwk)
+								if (KAtt[to] & bwk)
 									goto set_win;
 							}
 							else
@@ -3898,9 +3898,9 @@ template <bool me> int knpkx()
 	if (Pawn(me) & OwnLine(me, 6) & (File[0] | File[7]))
 	{
 		int sq = lsb(Pawn(me));
-		if (RangeK1[sq] & King(opp) & (OwnLine(me, 6) | OwnLine(me, 7)))
+		if (KAtt[sq] & King(opp) & (OwnLine(me, 6) | OwnLine(me, 7)))
 			return 0;
-		if (PieceAt(sq + Push[me]) == IKing[me] && (RangeK1[lsb(King(me))] && RangeK1[lsb(King(opp))] & OwnLine(me, 7)))
+		if (PieceAt(sq + Push[me]) == IKing[me] && (KAtt[lsb(King(me))] && KAtt[lsb(King(opp))] & OwnLine(me, 7)))
 			return 0;
 	}
 	else if (Pawn(me) & OwnLine(me, 5) & (File[0] | File[7]))
@@ -3908,9 +3908,9 @@ template <bool me> int knpkx()
 		int sq = lsb(Pawn(me));
 		if (PieceAt(sq + Push[me]) == IPawn[opp])
 		{
-			if (RangeK1[sq + Push[me]] & King(opp) & OwnLine(me, 7))
+			if (KAtt[sq + Push[me]] & King(opp) & OwnLine(me, 7))
 				return 0;
-			if ((RangeK1[sq + Push[me]] & RangeK1[lsb(King(opp))] & OwnLine(me, 7)) && (!(NAtt[sq + Push[me]] & Knight(me)) || Current->turn == opp))
+			if ((KAtt[sq + Push[me]] & KAtt[lsb(King(opp))] & OwnLine(me, 7)) && (!(NAtt[sq + Push[me]] & Knight(me)) || Current->turn == opp))
 				return 0;
 		}
 	}
@@ -3935,9 +3935,9 @@ template <bool me> int krpkrx()
 		int m_rook = lsb(Rook(me));
 		if (OwnRank<me>(o_king) < OwnRank<me>(m_rook) && OwnRank<me>(m_rook) < rrank && OwnRank<me>(m_king) >= rrank - 1 &&
 			OwnRank<me>(m_king) > OwnRank<me>(m_rook) &&
-			((RangeK1[m_king] & Pawn(me)) || (MY_TURN && abs(FileOf(sq) - FileOf(m_king)) <= 1 && abs(rrank - OwnRank<me>(m_king)) <= 2)))
+			((KAtt[m_king] & Pawn(me)) || (MY_TURN && abs(FileOf(sq) - FileOf(m_king)) <= 1 && abs(rrank - OwnRank<me>(m_king)) <= 2)))
 			return 127;
-		if (RangeK1[m_king] & Pawn(me))
+		if (KAtt[m_king] & Pawn(me))
 		{
 			if (rrank >= 4)
 			{
@@ -3960,7 +3960,7 @@ template <bool me> int krpkrx()
 		if (rrank <= 3)
 			mul = Min(mul, add_mat << 3);
 		if (rrank == 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5 && T(King(opp) & (OwnLine(me, 6) | OwnLine(me, 7))) &&
-			(!MY_TURN || F(PAtt[me][sq] & RookAttacks(lsb(Rook(me)), PieceAll()) & (~RangeK1[o_king]))))
+			(!MY_TURN || F(PAtt[me][sq] & RookAttacks(lsb(Rook(me)), PieceAll()) & (~KAtt[o_king]))))
 			mul = Min(mul, add_mat << 3);
 		if (rrank >= 5 && OwnRank<me>(o_rook) <= 1 && (!MY_TURN || IsCheck(me) || Dist(m_king, sq) >= 2))
 			mul = Min(mul, add_mat << 3);
@@ -3978,11 +3978,11 @@ template <bool me> int krpkrx()
 			mul = Min(mul, add_mat << 3);
 	}
 
-	if (RangeK1[o_king] & PWay[me][sq] & OwnLine(me, 7))
+	if (KAtt[o_king] & PWay[me][sq] & OwnLine(me, 7))
 	{
 		if (rrank <= 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5)
 			mul = Min(mul, add_mat << 3);
-		if (rrank == 5 && OwnRank<me>(o_rook) <= 1 && !MY_TURN || (F(RangeK1[m_king] & PAtt[me][sq] & (~RangeK1[o_king])) && (IsCheck(me) || Dist(m_king, sq) >= 2)))
+		if (rrank == 5 && OwnRank<me>(o_rook) <= 1 && !MY_TURN || (F(KAtt[m_king] & PAtt[me][sq] & (~KAtt[o_king])) && (IsCheck(me) || Dist(m_king, sq) >= 2)))
 			mul = Min(mul, add_mat << 3);
 	}
 
@@ -4025,7 +4025,7 @@ template <bool me> int krpkbx()
 
 template <bool me> int kqkp()
 {
-	if (F(RangeK1[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1) & (File[0] | File[2] | File[5] | File[7])))
+	if (F(KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1) & (File[0] | File[2] | File[5] | File[7])))
 		return 32;
 	if (PWay[opp][lsb(Pawn(opp))] & (King(me) | Queen(me)))
 		return 32;
@@ -4038,7 +4038,7 @@ template <bool me> int kqkp()
 template <bool me> int kqkrpx()
 {
 	int rsq = lsb(Rook(opp));
-	uint64 pawns = RangeK1[lsb(King(opp))] & PAtt[me][rsq] & Pawn(opp) & Interior & OwnLine(me, 6);
+	uint64 pawns = KAtt[lsb(King(opp))] & PAtt[me][rsq] & Pawn(opp) & Interior & OwnLine(me, 6);
 	if (pawns && OwnRank<me>(lsb(King(me))) <= 4)
 		return 0;
 	return 32;
@@ -4046,7 +4046,7 @@ template <bool me> int kqkrpx()
 
 template <bool me> int krkpx()
 {
-	if (T(RangeK1[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1)) & F(PWay[opp][NB<me>(Pawn(opp))] & King(me)))
+	if (T(KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1)) & F(PWay[opp][NB<me>(Pawn(opp))] & King(me)))
 		return 0;
 	return 32;
 }
@@ -4061,7 +4061,7 @@ template <bool me> int krppkrpx()
 			if (PWay[me][sq] & King(opp) & (File[0] | File[1] | File[6] | File[7]))
 			{
 				int opp_king = lsb(King(opp));
-				if (RangeK1[opp_king] & Pawn(opp))
+				if (KAtt[opp_king] & Pawn(opp))
 				{
 					int king_file = FileOf(opp_king);
 					if (!((~(File[king_file] | PIsolated[king_file])) & Pawn(me)))
@@ -4078,7 +4078,7 @@ template <bool me> int krppkrpx()
 
 template <bool me> int krpppkrppx()
 {
-	if (T(Current->passer & Pawn(me)) || F((RangeK1[lsb(Pawn(opp))] | RangeK1[msb(Pawn(opp))]) & Pawn(opp)))
+	if (T(Current->passer & Pawn(me)) || F((KAtt[lsb(Pawn(opp))] | KAtt[msb(Pawn(opp))]) & Pawn(opp)))
 		return 32;
 	if (F((~(PWay[opp][lsb(King(opp))] | PSupport[me][lsb(King(opp))])) & Pawn(me)))
 		return 0;
@@ -4138,8 +4138,8 @@ template <bool me> int kbppkbx()
 	{
 		if (T(King(opp) & LightArea) != T(Bishop(me) & LightArea))
 		{
-			if (HasBit(RangeK1[o_king] | King(opp), sq2 + Push[me]) && HasBit(BishopAttacks(o_bishop, PieceAll()), sq2 + Push[me]) &&
-				HasBit(RangeK1[o_king] | King(opp), (sq2 & 0xF8) | FileOf(sq1)) && HasBit(BishopAttacks(o_bishop, PieceAll()), (sq2 & 0xFFFFFFF8) | FileOf(sq1)))
+			if (HasBit(KAtt[o_king] | King(opp), sq2 + Push[me]) && HasBit(BishopAttacks(o_bishop, PieceAll()), sq2 + Push[me]) &&
+				HasBit(KAtt[o_king] | King(opp), (sq2 & 0xF8) | FileOf(sq1)) && HasBit(BishopAttacks(o_bishop, PieceAll()), (sq2 & 0xFFFFFFF8) | FileOf(sq1)))
 				return 0;
 		}
 	}
@@ -4176,7 +4176,7 @@ template <bool me> int krppkrx()
 
 template<bool me> bool eval_stalemate(GEvalInfo& EI)
 {
-	bool retval = (F(NonPawnKing(opp)) && Current->turn == opp && F(Current->att[me] & King(opp)) && F(RangeK1[EI.king[opp]] & (~(Current->att[me] | Piece(opp)))) &&
+	bool retval = (F(NonPawnKing(opp)) && Current->turn == opp && F(Current->att[me] & King(opp)) && F(KAtt[EI.king[opp]] & (~(Current->att[me] | Piece(opp)))) &&
 		F(Current->patt[opp] & Piece(me)) && F(Shift<opp>(Pawn(opp)) & (~EI.occ)));
 	if (retval)
 		EI.mul = 0;
@@ -4191,9 +4191,9 @@ template<bool me> void eval_pawns_only(GEvalInfo& EI, pop_func_t pop)
 
 	if (F(Pawn(me) & (~PWay[opp][sq])))
 	{
-		if ((RangeK1[sq] | Bit(sq)) & King(opp))
+		if ((KAtt[sq] | Bit(sq)) & King(opp))
 			EI.mul = 0;
-		else if ((RangeK1[sq] & RangeK1[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+		else if ((KAtt[sq] & KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
 			EI.mul = 0;
 	}
 	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~PSupport[me][sq])) &&
@@ -4213,9 +4213,9 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 	int sq = Piece(ILight[me]) ? (me ? 0 : 63) : (me ? 7 : 56);
 	if (F(Pawn(me) & (~PWay[opp][sq])))
 	{
-		if ((RangeK1[sq] | Bit(sq)) & King(opp))
+		if ((KAtt[sq] | Bit(sq)) & King(opp))
 			EI.mul = 0;
-		else if ((RangeK1[sq] & RangeK1[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+		else if ((KAtt[sq] & KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
 			EI.mul = 0;
 	}
 	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~PSupport[me][sq])) &&
@@ -4273,7 +4273,7 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 			else if (fd >= 3)
 				EI.mul = 20;
 		}
-		if ((RangeK1[EI.king[opp]] | Current->patt[opp]) & Bishop(opp))
+		if ((KAtt[EI.king[opp]] | Current->patt[opp]) & Bishop(opp))
 		{
 			uint64 push = Shift<me>(Pawn(me));
 			if (!(push & (~(Piece(opp) | Current->att[opp]))) && (King(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea)))
@@ -4281,11 +4281,11 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 				EI.mul = Min(EI.mul, 8);
 				int bsq = lsb(Bishop(opp));
 				uint64 att = BishopAttacks(bsq, EI.occ);
-				uint64 prp = (att | RangeK1[EI.king[opp]]) & Pawn(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea);
+				uint64 prp = (att | KAtt[EI.king[opp]]) & Pawn(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea);
 				uint64 patt = ShiftW<opp>(prp) | ShiftE<opp>(prp);
-				if ((RangeK1[EI.king[opp]] | patt) & Bishop(opp))
+				if ((KAtt[EI.king[opp]] | patt) & Bishop(opp))
 				{
-					uint64 double_att = (RangeK1[EI.king[opp]] & patt) | (patt & att) | (RangeK1[EI.king[opp]] & att);
+					uint64 double_att = (KAtt[EI.king[opp]] & patt) | (patt & att) | (KAtt[EI.king[opp]] & att);
 					if (!(push & (~(King(opp) | Bishop(opp) | prp | double_att))))
 					{
 						EI.mul = 0;
@@ -4330,10 +4330,22 @@ template<bool me> void eval_knppkbx(GEvalInfo& EI, pop_func_t)
 	}
 }
 
+template<bool me> inline void check_forced_stalemate(int* mul, int kloc)
+{
+	if (F(KAtt[kloc] & ~Current->att[me])
+		&& F(Shift<opp>(Pawn(opp)) & ~PieceAll()))
+		*mul -= (3 * *mul) / 4;
+}
+template<bool me> INLINE void check_forced_stalemate(int* mul)
+{
+	check_forced_stalemate<me>(mul, lsb(King(opp)));
+}
+
 template<bool me> void eval_krbkrx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Rook(me) && Single(Rook(me)) && Bishop(me) && Single(Bishop(me)) && Rook(opp) && Single(Rook(opp)));
 	EI.mul = Min(EI.mul, krbkrx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krkpx(GEvalInfo& EI, pop_func_t)
 {
@@ -4345,6 +4357,7 @@ template<bool me> void eval_krpkrx(GEvalInfo& EI, pop_func_t pop)
 	assert(Rook(me) && Single(Rook(me)) && Pawn(me) && Single(Pawn(me)) && Rook(opp) && Single(Rook(opp)));
 	int new_mul = krpkrx<me>();
 	EI.mul = (new_mul <= 32 ? Min(EI.mul, new_mul) : new_mul);
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krpkbx(GEvalInfo& EI, pop_func_t pop)
 {
@@ -4354,15 +4367,18 @@ template<bool me> void eval_krpkbx(GEvalInfo& EI, pop_func_t pop)
 template<bool me> void eval_krppkrx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, krppkrx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krppkrpx(GEvalInfo& EI, pop_func_t pop)
 {
 	eval_krppkrx<me>(EI, pop);
 	EI.mul = Min(EI.mul, krppkrpx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krpppkrppx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, krpppkrppx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 
 template<bool me> void eval_kqkpx(GEvalInfo& EI, pop_func_t pop)
@@ -4372,6 +4388,9 @@ template<bool me> void eval_kqkpx(GEvalInfo& EI, pop_func_t pop)
 template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, kqkrpx<me>());
+//	if (T(Minor(opp)))
+//		EI.mul = Min(EI.mul, OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
+	check_forced_stalemate<me>(&EI.mul);
 }
 
 
@@ -4601,7 +4620,7 @@ void calc_material(int index)
 	for (int me = 0; me < 2; ++me)
 		Material[index].mul[me] = mul[me];
 	Material[index].score = (score * mat[score > 0 ? White : Black]) / 32;
-	Material[index].closed = closed[White] - closed[Black]; // *mat[score > 0 ? White : Black]) / 32;
+	Material[index].closed = Closed(special) + closed[White] - closed[Black]; // *mat[score > 0 ? White : Black]) / 32;
 	Material[index].eval = { nullptr, nullptr };
 	for (int me = 0; me < 2; ++me)
 	{
@@ -5583,7 +5602,7 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 	}
 	if (!((kf * kr) % 7))
 	{
-		const uint64 kAdj = RangeK1[PEI.king[me]];
+		const uint64 kAdj = KAtt[PEI.king[me]];
 		// look for opp pawns restricting K mobility
 		if (PEI.patt[opp] & kAdj)
 		{
@@ -5904,7 +5923,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		score += (EI.PawnEntry->shelter[opp] * KingShelterQuad) / 64;
 		if (uint64 u = Current->att[me] & EI.area[opp] & (~Current->att[opp]))
 			score += pop(u) * KingAttackSquare;
-		if (!(RangeK1[EI.king[opp]] & (~(Piece(opp) | Current->att[me]))))
+		if (!(KAtt[EI.king[opp]] & (~(Piece(opp) | Current->att[me]))))
 			score += KingNoMoves;
 	}
 	int adjusted = ((score * KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
@@ -6092,8 +6111,8 @@ template<class POP> void evaluation()
 	EI.occ = PieceAll();
 	Current->patt[White] = ShiftW<White>(Pawn(White)) | ShiftE<White>(Pawn(White));
 	Current->patt[Black] = ShiftW<Black>(Pawn(Black)) | ShiftE<Black>(Pawn(Black));
-	EI.area[White] = (RangeK1[EI.king[White]] | King(White)) & ((~Current->patt[White]) | Current->patt[Black]);
-	EI.area[Black] = (RangeK1[EI.king[Black]] | King(Black)) & ((~Current->patt[Black]) | Current->patt[White]);
+	EI.area[White] = (KAtt[EI.king[White]] | King(White)) & ((~Current->patt[White]) | Current->patt[Black]);
+	EI.area[Black] = (KAtt[EI.king[Black]] | King(Black)) & ((~Current->patt[Black]) | Current->patt[White]);
 	Current->att[White] = Current->patt[White];
 	Current->att[Black] = Current->patt[Black];
 	Current->passer = 0;
@@ -6136,8 +6155,8 @@ template<class POP> void evaluation()
 
 	eval_king<White, POP>(EI);
 	eval_king<Black, POP>(EI);
-	Current->att[White] |= RangeK1[EI.king[White]];
-	Current->att[Black] |= RangeK1[EI.king[Black]];
+	Current->att[White] |= KAtt[EI.king[White]];
+	Current->att[Black] |= KAtt[EI.king[Black]];
 
 	eval_passer<White, POP>(EI);
 	eval_pieces<White, POP>(EI);
@@ -6346,7 +6365,7 @@ template<bool me> bool is_legal(int move)
 				return 1;
 			}
 		}
-		if (F(RangeK1[from] & u))
+		if (F(KAtt[from] & u))
 			return 0;
 		if (Current->att[opp] & u)
 			return 0;
@@ -6807,8 +6826,8 @@ template<bool me> bool see(int move, int margin, const array<uint16, 16>& mat_va
 	att |= (r_slider_att & r_area);
 	def |= (b_slider_def & b_area);
 	def |= (r_slider_def & r_area);
-	att |= RangeK1[to] & King(opp);
-	def |= RangeK1[to] & King(me) & clear;
+	att |= KAtt[to] & King(opp);
+	def |= KAtt[to] & King(me) & clear;
 	while (true)
 	{
 		if (u = (att & Pawn(opp)))
@@ -7083,7 +7102,7 @@ template <bool me> int* gen_captures(int* list)
 			list = AddCaptureP(list, IPawn[me], lsb(v), lsb(v) + PushE[me], 0);
 		for (v = ShiftE<opp>(Current->mask) & Pawn(me) & (~OwnLine(me, 6)); T(v); Cut(v)) 
 			list = AddCaptureP(list, IPawn[me], lsb(v), lsb(v) + PushW[me], 0);
-		for (v = RangeK1[lsb(King(me))] & Current->mask & (~Current->att[opp]); T(v); Cut(v)) 
+		for (v = KAtt[lsb(King(me))] & Current->mask & (~Current->att[opp]); T(v); Cut(v)) 
 			list = AddCaptureP(list, IKing[me], lsb(King(me)), lsb(v), 0);
 		for (u = Knight(me); T(u); Cut(u))
 			for (v = NAtt[lsb(u)] & Current->mask; T(v); Cut(v)) 
@@ -7134,7 +7153,7 @@ template <bool me> int* gen_evasions(int* list)
 			att |= b;
 	}
 	int att_sq = lsb(att);  // generally the only attacker
-	uint64 esc = RangeK1[king] & (~(Piece(me) | Current->att[opp])) & Current->mask;
+	uint64 esc = KAtt[king] & (~(Piece(me) | Current->att[opp])) & Current->mask;
 	if (PieceAt(att_sq) >= WhiteLight)
 		esc &= ~FullLine[king][att_sq];
 	else if (PieceAt(att_sq) >= WhiteKnight)
@@ -7327,10 +7346,10 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			list = AddHistoryP(list, IQueen[me], from, to, 0);	// RangeK1[to] & qTarget ? FlagCastling : 0);
+			list = AddHistoryP(list, IQueen[me], from, to, 0);	// KAtt[to] & qTarget ? FlagCastling : 0);
 		}
 	}
-	for (v = RangeK1[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v)) 
+	for (v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v)) 
 		list = AddHistoryP(list, IKing[me], lsb(King(me)), lsb(v), 0);
 
 	return NullTerminate(list);
@@ -7376,7 +7395,7 @@ template <bool me> int* gen_checks(int* list)
 			else if (PieceAt(from) < WhiteKing)
 				v = QueenAttacks(from, PieceAll()) & target;
 			else
-				v = RangeK1[from] & target & (~Current->att[opp]);
+				v = KAtt[from] & target & (~Current->att[opp]);
 			for (; T(v); Cut(v)) 
 				list = AddMove(list, from, lsb(v), 0, MvvLvaXrayCap(PieceAt(lsb(v))));
 		}
@@ -7387,7 +7406,7 @@ template <bool me> int* gen_checks(int* list)
 		for (v = NAtt[king] & NAtt[lsb(u)] & clear; T(v); Cut(v))
 			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
 
-	for (u = RangeK2[king] & Pawn(me) & (~OwnLine(me, 6)) & nonDiscover; T(u); Cut(u))
+	for (u = KAttAtt[king] & Pawn(me) & (~OwnLine(me, 6)) & nonDiscover; T(u); Cut(u))
 	{
 		from = lsb(u);
 		for (v = PAtt[me][from] & PAtt[opp][king] & clear & Piece(opp); T(v); Cut(v))
@@ -7406,7 +7425,7 @@ template <bool me> int* gen_checks(int* list)
 			list = AddCaptureP(list, IRook[me], lsb(u), lsb(v), 0);
 	for (u = Queen(me) & nonDiscover; T(u); Cut(u))
 	{
-		//uint64 contact = RangeK1[king];
+		//uint64 contact = KAtt[king];
 		int from = lsb(u);
 		for (v = QueenAttacks(from, PieceAll()) & (b_target | r_target); T(v); Cut(v))
 		{
@@ -7487,7 +7506,7 @@ template <bool me> int* gen_delta_moves(int margin, int* list)
 			list = AddCDeltaP(list, margin, IQueen[me], from, lsb(v), 0);
 	}
 	int from = lsb(King(me));
-	for (uint64 v = RangeK1[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
+	for (uint64 v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
 		list = AddCDeltaP(list, margin, IKing[me], from, lsb(v), 0);
 	return NullTerminate(list);
 }
