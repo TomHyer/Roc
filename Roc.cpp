@@ -4604,8 +4604,8 @@ void calc_material(int index)
 	}
 	if (bishops[White] == 1 && bishops[Black] == 1 && light[White] != light[Black])
 	{
-		mul[White] = Min(mul[White], 20 + 3 * (knights[Black] + major[Black]));
-		mul[Black] = Min(mul[Black], 20 + 3 * (knights[White] + major[White]));
+		mul[White] = Min(mul[White], 19 + 5 * knights[Black] + 2 * major[Black]);
+		mul[Black] = Min(mul[Black], 19 + 5 * knights[White] + 2 * major[White]);
 	}
 	else if (!minor[White] && !minor[Black] && major[White] == 1 && major[Black] == 1 && rooks[White] == rooks[Black])
 	{
