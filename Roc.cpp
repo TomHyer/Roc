@@ -6831,6 +6831,22 @@ inline int reduction_n(int n)
 	return msb(Square(Square(uint64(n)))) / 3;
 }
 
+template<int principal> INLINE void check_recapture(int to, int depth, int* ext)
+{
+	if (principal && F(*ext) && depth < 16 && T(PieceAt(to)))
+	{
+		if (to == To(Current->move))
+			*ext = 1;	// recapture extension
+		else if (principal)
+		{
+			if (Current - Data >= 2 && to == To((Current - 2)->move))
+				*ext = 1;
+			else if (Current - Data >= 4 && to == To((Current - 4)->move))
+				*ext = 1;
+		}
+	}
+}
+
 template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 {
 	int i, value, cnt, flag, moves_to_play, score, move, ext, hash_move, do_split, sp_init, singular, played, high_depth, high_value, hash_value,
@@ -7017,9 +7033,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 					if (singular)
 						ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
 				}
-				int to = To(move);
-				if (depth < 16 && to == To(Current->move) && T(PieceAt(to)))	// recapture extension
-					ext = Max(ext, 2);
+				check_recapture<1>(To(move), depth, &ext);
 				new_depth = depth - 2 + ext;
 				do_move<me>(move);
 				value = -scout<opp, 0>(1 - beta, new_depth,
@@ -7087,6 +7101,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		}
 		bool check;
 		ext = extension<me>(0, move, depth, &check);
+		check_recapture<0>(To(move), depth, &ext);
 
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
@@ -7331,6 +7346,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			{
 				++cnt;
 				ext = Max(pext, extension<me>(0, move, depth));
+				check_recapture<1>(To(move), depth, &ext);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -7384,6 +7400,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 		}
 		bool check;
 		ext = Max(pext, extension<me>(0, move, depth, &check));
+		check_recapture<0>(To(move), depth, &ext);
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -7573,6 +7590,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				ex_value = (singular >= 2 ? margin_two : margin_one) - 1;
 			}
 		}
+		check_recapture<1>(To(move), depth, &ext);
 		new_depth = depth - 2 + ext;
 		do_move<me>(move);
 		if (PrN > 1) 
@@ -7657,6 +7675,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			continue;
 		bool check = is_check<me>(move);
 		ext = Max(pext, extension<me>(1, move, depth));
+		check_recapture<0>(To(move), depth, &ext);
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
