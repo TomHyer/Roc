@@ -4536,7 +4536,9 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	bool myN = T(head & (KingQFlag - KingNFlag));
 	bool myQ = head > KingQFlag;
 	uint16 score = UUnpack2(EI.king_att[me]);
-	score = score > KingAttackThreshold ? score - KingAttackThreshold : 0;
+	score = score < KingAttackThreshold
+			? Square(score) / (2 * KingAttackThreshold)
+			: score - KingAttackThreshold / 2;
 	if (cnt >= 2 && T(Queen(me)))
 	{
 		score += (EI.PawnEntry->shelter[opp] * KingShelterQuad) / 64;
@@ -5311,13 +5313,14 @@ template<bool me> int extension(int pv, int move, int depth, bool* check = nullp
 		if (depth < 16)
 			return 1 + pv;
 	}
-	if (uint64 om = Major(opp))
-		if (T(King(me) & 0XFFC300000000C3FF) && depth < (Multiple(om) ? 12 : 6))
-		{
-			int kf = FileOf(lsb(King(me)));
-			if (T((PAtts<me>(Pawn(me) & RO->File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & RO->File[kf]) & Piece(me))))
-				return 1;
-		}
+	if (depth > 2)
+		if (uint64 om = Major(opp))
+			if (T(King(me) & 0XFFC300000000C3FF) && depth < (Multiple(om) ? 12 : 8))
+			{
+				int kf = FileOf(lsb(King(me)));
+				if (T((PAtts<me>(Pawn(me) & RO->File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & RO->File[kf]) & Piece(me))))
+					return 1;
+			}
 
 	return 0;
 }
@@ -6826,18 +6829,18 @@ INLINE int RazoringThreshold(int score, int depth, int height)
 	return score + shift + FutilityThreshold;
 }
 
-inline int reduction_n(int n)
+INLINE int reduction_n(int depth, int n)
 {
-	return msb(Square(Square(uint64(n)))) / 3;
+	return msb(Square(Square(Square(uint64(n))))) / (6 + depth / 10);
 }
 
 template<int principal> INLINE void check_recapture(int to, int depth, int* ext)
 {
-	if (principal && F(*ext) && depth < 16 && T(PieceAt(to)))
+	if (principal == 1 && *ext < 2 && depth < 16 && T(PieceAt(to)))
 	{
 		if (to == To(Current->move))
-			*ext = 1;	// recapture extension
-		else if (principal)
+			*ext = 2;	// recapture extension
+		else if (principal > 100)
 		{
 			if (Current - Data >= 2 && to == To((Current - 2)->move))
 				*ext = 1;
@@ -7115,7 +7118,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				}
 				if (depth >= 6)
 				{
-					int reduction = reduction_n(cnt);
+					int reduction = reduction_n(depth, cnt);
 					if (move == Current->ref[0] || move == Current->ref[1])
 						reduction = Max(0, reduction - 1);
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
@@ -7346,7 +7349,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			{
 				++cnt;
 				ext = Max(pext, extension<me>(0, move, depth));
-				check_recapture<1>(To(move), depth, &ext);
+				check_recapture<2>(To(move), depth, &ext);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -7416,7 +7419,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			}
 			if (depth >= 6 && cnt > 3)
 			{
-				int reduction = reduction_n(cnt);
+				int reduction = reduction_n(depth, cnt);
 				if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 					reduction += reduction / 2;
 				new_depth = Max(3, new_depth - reduction);
@@ -7590,7 +7593,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				ex_value = (singular >= 2 ? margin_two : margin_one) - 1;
 			}
 		}
-		check_recapture<1>(To(move), depth, &ext);
+		check_recapture<2>(To(move), depth, &ext);
 		new_depth = depth - 2 + ext;
 		do_move<me>(move);
 		if (PrN > 1) 
@@ -7679,7 +7682,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
-			int reduction = reduction_n(cnt) - 1;
+			int reduction = reduction_n(depth, cnt) - 1;
 			if (move == Current->ref[0] || move == Current->ref[1])
 				reduction = Max(0, reduction - 1);
 			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
