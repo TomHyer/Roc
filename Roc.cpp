@@ -1623,7 +1623,7 @@ namespace Values
 
 static constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
-//constexpr uint16 KingAttackThreshold = 48;
+constexpr uint16 KingAttackThreshold = 48;
 
 static constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
 static constexpr array<int, 2> PushW = { 7, -9 };
