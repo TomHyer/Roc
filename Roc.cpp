@@ -1623,7 +1623,7 @@ namespace Values
 
 static constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
-constexpr uint16 KingAttackThreshold = 48;
+//constexpr uint16 KingAttackThreshold = 48;
 
 static constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
 static constexpr array<int, 2> PushW = { 7, -9 };
@@ -4572,7 +4572,7 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 13, 9, 2, -2 };
+	static constexpr array<int, 4> PHASE = { 12, 8, 2, -2 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
