@@ -4,11 +4,13 @@
 //#define W32_BUILD
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
+//#define TWO_PHASE
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
 #define TB 1
 //#define HNI
+//#define VERBOSE
 
 #ifdef W32_BUILD
 #define NTDDI_VERSION 0x05010200
@@ -26,6 +28,8 @@
 #include <thread>
 #include <cmath>
 #include <algorithm>
+#include <chrono>
+typedef std::chrono::high_resolution_clock::time_point time_point;
 #include <windows.h>
 #undef min
 #undef max
@@ -38,7 +42,6 @@ typedef HANDLE event_t;
 
 //#include "TunerParams.inc"
 
-
 using namespace std;
 #define INLINE __forceinline
 typedef unsigned char uint8;
@@ -49,6 +52,7 @@ typedef unsigned int uint32;
 typedef int sint32;
 typedef unsigned long long uint64;
 typedef long long sint64;
+
 #define TEMPLATE_ME(f) (me ? f<1> : f<0>)
 template<class T> INLINE int Sgn(const T& x)
 {
@@ -83,6 +87,23 @@ template<class C> INLINE bool Odd(const C& x)
 	return T(x & 1);
 }
 
+#ifdef TWO_PHASE
+typedef sint32 packed_t;
+
+INLINE packed_t Pack2(sint16 op, sint16 eg)
+{
+	return op + (static_cast<sint32>(eg) << 16);
+}
+INLINE packed_t Pack4(sint16 op, sint16 mid, sint16 eg, sint16 asym)
+{
+	return Pack2(op, eg);
+}
+
+INLINE sint16 Opening(packed_t x) { return static_cast<sint16>(x & 0xFFFF); }
+INLINE sint16 Middle(packed_t x) { return 0; }
+INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x >> 16) + ((x >> 15) & 1)); }
+INLINE sint16 Closed(packed_t x) { return 0; }
+#else
 typedef sint64 packed_t;
 
 constexpr packed_t Pack4(sint16 op, sint16 mid, sint16 eg, sint16 asym)
@@ -98,6 +119,8 @@ INLINE sint16 Opening(packed_t x) { return static_cast<sint16>(x & 0xFFFF); }
 INLINE sint16 Middle(packed_t x) { return static_cast<sint16>((x >> 16) + ((x >> 15) & 1)); }
 INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x >> 32) + ((x >> 31) & 1)); }
 INLINE sint16 Closed(packed_t x) { return static_cast<sint16>((x >> 48) + ((x >> 47) & 1)); }
+
+#endif
 
 
 // unsigned for king_att
@@ -282,7 +305,10 @@ INLINE bool IsEP(uint16 move)
 }
 template<bool me> INLINE uint8 Promotion(uint16 move)
 {
-	return (me ? 1 : 0) + ((move & 0xF000) >> 12);
+	uint8 retval = (move & 0xF000) >> 12;
+	if (retval == WhiteLight && HasBit(DarkArea, To(move)))
+		retval += 2;
+	return retval + (me ? 1 : 0);
 }
 
 #ifndef W32_BUILD
@@ -368,67 +394,6 @@ struct pop1_
 };
 #endif
 
-#ifdef TB
-constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
-extern unsigned TB_LARGEST;
-bool tb_init_fwd(const char*);
-
-#define TB_CUSTOM_POP_COUNT pop1
-#define TB_CUSTOM_LSB lsb
-#define TB_CUSTOM_BSWAP32 _byteswap_ulong 
-template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
-{
-	return func(Piece(White), Piece(Black),
-		King(White) | King(Black),
-		Queen(White) | Queen(Black),
-		Rook(White) | Rook(Black),
-		Bishop(White) | Bishop(Black),
-		Knight(White) | Knight(Black),
-		Pawn(White) | Pawn(Black),
-		Current->ply,
-		Current->castle_flags,
-		Current->ep_square,
-		(me == White), std::forward<Args_>(args)...);
-}
-
-
-
-unsigned tb_probe_root_fwd(
-	uint64_t _white,
-	uint64_t _black,
-	uint64_t _kings,
-	uint64_t _queens,
-	uint64_t _rooks,
-	uint64_t _bishops,
-	uint64_t _knights,
-	uint64_t _pawns,
-	unsigned _rule50,
-	unsigned _ep,
-	bool     _turn);
-
-static inline unsigned tb_probe_root_checked(
-	uint64_t _white,
-	uint64_t _black,
-	uint64_t _kings,
-	uint64_t _queens,
-	uint64_t _rooks,
-	uint64_t _bishops,
-	uint64_t _knights,
-	uint64_t _pawns,
-	unsigned _rule50,
-	unsigned _castling,
-	unsigned _ep,
-	bool     _turn)
-{
-	if (_castling != 0)
-		return TB_RESULT_FAILED;
-	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
-}
-
-int GetTBMove(unsigned res, int* best_score);
-
-#endif
-
 constexpr int MatWQ = 1;
 constexpr int MatBQ = 3 * MatWQ;
 constexpr int MatWR = 3 * MatBQ;
@@ -452,9 +417,10 @@ struct GEvalInfo
 	GPawnEntry* PawnEntry;
 	const GMaterial* material;
 	packed_t score;
+	packed_t king_score[2];
 	uint32 king_att[2];
-	packed_t king_att_val[2];
-	int king[2], mul;
+	uint16 mul;
+	uint8 king[2];
 };
 
 // special calculators for specific material
@@ -484,7 +450,7 @@ struct CommonData_
 	array<packed_t, 16 * 64> PstVals;
 	array<array<uint64, 64>, 16> PieceKey;
 	array<array<int, 16>, 16> MvvLva;  // [piece][capture]
-	array<int, 256> SpanWidth;
+	array<int, 256> SpanWidth, SpanGap;
 	array<array<uint64, 64>, 2> BishopForward, PAtt, PMove, PWay, PCone, PSupport;
 	array<uint64, 64> BMagic, BMagicMask, RMagic, RMagicMask;
 	array<uint64, 64> VLine, RMask, BMask, QMask, NAtt, KAtt, KAttAtt, NAttAtt, OneIn;
@@ -556,7 +522,8 @@ INLINE const uint64& OwnLine(bool me, int n)
 constexpr int PliesToEvalCut = 50;	// halfway to 50-move
 constexpr int KingSafetyNoQueen = 8;	// numerator; denominator is 16
 constexpr int SeeThreshold = 40 * CP_EVAL;
-constexpr int DrawCap = 100 * CP_EVAL;
+constexpr int DrawCapConstant = 100 * CP_EVAL;
+constexpr int DrawCapLinear = 0;	// numerator; denominator is 64
 constexpr int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
 constexpr int TBMinDepth = 7;
 
@@ -581,14 +548,73 @@ constexpr int FutilityThreshold = 50 * CP_SEARCH;
 constexpr sint16 KpkValue = 300 * CP_EVAL;
 constexpr sint16 EvalValue = 30000;
 constexpr sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
+
 #if TB
 constexpr sint16 TBMateValue = 31380;
 constexpr sint16 TBCursedMateValue = 13;
 const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
 constexpr int NominalTbDepth = 33;
-inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 127); }
-#endif
+inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
 
+constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
+extern unsigned TB_LARGEST;
+bool tb_init_fwd(const char*);
+
+#define TB_CUSTOM_POP_COUNT pop1
+#define TB_CUSTOM_LSB lsb
+#define TB_CUSTOM_BSWAP32 _byteswap_ulong 
+template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
+{
+	return func(Piece(White), Piece(Black),
+		King(White) | King(Black),
+		Queen(White) | Queen(Black),
+		Rook(White) | Rook(Black),
+		Bishop(White) | Bishop(Black),
+		Knight(White) | Knight(Black),
+		Pawn(White) | Pawn(Black),
+		Current->ply,
+		Current->castle_flags,
+		Current->ep_square,
+		(me == White), std::forward<Args_>(args)...);
+}
+
+
+
+unsigned tb_probe_root_fwd(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _ep,
+	bool     _turn);
+
+static inline unsigned tb_probe_root_checked(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _castling,
+	unsigned _ep,
+	bool     _turn)
+{
+	if (_castling != 0)
+		return TB_RESULT_FAILED;
+	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
+}
+
+int GetTBMove(unsigned res, int* best_score);
+
+#endif
 
 /*
 general move:
@@ -967,7 +993,7 @@ constexpr int PonderRatio = 120;
 constexpr int MovesTg = 26;
 constexpr int InfoLag = 5000;
 constexpr int InfoDelay = 1000;
-sint64 StartTime, InfoTime, CurrTime;
+time_point StartTime, InfoTime, CurrTime;
 uint16 SMoves[256];
 
 jmp_buf Jump, ResetJump;
@@ -987,11 +1013,11 @@ INLINE int ExclDouble(int depth)
 const sint8 DistC[8] = { 3, 2, 1, 0, 0, 1, 2, 3 };
 const sint8 RankR[8] = { -3, -2, -1, 0, 1, 2, 3, 4 };
 
-constexpr uint16 SeeValue[16] = { 0, 0, 360, 360, 1300, 1300, 1300, 1300, 1300, 1300, 2040, 2040, 3900, 3900, 30000, 30000 };
-constexpr int PieceType[16] = { 0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5 };
-constexpr array<int, 5> Phase = { 0, SeeValue[4], SeeValue[6], SeeValue[10], SeeValue[12] };
-constexpr int PhaseMin = 2 * Phase[3] + Phase[1] + Phase[2];
-constexpr int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 * Phase[3] + 2 * Phase[4];
+static constexpr uint16 SeeValue[16] = { 0, 0, 360, 360, 1300, 1300, 1300, 1300, 1300, 1300, 2040, 2040, 3900, 3900, 30000, 30000 };
+static constexpr int PieceType[16] = { 0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5 };
+static constexpr array<int, 5> Phase = { 0, SeeValue[4], SeeValue[6], SeeValue[10], SeeValue[12] };
+static constexpr int PhaseMin = 2 * Phase[3] + Phase[1] + Phase[2];
+static constexpr int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 * Phase[3] + 2 * Phase[4];
 
 #define V(x) (x)
 
@@ -1060,8 +1086,8 @@ enum
 };
 
 // pawn, knight, bishop, rook, queen, pair
-constexpr array<int, 6> MatLinear = { 39, -11, -14, 86, -15, -1 };
-constexpr int MatWinnable = 160;
+static constexpr array<int, 6> MatLinear = { 39, -11, -14, 86, -15, -1 };
+static constexpr int MatWinnable = 160;
 
 // T(pawn), pawn, knight, bishop, rook, queen
 const int MatQuadMe[21] = { // tuner: type=array, var=1000, active=0
@@ -1082,7 +1108,7 @@ const int MatQuadOpp[15] = { // tuner: type=array, var=1000, active=0
 const int BishopPairQuad[9] = { // tuner: type=array, var=1000, active=0
 	-38, 164, 99, 246, -84, -57, -184, 88, -186
 };
-constexpr array<int, 6> MatClosed = { -20, 22, -33, 18, -2, 26 };
+static constexpr array<int, 6> MatClosed = { -20, 22, -33, 18, -2, 26 };
 
 namespace Params
 {
@@ -1100,22 +1126,22 @@ namespace Params
 		MatM,
 		MatPawnOnly
 	};
-	constexpr array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
+	static constexpr array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
 		52, 0, -52, 0,
 		40, 2, -36, 0,
 		32, 40, 48, 0,
 		16, 20, 24, 0,
 		20, 28, 36, 0,
 		-12, -22, -32, 0,
-		-10, 0, 34, 0,
-		6, 6, -2, 0,
+		-10, 20, 64, 0,
+		6, 21, 20, 0,
 		0, -12, -24, 0,
 		4, 8, 12, 0,
 		0, 0, 0, -100 };
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::MatSpecial, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::MatSpecial, Params::name)
 	VALUE(MatRB);
 	VALUE(MatRN);
 	VALUE(MatQRR);
@@ -1142,32 +1168,32 @@ namespace PstW
 		} op_, md_, eg_, cl_;
 	};
 
-	constexpr Weights_ Pawn = {
+	static constexpr Weights_ Pawn = {
 		{ { -48, -275, 165, 0 },{ -460, -357, -359, 437 },{ 69, -28 } },
 	{ { -85, -171, 27, 400 },{ -160, -133, 93, 1079 },{ 13, -6 } },
 	{ { -80, -41, -85, 782 },{ 336, 303, 295, 1667 },{ -35, 13 } },
 	{ { 2, 13, 11, 23 },{ 6, 14, 37, -88 },{ 14, -2 } } };
-	constexpr Weights_ Knight = {
+	static constexpr Weights_ Knight = {
 		{ { -134, 6, -12, -72 },{ -680, -343, -557, 1128 },{ -32, 14 } },
 	{ { -315, -123, -12, -90 },{ -449, -257, -390, 777 },{ -24, -3 } },
 	{ { -501, -246, -12, -107 },{ 61, -274, -357, 469 },{ -1, -16 } },
 	{ { -12, -5, -2, -22 },{ 96, 69, -64, -23 },{ -5, -8 } } };
-	constexpr Weights_ Bishop = {
+	static constexpr Weights_ Bishop = {
 		{ { -123, -62, 54, -116 },{ 24, -486, -350, -510 },{ 8, -58 } },
 	{ { -168, -49, 24, -48 },{ -323, -289, -305, -254 },{ -7, -21 } },
 	{ { -249, -33, 4, -14 },{ -529, -232, -135, 31 },{ -32, 0 } },
 	{ { 4, -10, 9, -13 },{ 91, -43, -34, 29 },{ -13, -10 } } };
-	constexpr Weights_ Rook = {
+	static constexpr Weights_ Rook = {
 		{ { -260, 12, -49, 324 },{ -777, -223, 245, 670 },{ -7, -25 } },
 	{ { -148, -88, -9, 165 },{ -448, -278, -63, 580 },{ -7, 0 } },
 	{ { 13, -149, 14, 46 },{ -153, -225, -246, 578 },{ -6, 16 } },
 	{ { 0, 8, -15, 8 },{ -32, -29, 10, -51 },{ -6, -23 } } };
-	constexpr Weights_ Queen = {
+	static constexpr Weights_ Queen = {
 		{ { -270, -18, -19, -68 },{ -520, 444, 474, -186 },{ 18, -6 } },
 	{ { -114, -209, 21, -103 },{ -224, -300, 73, 529 },{ -13, 1 } },
 	{ { 2, -341, 58, -160 },{ 40, -943, -171, 1328 },{ -34, 27 } },
 	{ { -3, -26, 9, 5 },{ -43, -18, -107, 60 },{ 5, 12 } } };
-	constexpr Weights_ King = {
+	static constexpr Weights_ King = {
 		{ { -266, -694, -12, 170 },{ 1077, 3258, 20, -186 },{ -18, 3 } },
 	{ { -284, -451, -31, 43 },{ 230, 1219, -425, 577 },{ -1, 5 } },
 	{ { -334, -157, -67, -93 },{ -510, -701, -863, 1402 },{ 37, -8 } },
@@ -1175,14 +1201,14 @@ namespace PstW
 }
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 27, 2000, 891, 89, -175, 257, 289, -47, 163 };
-constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 127, 1687, 1644, 1594, -565, -96, 437, 136, 502 };
-constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 10, -565, 248, 1251, -5, 74, 72, 45, -12 };
-constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -7, 1755, 324, -1091, -9, 78, 109, 17, -12 };
-constexpr int N_LOCUS = 22;
+static constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 27, 2000, 891, 89, -175, 257, 289, -47, 163 };
+static constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 127, 1687, 1644, 1594, -565, -96, 437, 136, 502 };
+static constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 10, -565, 248, 1251, -5, 74, 72, 45, -12 };
+static constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -7, 1755, 324, -1091, -9, 78, 109, 17, -12 };
+static constexpr int N_LOCUS = 22;
 
 // file type (3) * distance from 2d rank/open (5)
-constexpr array<int, 15> ShelterValue = {  // tuner: type=array, var=26, active=0
+static constexpr array<int, 15> ShelterValue = {  // tuner: type=array, var=26, active=0
 	8, 36, 44, 0, 0,	// h-pawns
 	48, 72, 44, 0, 8,	// g
 	96, 28, 32, 0, 0	// f
@@ -1195,7 +1221,7 @@ enum
 	StormOfValue,
 	StormOfScale
 };
-constexpr array<int, 4> ShelterMod = { 0, 0, 88, 0 };
+static constexpr array<int, 4> ShelterMod = { 0, 0, 88, 0 };
 
 enum
 {
@@ -1205,15 +1231,15 @@ enum
 	StormOpenMul,
 	StormFreeMul
 };
-constexpr array<int, 5> StormQuad = {  // tuner: type=array, var=640, active=0
+static constexpr array<int, 5> StormQuad = {  // tuner: type=array, var=640, active=0
 	504, 1312, 1852, 860, 356
 };
-constexpr array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=0
+static constexpr array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=0
 	332, 624, 1752, 1284, 48
 };
 
 // type (9: general, blocked, free, supported, protected, connected, outside, candidate, clear) * phase (4)
-constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
+static constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
 	76, 64, 52, 0,
 	84, 48, 12, 0,
 	-96, 204, 504, 0,
@@ -1223,7 +1249,7 @@ constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
 	128, 32, -64, 0,
 	52, 34, 16,  0,
 	4, 4, 4, 0 };
-constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
+static constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
 	164, 86, 8, 0,
 	444, 394, 344, 0,
 	712, 582, 452, 0,
@@ -1233,7 +1259,7 @@ constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active
 	344, 356, 368, 0,
 	108, 122, 136, 0,
 	-72, -50, -28, 0 };
-constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
+static constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
 	0, 0, 0, 0,
 	0, 0, 0, 0,
 	0, 0, 0, 0,
@@ -1244,23 +1270,23 @@ constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, act
 	0, 0, 0, 0,
 	0, 0, 0, 0 };
 // type (2: att, def) * scaling (2: linear, log) 
-constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
+static constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
 	764, 204, 332, 76
 };
-constexpr array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
+static constexpr array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
 	2536, 16, 932, 264
 };
-constexpr array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=0
+static constexpr array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=0
 	0, 0, 0, 0
 };
 enum { PasserOnePiece, PasserOpKingControl, PasserOpMinorControl, PasserOpRookBlock };
 // case(4) * phase(3 -- no opening)
-constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active=0
+static constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active=0
 	26, 52, 0
 };
 namespace Values
 {
-	constexpr packed_t PasserOpRookBlock =
+	static constexpr packed_t PasserOpRookBlock =
 		Pack4(0, Av(PasserSpecial, 3, ::PasserOpRookBlock, 0), Av(PasserSpecial, 3, ::PasserOpRookBlock, 1), Av(PasserSpecial, 3, ::PasserOpRookBlock, 2));
 }
 
@@ -1274,7 +1300,7 @@ namespace Params
 		IsolatedDoubledOpen,
 		IsolatedDoubledClosed
 	};
-	constexpr array<int, 20> Isolated = {
+	static constexpr array<int, 20> Isolated = {
 		36, 28, 19, 1,
 		40, 21, 1, 12,
 		-40, -20, -3, -3,
@@ -1283,7 +1309,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Isolated, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::Isolated, Params::name)
 	VALUE(IsolatedOpen);
 	VALUE(IsolatedClosed);
 	VALUE(IsolatedBlocked);
@@ -1300,14 +1326,14 @@ namespace Params
 		PasserTarget,
 		ChainRoot
 	};
-	constexpr array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
+	static constexpr array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
 		16, 18, 20, 0,
 		-20, -12, -4, 0,
 		36, 16, -4, 0 };
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Unprotected, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::Unprotected, Params::name)
 	VALUE(UpBlocked);
 	VALUE(PasserTarget);
 	VALUE(ChainRoot);
@@ -1321,13 +1347,13 @@ namespace Params
 		BackwardOpen,
 		BackwardClosed
 	};
-	constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
+	static constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
 		68, 54, 40, 0,
 		16, 10, 4, 0 };
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Backward, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::Backward, Params::name)
 	VALUE(BackwardOpen);
 	VALUE(BackwardClosed);
 #undef VALUE
@@ -1340,13 +1366,13 @@ namespace Params
 		DoubledOpen,
 		DoubledClosed
 	};
-	constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
+	static constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
 		12, 6, 0, 0,
 		4, 2, 0, 0 };
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Doubled, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::Doubled, Params::name)
 	VALUE(DoubledOpen);
 	VALUE(DoubledClosed);
 #undef VALUE
@@ -1367,7 +1393,7 @@ namespace Params
 		Rook7thK8th,
 		Rook7thDoubled
 	};
-	constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
+	static constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
 		32, 16, 0, 0,
 		8, 4, 0, 0,
 		44, 38, 32, 0,
@@ -1381,7 +1407,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::RookSpecial, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::RookSpecial, Params::name)
 	VALUE(RookHof);
 	VALUE(RookHofWeakPAtt);
 	VALUE(RookOf);
@@ -1407,7 +1433,7 @@ namespace Params
 		TacticalDoubleThreat,
 		TacticalUnguardedQ
 	};
-	constexpr array<int, 32> Tactical = {  // tuner: type=array, var=51, active=0
+	static constexpr array<int, 32> Tactical = {  // tuner: type=array, var=51, active=0
 		-6, 12, 23, 0,
 		-1, 10, 22, -1,
 		34, 81, 112, 5,
@@ -1419,7 +1445,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Tactical, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::Tactical, Params::name)
 	VALUE(TacticalMajorPawn);
 	VALUE(TacticalMinorPawn);
 	VALUE(TacticalMajorMinor);
@@ -1438,14 +1464,14 @@ namespace Params
 		KingDefBishop,
 		KingDefQueen
 	};
-	constexpr array<int, 12> KingDefence = {  // tuner: type=array, var=13, active=0
+	static constexpr array<int, 12> KingDefence = {  // tuner: type=array, var=13, active=0
 		8, 4, 0, 0,
 		0, 2, 4, 0,
 		16, 8, 0, 0 };
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::KingDefence, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::KingDefence, Params::name)
 	VALUE(KingDefKnight);
 	VALUE(KingDefBishop);
 	VALUE(KingDefQueen);
@@ -1461,7 +1487,7 @@ namespace Params
 		PawnBlocked,
 		PawnFileSpan
 	};
-	constexpr array<int, 16> PawnSpecial = {  // tuner: type=array, var=26, active=0
+	static constexpr array<int, 16> PawnSpecial = {  // tuner: type=array, var=26, active=0
 		44, 40, 36, 0,
 		36, 26, 16, 0,
 		0, 18, 36, 0,
@@ -1470,7 +1496,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::PawnSpecial, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::PawnSpecial, Params::name)
 	VALUE(PawnChainLinear);
 	VALUE(PawnChain);
 	VALUE(PawnBlocked);
@@ -1487,7 +1513,7 @@ namespace Params
 		BishopOppPawnBlock,
 		BishopOutpostNoMinor
 	};
-	constexpr array<int, 16> BishopSpecial = { // tuner: type=array, var=20, active=0
+	static constexpr array<int, 16> BishopSpecial = { // tuner: type=array, var=20, active=0
 		0, 6, 14, 6,
 		12, 4, 12, 0,
 		8, 10, 8, 2,
@@ -1496,7 +1522,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::BishopSpecial, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::BishopSpecial, Params::name)
 	VALUE(BishopPawnBlock);
 	VALUE(BishopOppPawnOffColor);
 	VALUE(BishopOppPawnBlock);
@@ -1511,21 +1537,28 @@ namespace Params
 		KnightOutpost,
 		KnightOutpostProtected,
 		KnightOutpostPawnAtt,
-		KnightOutpostNoMinor
+		KnightOutpostNoMinor,
+		KnightPawnSpread,
+		KnightPawnGap
 	};
-	constexpr array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
+	static constexpr array<int, 20> KnightSpecial = {  // tuner: type=array, var=26, active=0
 		40, 40, 24, 0,
 		41, 40, 0, 0,
 		44, 44, 18, 0,
-		41, 40, 0, 0 };
+		41, 40, 0, 0,
+		0, 4, 15, -10,
+		0, 2, 5, 0
+	};
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::KnightSpecial, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::KnightSpecial, Params::name)
 	VALUE(KnightOutpost);
 	VALUE(KnightOutpostProtected);
 	VALUE(KnightOutpostPawnAtt);
 	VALUE(KnightOutpostNoMinor);
+	VALUE(KnightPawnSpread);
+	VALUE(KnightPawnGap);
 #undef VALUE
 }
 
@@ -1539,7 +1572,7 @@ namespace Params
 		SelfPawnPin,
 		SelfPiecePin
 	};
-	constexpr array<int, 20> Pin = {  // tuner: type=array, var=51, active=0
+	static constexpr array<int, 20> Pin = {  // tuner: type=array, var=51, active=0
 		84, 120, 156, 0,
 		24, 172, 320, 0,
 		180, 148, 116, 0,
@@ -1548,7 +1581,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Pin, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::Pin, Params::name)
 	VALUE(WeakPin);
 	VALUE(StrongPin);
 	VALUE(ThreatPin);
@@ -1565,43 +1598,42 @@ namespace Params
 		RKingRay,
 		BKingRay
 	};
-	constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
+	static constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 		17, 26, 33, -2,
 		-14, 15, 42, 0,
 		43, 14, -9, -1 };
 }
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::KingRay, Params::name)
+#define VALUE(name) static constexpr packed_t name = Ca4(Params::KingRay, Params::name)
 	VALUE(QKingRay);
 	VALUE(RKingRay);
 	VALUE(BKingRay);
 #undef VALUE
 }
 
-constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
+static constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
-
-constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
-constexpr array<int, 2> PushW = { 7, -9 };
-constexpr array<int, 2> Push = { 8, -8 };
-constexpr array<int, 2> PushE = { 9, -7 };
-
-constexpr uint16 KingNFlag = 64, KingQFlag = KingNFlag << 2;
-constexpr uint32 KingNAttack1 = UPack(KingNFlag + 1, KingAttackWeight[0]);
-constexpr uint32 KingNAttack = UPack(KingNFlag + 2, KingAttackWeight[1]);
-constexpr uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
-constexpr uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
-constexpr uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
-constexpr uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
-constexpr uint32 KingQAttack1 = UPack(KingQFlag + 1, KingAttackWeight[6]);
-constexpr uint32 KingQAttack = UPack(KingQFlag + 2, KingAttackWeight[7]);
-constexpr uint32 KingPAttack = UPack(2, 0);
-constexpr uint32 KingAttack = UPack(1, 0);
-constexpr uint32 KingAttackSquare = KingAttackWeight[8];
-constexpr uint32 KingNoMoves = KingAttackWeight[9];
-constexpr uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
 constexpr uint16 KingAttackThreshold = 48;
+
+static constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
+static constexpr array<int, 2> PushW = { 7, -9 };
+static constexpr array<int, 2> Push = { 8, -8 };
+static constexpr array<int, 2> PushE = { 9, -7 };
+
+static constexpr uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
+static constexpr uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
+static constexpr uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
+static constexpr uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
+static constexpr uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
+static constexpr uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
+static constexpr uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
+static constexpr uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
+static constexpr uint32 KingPAttack = UPack(2, 0);
+static constexpr uint32 KingAttack = UPack(1, 0);
+static constexpr uint32 KingAttackSquare = KingAttackWeight[8];
+static constexpr uint32 KingNoMoves = KingAttackWeight[9];
+static constexpr uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
 
 template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 {
@@ -1610,19 +1642,19 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-constexpr array<uint16, 16> XKingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
+static constexpr array<uint16, 16> XKingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
 
 // tuner: stop
 
 // END EVAL WEIGHTS
-
-uint64 get_time()
+time_point now()
 {
-#ifdef W32_BUILD
-	return GetTickCount();
-#else
-	return GetTickCount64();
-#endif
+	return std::chrono::high_resolution_clock::now();
+}
+uint32 millisecs(const time_point& t1, const time_point& t2)
+{
+	auto time_span = std::chrono::duration_cast<std::chrono::duration<double>>(t2 - t1);
+	return static_cast<uint32>(fabs(time_span.count()) * 1000.0);
 }
 
 #define log_msg(...)
@@ -2015,24 +2047,8 @@ struct WorkerList_
 		for (int jj = 0; jj <= maxNumThreads; ++jj)
 			vals_[jj] = { jj, jj };
 	}
-	void Insert(int iw)
-	{
-		assert(iw >= 0 && iw < maxNumThreads);
-		assert(vals_[iw].pvs_ == iw && vals_[iw].next_ == iw);	// double insertion
-		int last = vals_[maxNumThreads].pvs_;
-		vals_[iw].pvs_ = last;
-		vals_[iw].next_ = maxNumThreads;
-		vals_[last].next_ = iw;
-		vals_[maxNumThreads].pvs_ = iw;
-	}
-	void Remove(int iw)
-	{
-		assert(iw >= 0 && iw < maxNumThreads);
-		assert(vals_[iw].pvs_ != iw && vals_[iw].next_ != iw);	// double deletion
-		vals_[vals_[iw].pvs_].next_ = vals_[iw].next_;
-		vals_[vals_[iw].next_].pvs_ = vals_[iw].pvs_;
-		vals_[iw].pvs_ = vals_[iw].next_ = iw;
-	}
+	void Insert(int iw);
+	void Remove(int iw);
 	bool Empty() const
 	{
 		return vals_[maxNumThreads].pvs_ == maxNumThreads;
@@ -2042,26 +2058,26 @@ struct WorkerList_
 struct SharedInfo_
 {
 	WorkerList_ working;
-	bool stopAll;
-	uint16_t date;
 	Progress_ rootProgress;
 	mutex_t mutex = NULL;
 	mutex_t outMutex = NULL;
 	event_t goEvent = NULL;
 	int rootDepth;
 	int depthLimit;
-	uint64_t startTime;
+	time_point startTime;
 	uint64_t softTimeLimit;
 	uint64_t hardTimeLimit;
-	volatile bool ponder;
 	GBoard rootBoard;
 	GData rootData;
-	unsigned rootSp;
 	struct {
 		int depth, value, move, worker;
 		bool failLow;
 	} best;
 	uint64_t rootStack[1024];
+	unsigned rootSp;
+	bool stopAll;
+	uint16_t date;
+	volatile bool ponder;
 };
 
 SharedInfo_* SHARED = 0;
@@ -2121,6 +2137,37 @@ void Say(const string& what)
 	if (SHARED)
 		mutex_unlock0(&SHARED->outMutex);
 }
+#ifdef VERBOSE
+#define VSAY Say
+static int debug_loc = 0;
+#define HERE debug_loc = __LINE__;
+#else
+#define VSAY(x)
+#define HERE
+#endif
+
+void WorkerList_::Insert(int iw)
+{
+	assert(iw >= 0 && iw < maxNumThreads);
+	assert(vals_[iw].pvs_ == iw && vals_[iw].next_ == iw);	// double insertion
+	VSAY("Adding worker " + Str(iw) + "\n");
+	int last = vals_[maxNumThreads].pvs_;
+	vals_[iw].pvs_ = last;
+	vals_[iw].next_ = maxNumThreads;
+	vals_[last].next_ = iw;
+	vals_[maxNumThreads].pvs_ = iw;
+}
+void WorkerList_::Remove(int iw)
+{
+	assert(iw >= 0 && iw < maxNumThreads);
+	assert(vals_[iw].pvs_ != iw && vals_[iw].next_ != iw);	// double deletion
+	VSAY("Removing worker " + Str(iw) + "\n");
+	vals_[vals_[iw].pvs_].next_ = vals_[iw].next_;
+	vals_[vals_[iw].next_].pvs_ = vals_[iw].pvs_;
+	vals_[iw].pvs_ = vals_[iw].next_ = iw;
+	//if (Empty()) VSAY("No more workers\n");
+}
+
 
 GEntry* HASH = 0;
 GPVEntry* PVHASH = 0;
@@ -2192,41 +2239,26 @@ template<bool me> int NBZ(const uint64& x)
 	return me ? MSBZ(x) : LSBZ(x);
 }
 
-INLINE int FileSpan(uint64* occ)
+template<int me> inline uint64 PAtts(uint64 p)
 {
-	*occ |= *occ >> 32;
-	*occ |= *occ >> 16;
-	*occ |= *occ >> 8;
-	*occ &= 0xFF;	// now it is the file population
-	return RO->SpanWidth[static_cast<size_t>(*occ)];
+	uint64 temp = Shift<me>(p);
+	return ((temp & 0xFEFEFEFEFEFEFEFE) >> 1) | ((temp & 0x7F7F7F7F7F7F7F7F) << 1);
 }
+
+INLINE uint8 FileOcc(uint64 occ)
+{
+	uint64 t = occ;
+	t |= t >> 32;
+	t |= t >> 16;
+	t |= t >> 8;
+	return static_cast<uint8>(t & 0xFF);
+}
+
 INLINE int FileSpan(const uint64& occ)
 {
-	uint64 temp = occ;
-	return FileSpan(&temp);
+	return RO->SpanWidth[FileOcc(occ)];
 }
 
-#if TB_SEAGULL
-#include "tbcore.h"
-#include "tbprobe.h"
-#include "tbcore.cpp"
-//#include "tbprobe.cpp"
-
-template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
-{
-	return func(Piece(White), Piece(Black),
-		King(White) | King(Black),
-		Queen(White) | Queen(Black),
-		Rook(White) | Rook(Black),
-		Bishop(White) | Bishop(Black),
-		Knight(White) | Knight(Black),
-		Pawn(White) | Pawn(Black),
-		Current->ply,
-		Current->castle_flags,
-		Current->ep_square,
-		(me == White), std::forward<Args_>(args)...);
-}
-#endif
 
 bool IsIllegal(bool me, int move)
 {
@@ -2546,8 +2578,18 @@ void init_misc(CommonData_* data)
 	for (int i = 0; i < 16; ++i)
 		data->LogDist[i] = (int)(10.0 * log(1.01 + i));
 	for (int i = 1; i < 256; ++i)
-		data->SpanWidth[i] = 1 + msb(i) - lsb(i);
-	data->SpanWidth[0] = 0;
+	{
+		data->SpanWidth[i] = msb(i) - lsb(i);
+		int& gap = data->SpanGap[i] = 0;
+		for (int j = 0, last = 9; j < 8; ++j)
+		{
+			if (i & Bit(j))
+				last = j;
+			else
+				gap = max(gap, j - 1 - last);
+		}
+	}
+	data->SpanWidth[0] = data->SpanGap[0] = 0;
 
 	data->UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
 		0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
@@ -2908,6 +2950,15 @@ template<int N> array<packed_t, N / 4> PackAll(const array<int, N>& src)
 	return dst;
 }
 
+uint64 within(int loc, int dist)
+{
+	uint64 retval = 0ull;
+	for (int i = 0; i < 64; ++i)
+		if (Dist(i, loc) <= dist)
+			retval |= Bit(i);
+	return retval;
+}
+
 void init_eval(CommonData_* data)
 {
 	init_mobility(MobCoeffsKnight, &data->MobKnight);
@@ -2916,7 +2967,7 @@ void init_eval(CommonData_* data)
 	init_mobility(MobCoeffsQueen, &data->MobQueen);
 	for (int i = 0; i < 64; ++i)
 	{
-		data->KingFrontal[i] = make_klocus(i, 1.0, -0.25);
+		data->KingFrontal[i] = make_klocus(i, 1.0, -0.25) & within(i, 3);
 		data->KingFlank[i] = make_klocus(i, 0.0, -0.75);
 	}
 
@@ -2968,21 +3019,21 @@ void init_eval(CommonData_* data)
 
 // all these special-purpose endgame evaluators
 
-template<bool me> int krbkrx()
+template<bool me> uint16 krbkrx()
 {
 	if (King(opp) & Interior)
 		return 1;
 	return 16;
 }
 
-template<bool me> int kpkx()
+template<bool me> uint16 kpkx()
 {
 	uint64 u = me == White ? RO->Kpk[Current->turn][lsb(Pawn(White))][lsb(King(White))] & Bit(lsb(King(Black)))
 		: RO->Kpk[Current->turn ^ 1][63 - lsb(Pawn(Black))][63 - lsb(King(Black))] & Bit(63 - lsb(King(White)));
 	return T(u) ? 32 : T(Piece(opp) ^ King(opp));
 }
 
-template<bool me> int knpkx()
+template<bool me> uint16 knpkx()
 {
 	if (Pawn(me) & OwnLine(me, 6) & (RO->File[0] | RO->File[7]))
 	{
@@ -3006,7 +3057,7 @@ template<bool me> int knpkx()
 	return 32;
 }
 
-template<bool me> int krpkrx()
+template<bool me> uint16 krpkrx()
 {
 	int mul = 32;
 	int sq = lsb(Pawn(me));
@@ -3090,7 +3141,7 @@ template<bool me> int krpkrx()
 	return mul;
 }
 
-template<bool me> int krpkbx()
+template<bool me> uint16 krpkbx()
 {
 	if (!(Pawn(me) & OwnLine(me, 5)))
 		return 32;
@@ -3112,7 +3163,7 @@ template<bool me> int krpkbx()
 	return 32;
 }
 
-template<bool me> int kqkp()
+template<bool me> uint16 kqkp()
 {
 	if (F(RO->KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1) & (RO->File[0] | RO->File[2] | RO->File[5] | RO->File[7])))
 		return 32;
@@ -3124,7 +3175,7 @@ template<bool me> int kqkp()
 		return 4;
 }
 
-template<bool me> int kqkrpx()
+template<bool me> uint16 kqkrpx()
 {
 	int rsq = lsb(Rook(opp));
 	uint64 pawns = RO->KAtt[lsb(King(opp))] & RO->PAtt[me][rsq] & Pawn(opp) & Interior & OwnLine(me, 6);
@@ -3133,14 +3184,14 @@ template<bool me> int kqkrpx()
 	return 32;
 }
 
-template<bool me> int krkpx()
+template<bool me> uint16 krkpx()
 {
 	if (T(RO->KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1)) & F(RO->PWay[opp][NB<me>(Pawn(opp))] & King(me)))
 		return 0;
 	return 32;
 }
 
-template<bool me> int krppkrpx()
+template<bool me> uint16 krppkrpx()
 {
 	if (Current->passer & Pawn(me))
 	{
@@ -3165,7 +3216,7 @@ template<bool me> int krppkrpx()
 	return 32;
 }
 
-template<bool me> int krpppkrppx()
+template<bool me> uint16 krpppkrppx()
 {
 	if (T(Current->passer & Pawn(me)) || F((RO->KAtt[lsb(Pawn(opp))] | RO->KAtt[msb(Pawn(opp))]) & Pawn(opp)))
 		return 32;
@@ -3174,7 +3225,7 @@ template<bool me> int krpppkrppx()
 	return 32;
 }
 
-template<bool me> int kbpkbx()
+template<bool me> uint16 kbpkbx()
 {
 	int sq = lsb(Pawn(me));
 	uint64 u;
@@ -3197,7 +3248,7 @@ template<bool me> int kbpkbx()
 	return 32;
 }
 
-template<bool me> int kbpknx()
+template<bool me> uint16 kbpknx()
 {
 	uint64 u;
 	if (T(RO->PWay[me][lsb(Pawn(me))] & King(opp)) && T(King(opp) & LightArea) != T(Bishop(me) & LightArea))
@@ -3209,7 +3260,7 @@ template<bool me> int kbpknx()
 	return 32;
 }
 
-template<bool me> int kbppkbx()
+template<bool me> uint16 kbppkbx()
 {
 	int sq1 = NB<me>(Pawn(me));
 	int sq2 = NB<opp>(Pawn(me));
@@ -3235,7 +3286,7 @@ template<bool me> int kbppkbx()
 	return 32;
 }
 
-template<bool me> int krppkrx()
+template<bool me> uint16 krppkrx()
 {
 	int sq1 = NB<me>(Pawn(me));	// trailing pawn
 	int sq2 = NB<opp>(Pawn(me));	// leading pawn
@@ -3271,27 +3322,7 @@ template<bool me> bool eval_stalemate(GEvalInfo& EI)
 	return retval;
 }
 
-template<bool me> void eval_single_pawn(GEvalInfo& EI, pop_func_t pop)
-{
-	int kOpp = EI.king[opp];
-	int sq = FileOf(kOpp) <= 3 ? (me ? 0 : 56) : (me ? 7 : 63);
-
-	if (T(Pawn(me) & RO->PWay[opp][sq]))
-	{
-		if ((RO->KAtt[sq] | Bit(sq)) & King(opp))
-			EI.mul = 0;
-		else if ((RO->KAtt[sq] & RO->KAtt[kOpp] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
-			EI.mul = 0;
-	}
-	else if ((King(opp) & (OwnLine(me, 6) | OwnLine(me, 7))) && T(Pawn(me) & RO->PSupport[me][sq]) &&
-		(Pawn(me) & OwnLine(me, 5) & Shift<opp>(Pawn(opp))))
-		EI.mul = 0;
-	EI.mul = Min(EI.mul, kpkx<me>());
-	if (Piece(opp) == King(opp) && EI.mul == 32)
-		IncV(Current->score, KpkValue);
-}
-
-template<bool me> void eval_plural_pawns(GEvalInfo& EI, pop_func_t pop)
+template<bool me> void eval_pawns_only(GEvalInfo& EI, pop_func_t pop)
 {
 	int number = pop(Pawn(me));
 	int kOpp = lsb(King(opp));
@@ -3301,20 +3332,17 @@ template<bool me> void eval_plural_pawns(GEvalInfo& EI, pop_func_t pop)
 	{
 		if ((RO->KAtt[sq] | Bit(sq)) & King(opp))
 			EI.mul = 0;
-		else if ((RO->KAtt[sq] & RO->KAtt[kOpp] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+		else if ((RO->KAtt[sq] & RO->KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
 			EI.mul = 0;
 	}
-	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
+	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
 		(Pawn(me) & OwnLine(me, 5) & Shift<opp>(Pawn(opp))))
 		EI.mul = 0;
-	if (number - pop(Pawn(opp)) == 1)
+	if (number == 1)
 	{
-		uint64 occ = Pawn(me);
-		occ |= occ >> 32;
-		occ |= occ >> 16;
-		occ |= occ >> 8;	// now low bits are file occupancy
-		if (F(occ & (occ >> 1)))	// all isolated pawns
-			EI.mul = min(EI.mul, 35 - 7 * number);
+		EI.mul = Min(EI.mul, kpkx<me>());
+		if (Piece(opp) == King(opp) && EI.mul == 32)
+			IncV(Current->score, KpkValue);
 	}
 }
 
@@ -3389,7 +3417,7 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 			uint64 push = Shift<me>(Pawn(me));
 			if (!(push & (~(Piece(opp) | Current->att[opp]))) && (King(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea)))
 			{
-				EI.mul = Min(EI.mul, 8);
+				EI.mul = Min<uint16>(EI.mul, 8);
 				int bsq = lsb(Bishop(opp));
 				uint64 att = BishopAttacks(bsq, EI.occ);
 				uint64 prp = (att | RO->KAtt[EI.king[opp]]) & Pawn(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea);
@@ -3431,20 +3459,32 @@ template<bool me> void eval_knppkbx(GEvalInfo& EI, pop_func_t)
 	{
 		uint64 back = RO->Forward[opp][RankOf(lsb(King(opp)))];
 		if (T(back & Pawn(me)))
-			EI.mul = Min(EI.mul, T(King(me) & AB & ~back) ? 24 : 8);
+			EI.mul = Min<uint16>(EI.mul, T(King(me) & AB & ~back) ? 24 : 8);
 	}
 	if (F(Pawn(me) & ~GH) && T(King(opp) & FGH))
 	{
 		uint64 back = RO->Forward[opp][RankOf(lsb(King(opp)))];
 		if (T(back & Pawn(me)))
-			EI.mul = Min(EI.mul, T(King(me) & GH & ~back) ? 24 : 8);
+			EI.mul = Min<uint16>(EI.mul, T(King(me) & GH & ~back) ? 24 : 8);
 	}
+}
+
+template<bool me> inline void check_forced_stalemate(uint16* mul, int kloc)
+{
+	if (F(RO->KAtt[kloc] & ~Current->att[me])
+		&& F(Shift<opp>(Pawn(opp)) & ~PieceAll()))
+		*mul -= (3 * *mul) / 4;
+}
+template<bool me> INLINE void check_forced_stalemate(uint16* mul)
+{
+	check_forced_stalemate<me>(mul, lsb(King(opp)));
 }
 
 template<bool me> void eval_krbkrx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Rook(me) && Single(Rook(me)) && Bishop(me) && Single(Bishop(me)) && Rook(opp) && Single(Rook(opp)));
 	EI.mul = Min(EI.mul, krbkrx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krkpx(GEvalInfo& EI, pop_func_t)
 {
@@ -3456,8 +3496,9 @@ template<bool me> void eval_krkpx(GEvalInfo& EI, pop_func_t)
 template<bool me> void eval_krpkrx(GEvalInfo& EI, pop_func_t pop)
 {
 	assert(Rook(me) && Single(Rook(me)) && Pawn(me) && Single(Pawn(me)) && Rook(opp) && Single(Rook(opp)));
-	int new_mul = krpkrx<me>();
+	uint16 new_mul = krpkrx<me>();
 	EI.mul = (new_mul <= 32 ? Min(EI.mul, new_mul) : new_mul);
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krpkbx(GEvalInfo& EI, pop_func_t pop)
 {
@@ -3467,15 +3508,18 @@ template<bool me> void eval_krpkbx(GEvalInfo& EI, pop_func_t pop)
 template<bool me> void eval_krppkrx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, krppkrx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krppkrpx(GEvalInfo& EI, pop_func_t pop)
 {
 	eval_krppkrx<me>(EI, pop);
 	EI.mul = Min(EI.mul, krppkrpx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 template<bool me> void eval_krpppkrppx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, krpppkrppx<me>());
+	check_forced_stalemate<me>(&EI.mul);
 }
 
 template<bool me> void eval_kqkpx(GEvalInfo& EI, pop_func_t pop)
@@ -3487,6 +3531,7 @@ template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 	EI.mul = Min(EI.mul, kqkrpx<me>());
 	//	if (T(Minor(opp)))
 	//		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
+	check_forced_stalemate<me>(&EI.mul);
 }
 
 
@@ -3692,8 +3737,8 @@ void calc_material(int index, GMaterial& material)
 	}
 	if (bishops[White] == 1 && bishops[Black] == 1 && light[White] != light[Black])
 	{
-		mul[White] = Min(mul[White], 20 + 3 * (knights[Black] + major[Black]));
-		mul[Black] = Min(mul[Black], 20 + 3 * (knights[White] + major[White]));
+		mul[White] = Min(mul[White], 19 + 5 * knights[Black] + 2 * major[Black]);
+		mul[Black] = Min(mul[Black], 19 + 5 * knights[White] + 2 * major[White]);
 	}
 	else if (!minor[White] && !minor[Black] && major[White] == 1 && major[Black] == 1 && rooks[White] == rooks[Black])
 	{
@@ -3713,7 +3758,7 @@ void calc_material(int index, GMaterial& material)
 	for (int me = 0; me < 2; ++me)
 	{
 		if (F(major[me] + minor[me]))
-			material.eval[me] = pawns[me] > 1 ? TEMPLATE_ME(eval_plural_pawns) : TEMPLATE_ME(eval_single_pawn);
+			material.eval[me] = TEMPLATE_ME(eval_pawns_only);
 		else if (F(major[me]) && minor[me] == 1)
 		{
 			if (bishops[me])
@@ -3952,11 +3997,11 @@ static void emergency_stop(void)
 void wait_for_stop()
 {
 	const uint64_t maxStopTime = 300;       // Max 300ms to stop all threads;
-	uint64_t stopTime = get_time(), currTime = stopTime;
+	auto stopTime = now(), currTime = stopTime;
 	while (true)
 	{
 		Sleep(1);
-		currTime = get_time();
+		currTime = now();
 		LOCK_SHARED;
 		if (SHARED->working.Empty())
 			break;	// we are done
@@ -3987,9 +4032,9 @@ static void go()
 		if (res != TB_RESULT_FAILED)
 		{
 			int bestScore;
-			int bestMove = GetTBMove(res, &bestScore);
+			int best_move = GetTBMove(res, &bestScore);
 			char movStr[16];
-			move_to_string(bestMove, movStr);
+			move_to_string(best_move, movStr);
 			Say("info depth 1 seldepth 1 score cp " + Str(bestScore / CP_SEARCH) + " nodes 1 tbhits 1 pv " + string(movStr) + "\n");
 			Say("bestmove " + string(movStr) + "\n");
 			return;
@@ -4113,8 +4158,8 @@ void setup_board()
 			Current->pst += Pst(PieceAt(i), i);
 		}
 	}
-	if (popcnt(Piece(WhiteKnight)) > 2 || Multiple(Piece(WhiteLight)) || Multiple(Piece(WhiteDark)) || popcnt(Piece(WhiteRook)) > 2 || popcnt(Piece(WhiteQueen)) > 2 ||
-		popcnt(Piece(BlackKnight)) > 2 || Multiple(Piece(BlackLight)) || Multiple(Piece(BlackDark)) || popcnt(Piece(BlackRook)) > 2 || popcnt(Piece(BlackQueen)) > 2)
+	if (popcnt(Piece(WhiteKnight)) > 2 || popcnt(Piece(WhiteLight)) > 1 || popcnt(Piece(WhiteDark)) > 1 || popcnt(Piece(WhiteRook)) > 2 || popcnt(Piece(WhiteQueen)) > 2 ||
+		popcnt(Piece(BlackKnight)) > 2 || popcnt(Piece(BlackLight)) > 1 || popcnt(Piece(BlackDark)) > 1 || popcnt(Piece(BlackRook)) > 2 || popcnt(Piece(BlackQueen)) > 2)
 		Current->material |= FlagUnusualMaterial;
 	Current->capture = 0;
 	for (int ik = 1; ik <= N_KILLER; ++ik) Current->killer[ik] = 0;
@@ -4291,7 +4336,8 @@ template<bool me> void do_move(int move)
 		if (T(Current->material & FlagUnusualMaterial) && capture >= WhiteKnight)
 		{
 			if (popcnt(Piece(WhiteQueen)) <= 2 && popcnt(Piece(BlackQueen)) <= 2 && popcnt(Piece(WhiteLight)) <= 1 && popcnt(Piece(BlackLight)) <= 1 &&
-				popcnt(Piece(WhiteKnight)) <= 2 && popcnt(Piece(BlackKnight)) <= 2 && popcnt(Piece(WhiteRook)) <= 2 && popcnt(Piece(BlackRook)) <= 2)
+				popcnt(Piece(WhiteDark)) <= 1 && popcnt(Piece(BlackDark)) <= 1 && popcnt(Piece(WhiteKnight)) <= 2 && popcnt(Piece(BlackKnight)) <= 2 && 
+				popcnt(Piece(WhiteRook)) <= 2 && popcnt(Piece(BlackRook)) <= 2)
 				Next->material ^= FlagUnusualMaterial;
 		}
 		if (piece == IPawn[me])
@@ -4808,8 +4854,9 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 		if (uint64 a = att & EI.area[opp])
 		{
 			EI.king_att[me] += Single(a) ? KingQAttack1 : KingQAttack;
-			for (uint64 v = att & EI.area[opp]; T(v); Cut(v))
-				if (RO->FullLine[sq][lsb(v)] & att & ((Rook(me) & RO->RMask[sq]) | (Bishop(me) & RO->BMask[sq])))
+			uint64 b = att & ((Rook(me) & RO->RMask[sq]) | (Bishop(me) & RO->BMask[sq]));
+			for (uint64 v = a; T(v); Cut(v))
+				if (RO->FullLine[sq][lsb(v)] & b)
 					EI.king_att[me]++;
 		}
 		uint64 control = EI.free[me];
@@ -5052,18 +5099,19 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 					IncV(EI.score, Values::KnightOutpostNoMinor);
 			}
 		}
+		int pf = FileOcc(PawnAll());
+		int width = max(0, RO->SpanWidth[pf] - 2);
+		DecV(EI.score, Values::KnightPawnSpread * width);
+		int gap = Square(RO->SpanGap[pf]) / pop(NonPawnKing(me));
+		DecV(EI.score, Values::KnightPawnGap * gap);
 	}
 }
 
 template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	POP pop;
-	uint16 head = UUnpack1(EI.king_att[me]);
-	uint16 cnt = min<uint16>(15, head & (KingNFlag - 1));
-	bool myN = T(head & (KingQFlag - KingNFlag));
-	bool myQ = head > KingQFlag;
+	uint16 cnt = Min<uint16>(15, UUnpack1(EI.king_att[me]));
 	uint16 score = UUnpack2(EI.king_att[me]);
-	score = score > KingAttackThreshold ? score - KingAttackThreshold : 0;
 	if (cnt >= 2 && T(Queen(me)))
 	{
 		score += (EI.PawnEntry->shelter[opp] * KingShelterQuad) / 64;
@@ -5072,19 +5120,16 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		if (!(RO->KAtt[EI.king[opp]] & (~(Piece(opp) | Current->att[me]))))
 			score += KingNoMoves;
 	}
-
+	score = score < KingAttackThreshold
+			? Square(score) / (2 * KingAttackThreshold)
+			: score - KingAttackThreshold / 2;
 	int adjusted = ((score * RO->KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
-	if (myN && (myQ || cnt > 6))
-		adjusted += adjusted / 3;
-
 	int kf = FileOf(EI.king[opp]);
-	if (kf > 3)
-		kf = 7 - kf;
 	adjusted = (adjusted * RO->KingCenterScale[kf]) / 64;
 	if (!Queen(me))
 		adjusted = (adjusted * KingSafetyNoQueen) / 16;
 	// add a correction for defense-in-depth
-	if (adjusted > 1)
+	if (adjusted > 10)
 	{
 		uint64 holes = RO->KingFrontal[EI.king[opp]] & ~Current->att[opp];
 		int nHoles = pop(holes);
@@ -5094,16 +5139,16 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		uint64 awol = personnel ^ guards;
 		int nGuards = pop(guards) + pop(guards & Queen(opp));
 		int nAwol = pop(awol) + pop(awol & Queen(opp));
-		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
+		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	constexpr array<int, 4> PHASE = { 13, 9, 2, -2 };
+	static constexpr array<int, 4> PHASE = { 12, 8, 2, -2 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
 	int cl = (PHASE[3] * adjusted) / 16;
-	EI.king_att_val[me] = Pack4(op, md, eg, cl);
-	IncV(EI.score, EI.king_att_val[me]);
+	EI.king_score[me] = Pack4(op, md, eg, cl);
+	IncV(EI.score, EI.king_score[me]);
 }
 
 template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
@@ -5193,17 +5238,11 @@ template<bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 template<class POP> void eval_unusual_material(GEvalInfo& EI)
 {
 	POP pop;
-	int wp = pop(Pawn(White));
-	int bp = pop(Pawn(Black));
-	int wminor = pop(Minor(White));
-	int bminor = pop(Minor(Black));
-	int wr = pop(Rook(White));
-	int br = pop(Rook(Black));
-	int wq = pop(Queen(White));
-	int bq = pop(Queen(Black));
-	Current->score = SeeValue[WhitePawn] * (wp - bp) + SeeValue[WhiteKnight] * (wminor - bminor) + SeeValue[WhiteRook] * (wr - br) +
-			SeeValue[WhiteQueen] * (wq - bq);
-	Current->score += Middle(EI.score);
+	Current->score = Endgame(EI.score)
+		+ SeeValue[WhitePawn] * (pop(Pawn(White)) - pop(Pawn(Black)))
+		+ SeeValue[WhiteKnight] * (pop(Minor(White)) - pop(Minor(Black)))
+		+ SeeValue[WhiteRook] * (pop(Rook(White)) - pop(Rook(Black)))
+		+ SeeValue[WhiteQueen] * (pop(Queen(White)) - pop(Queen(Black)));
 }
 
 template<class POP, int me> int closure_x()
@@ -5233,8 +5272,8 @@ template<class POP> int closure()
 
 template<bool me> void eval_castling(GEvalInfo& EI)
 {
-	constexpr array<int, 2> now = { 30, 10 };
-	constexpr array<int, 2> later = { 15, 5 };
+	static constexpr array<int, 2> now = { 30, 10 };
+	static constexpr array<int, 2> later = { 15, 5 };
 	uint64 occ = PieceAll();
 	if (can_castle(occ, me, true))
 		IncV(EI.score, Pack4(now[0], 0, 0, 0));
@@ -5250,7 +5289,7 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 {
 	POP pop;
 	Current->xray[me] = 0;
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingPAttack : 0;
+	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) * KingPAttack;
 	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Values::PawnBlocked);
 	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
 	eval_queens<me, POP>(EI);
@@ -5263,77 +5302,28 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 
 template<class POP> struct PhasedScore_
 {
+	const GMaterial& mat_;
 	int clx_;
-	PhasedScore_() : clx_(closure<POP>()) {}
-	int operator()(packed_t score, const GMaterial& mat)
+	PhasedScore_(const GMaterial& mat) : mat_(mat), clx_(closure<POP>()) {}
+	int operator()(packed_t score)
 	{
-		int op = Opening(score), eg = Endgame(score), md = Middle(score), cl = Closed(score);
+		int phase = mat_.phase, op = Opening(score), eg = Endgame(score), md = Middle(score), cl = Closed(score);
 		int retval;
-		if (mat.phase > MIDDLE_PHASE)
-			retval = (op * (mat.phase - MIDDLE_PHASE) + md * (MAX_PHASE - mat.phase)) / PHASE_M2M;
+		if (mat_.phase > MIDDLE_PHASE)
+			retval = (op * (phase - MIDDLE_PHASE) + md * (MAX_PHASE - phase)) / PHASE_M2M;
 		else
-			retval = (md * mat.phase + eg * (MIDDLE_PHASE - mat.phase)) / MIDDLE_PHASE;
-		retval += static_cast<sint16>((clx_ * (Min<int>(mat.phase, MIDDLE_PHASE) * cl + MIDDLE_PHASE * mat.closed)) / 8192);	// closure is capped at 128, phase at 64
+			retval = (md * phase + eg * (MIDDLE_PHASE - phase)) / MIDDLE_PHASE;
+		retval += static_cast<sint16>((clx_ * (Min<int>(phase, MIDDLE_PHASE) * cl + MIDDLE_PHASE * mat_.closed)) / 8192);	// closure is capped at 128, phase at 64
 		return retval;
 	}
 };
 
-template<class POP> struct UnpackScore_
+INLINE int king_att_depreciation(int score, int my_katt, int opp_katt)
 {
-	int clx_;
-	sint16 mat_, closed_;
-	uint8 phase_;
-	array<uint8, 2> mul_;
-	UnpackScore_(const GMaterial* material)
-	{
-		if (material)
-		{
-			phase_ = material->phase;
-			mat_ = material->score;
-			mul_ = material->mul;
-			closed_ = material->closed;
-		}
-		else
-		{
-			POP pop;
-			int wp, bp, wminor, bminor, wr, br, wq, bq;
-			wp = pop(Pawn(White));
-			bp = pop(Pawn(Black));
-			wminor = pop(Minor(White));
-			bminor = pop(Minor(Black));
-			wr = pop(Rook(White));
-			br = pop(Rook(Black));
-			wq = pop(Queen(White));
-			bq = pop(Queen(Black));
-
-			int phase = Phase[PieceType[WhitePawn]] * (wp + bp)
-				+ Phase[PieceType[WhiteKnight]] * (wminor + bminor)
-				+ Phase[PieceType[WhiteRook]] * (wr + br)
-				+ Phase[PieceType[WhiteQueen]] * (wq + bq);
-			phase_ = Min((Max(phase - PhaseMin, 0) * MAX_PHASE) / (PhaseMax - PhaseMin), MAX_PHASE);
-			mat_ = SeeValue[WhitePawn] * (wp - bp) + SeeValue[WhiteKnight] * (wminor - bminor) + SeeValue[WhiteRook] * (wr - br) +
-				SeeValue[WhiteQueen] * (wq - bq);
-			mul_ = { 33, 33 };
-			closed_ = 0;
-		}
-		clx_ = closure<POP>();
-	}
-	sint16 operator()(packed_t score) const
-	{
-		int md = Middle(score), cl = Closed(score);
-		sint16 clVal = static_cast<sint16>((clx_ * (Min<int>(phase_, MIDDLE_PHASE) * cl + MIDDLE_PHASE * closed_)) / 8192);	// closure is capped at 128, phase at 64
-		if (phase_ > MIDDLE_PHASE)
-			return clVal + (Opening(score) * (phase_ - MIDDLE_PHASE) + md * (MAX_PHASE - phase_)) / PHASE_M2M;
-		else
-			return clVal + (md * phase_ + Endgame(score) * (MIDDLE_PHASE - phase_)) / MIDDLE_PHASE;
-	}
-};
-
-sint16 depreciate_katt(sint16 score, sint16 katt, sint16 katt_opp)
-{
-	static const sint16 CUT = 130 * CP_EVAL;
-	return score - min<sint16>(score - CUT, max<sint16>(katt, katt_opp / 3)) / 4;
+	constexpr int threshold = 110 * CP_EVAL;
+	return max(0, min(score - threshold, my_katt) / 6) + max(0, min(score - threshold, opp_katt) / 6);
 }
+
 
 template<class POP> void evaluation()
 {
@@ -5359,7 +5349,7 @@ template<class POP> void evaluation()
 	if (F(Current->material & FlagUnusualMaterial))
 		EI.material = &RO->Material[Current->material];
 	else
-		EI.material = 0;
+		EI.material = nullptr;
 
 	eval_sequential<White, POP>(EI);
 	eval_sequential<Black, POP>(EI);
@@ -5379,45 +5369,60 @@ template<class POP> void evaluation()
 	eval_passer<Black, POP>(EI);
 	eval_pieces<Black, POP>(EI);
 
-	UnpackScore_<POP> value(EI.material);
-	Current->score = value.mat_ + value(EI.score);
-	// apply contempt before drawishness
-	if (SETTINGS->contempt > 0)
+	if (Current->material & FlagUnusualMaterial)
 	{
-		int maxContempt = (value.phase_ * SETTINGS->contempt * CP_EVAL) / 64;
-		int mySign = F(Data->turn) ? 1 : -1;
-		if (Current->score * mySign > 2 * maxContempt)
-			Current->score += mySign * maxContempt;
-		else if (Current->score * mySign > 0)
-			Current->score += Current->score / 2;
-	}
-
-	if (Current->ply >= PliesToEvalCut)
-		Current->score /= 2;
-	if (Current->score > 0)
-	{
-		//Current->score = depreciate_katt(Current->score, value(EI.king_att_val[White]), value(EI.king_att_val[Black]));
-		EI.mul = value.mul_[White];
-		if (EI.material && EI.material->eval[White] && !eval_stalemate<White>(EI))
-			EI.material->eval[White](EI, pop.Imp());
-		else if (EI.mul <= 32)
-			EI.mul = Min(EI.mul, 37 - value.clx_ / 8);
-		Current->score -= (Min<int>(Current->score, DrawCap) * EI.PawnEntry->draw[White]) / 64;
-	}
-	else if (Current->score < 0)
-	{
-		//Current->score = -depreciate_katt(-Current->score, value(EI.king_att_val[Black]), value(EI.king_att_val[White]));
-		EI.mul = value.mul_[Black];
-		if (EI.material && EI.material->eval[Black] && !eval_stalemate<Black>(EI))
-			EI.material->eval[Black](EI, pop.Imp());
-		else if (EI.mul <= 32)
-			EI.mul = Min(EI.mul, 37 - value.clx_ / 8);
-		Current->score += (Min<int>(-Current->score, DrawCap) * EI.PawnEntry->draw[Black]) / 64;
+		eval_unusual_material<POP>(EI);
+		Current->score = (Current->score * CP_SEARCH) / CP_EVAL;
 	}
 	else
-		EI.mul = Min(value.mul_[White], value.mul_[Black]);
-	Current->score = (Current->score * EI.mul * CP_SEARCH) / (32 * CP_EVAL);
+	{
+		if (!EI.material)
+			Say("No material");
+		const GMaterial& mat = *EI.material;
+		PhasedScore_<POP> value(mat);
+		Current->score = mat.score + value(EI.score);
+		// cash out king attacks
+//		if (Current->score > 0)
+//			Current->score -= king_att_depreciation(Current->score, value(EI.king_score[White]), value(EI.king_score[Black]));
+//		else
+//			Current->score += king_att_depreciation(-Current->score, value(EI.king_score[Black]), value(EI.king_score[White]));
+		
+		// apply contempt before drawishness
+		if (SETTINGS->contempt > 0)
+		{
+			int maxContempt = (mat.phase * SETTINGS->contempt * CP_EVAL) / 64;
+			int mySign = F(Data->turn) ? 1 : -1;
+			if (Current->score * mySign > 2 * maxContempt)
+				Current->score += mySign * maxContempt;
+			else if (Current->score * mySign > 0)
+				Current->score += Current->score / 2;
+		}
 
+		if (Current->ply >= PliesToEvalCut)
+			Current->score /= 2;
+		const int drawCap = DrawCapConstant + (DrawCapLinear * abs(Current->score)) / 64;  // drawishness of positions can cancel this much of the score
+		if (Current->score > 0)
+		{
+			EI.mul = mat.mul[White];
+			if (mat.eval[White] && !eval_stalemate<White>(EI))
+				mat.eval[White](EI, pop.Imp());
+			else if (EI.mul <= 32)
+				EI.mul = Min<uint16>(EI.mul, 36 - value.clx_ / 6);
+			Current->score -= (Min<int>(Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64;
+		}
+		else if (Current->score < 0)
+		{
+			EI.mul = mat.mul[Black];
+			if (mat.eval[Black] && !eval_stalemate<Black>(EI))
+				mat.eval[Black](EI, pop.Imp());
+			else if (EI.mul <= 32)
+				EI.mul = Min<uint16>(EI.mul, 36 - value.clx_ / 6);
+			Current->score += (Min<int>(-Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64;
+		}
+		else
+			EI.mul = Min(mat.mul[White], mat.mul[Black]);
+		Current->score = (Current->score * EI.mul * CP_SEARCH) / (32 * CP_EVAL);
+	}
 	if (Current->turn)
 		Current->score = -Current->score;
 	if (F(Current->capture) && T(Current->move) && F(Current->move & 0xE000) && Current > Data)
@@ -5867,21 +5872,31 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 	best->ply = Current->ply;
 }
 
-template<bool me, bool pv> int extension(int move, int depth, bool* check = nullptr)
+template<bool me> int extension(int pv, int move, int depth, bool* check = nullptr)
 {
 	if (is_check<me>(move))
 	{
 		constexpr array<array<int, 2>, 2> DepthCut = { { { { 16, 16 } },{ { 50, 50 } } } };
 		if (check) *check = true;
-		return see<me>(move, -SeeThreshold, SeeValue) + T(depth < DepthCut[pv][0]);	// Can't find a useful criterion here
+		const bool isQ = (PieceAt(From(move)) & ~Black) == WhiteQueen;
+		return see<me>(move, -SeeThreshold, SeeValue) + T(depth < DepthCut[pv][T(isQ)]);
 	}
 	if (check) *check = false;
 	int from = From(move);
-	constexpr array<int, 8> PushExtendDepth = { -1, 0, 0, 10, 12, 20, 8, -1 };
-	if (HasBit(Current->passer, from) && depth < PushExtendDepth[OwnRank(T(Current->turn), from)])
+	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
 	{
+		if (depth < 16)
 			return 1 + pv;
 	}
+
+	if (depth > 2)
+		if (uint64 om = Major(opp))
+			if (T(King(me) & 0XFFC300000000C3FF) && depth < (Multiple(om) ? 12 : 8))
+			{
+				int kf = FileOf(lsb(King(me)));
+				if (T((PAtts<me>(Pawn(me) & RO->File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & RO->File[kf]) & Piece(me))))
+					return 1;
+			}
 
 	return 0;
 }
@@ -7190,6 +7205,11 @@ INLINE int RazoringThreshold(int score, int depth, int height)
 	return score + shift + FutilityThreshold;
 }
 
+INLINE int reduction_n(int depth, int n)
+{
+	return msb(Square(Square(Square(uint64(n))))) / (6 + depth / 10);
+}
+
 template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 {
 	int value, cnt, flag, moves_to_play, score, move, ext, hash_move, singular, played, high_depth, high_value, hash_value,
@@ -7341,7 +7361,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = extension<me, 0>(move, depth);
+				ext = extension<me>(0, move, depth);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -7416,7 +7436,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			continue;
 		}
 		bool check;
-		ext = extension<me, 0>(move, depth, &check);
+		ext = extension<me>(0, move, depth, &check);
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -7429,7 +7449,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				}
 				if (depth >= 6)
 				{
-					int reduction = msb(cnt);
+					int reduction = reduction_n(depth, cnt);
 					if (move == Current->ref[0] || move == Current->ref[1])
 						reduction = Max(0, reduction - 1);
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
@@ -7614,7 +7634,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = Max(pext, extension<me, 0>(move, depth));
+				ext = Max(pext, extension<me>(0, move, depth));
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -7667,7 +7687,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			continue;
 		}
 		bool check;
-		ext = Max(pext, extension<me, 0>(move, depth, &check));
+		ext = Max(pext, extension<me>(0, move, depth, &check));
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -7683,7 +7703,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			}
 			if (depth >= 6 && cnt > 3)
 			{
-				int reduction = msb(cnt);
+				int reduction = reduction_n(depth, cnt);
 				if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 					reduction += reduction / 2;
 				new_depth = Max(3, new_depth - reduction);
@@ -7837,7 +7857,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			if (INFO->id == 0)
 				send_curr_move(move, cnt);
 		}
-		ext = Max(pext, extension<me, 1>(move, depth));
+		ext = Max(pext, extension<me>(1, move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
 			int margin_one = hash_value - ExclSingle(depth);
@@ -7889,6 +7909,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				CurrentSI->FailHigh = 0;
 				CurrentSI->Singular = 0;
 				INFO->bestScore = value;
+				Say("Fail low at depth " + Str(depth/2) + "\n");
 				if (depth >= 8)
 					send_pv(depth, old_alpha, beta, true);
 			}
@@ -7929,11 +7950,11 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		}
 		if (IsRepetition(alpha + 1, move))
 			continue;
-		ext = Max(pext, extension<me, 1>(move, depth));
+		ext = Max(pext, extension<me>(1, move, depth));
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
-			int reduction = msb(cnt) - 1;
+			int reduction = reduction_n(depth, cnt) - 1;
 			if (move == Current->ref[0] || move == Current->ref[1])
 				reduction = Max(0, reduction - 1);
 			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
@@ -8005,11 +8026,11 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 }
 
 template<bool me> void root()
-{
+{HERE
 	int& depth = INFO->depth;
 	int value, alpha, beta, start_depth = 2, hash_depth = 0, hash_value, store_time = 0, time_est, ex_depth = 0, ex_value, prev_time = 0, knodes = 0;
 	int64_t time;
-
+	HERE
 	evaluate();
 	gen_root_moves<me>();
 	if (PVN > 1) {
@@ -8017,13 +8038,13 @@ template<bool me> void root()
 		//        for (i = 0; MultiPV[i] = RootList[i]; i++);
 		fprintf(stderr, "MPV NYI...\n");
 		abort();
-	}
+	}HERE
 	INFO->bestMove = RootList[0];
 	if (F(INFO->bestMove))
 	{
 		stop();
 		return;
-	}
+	}HERE
 	if (F(RootList[1]))
 	{
 		if (F(SHARED->best.move))
@@ -8050,7 +8071,7 @@ template<bool me> void root()
 			}
 		}
 		return;
-	}
+	}HERE
 
 	memset(CurrentSI, 0, sizeof(GSearchInfo));
 	memset(BaseSI, 0, sizeof(GSearchInfo));
@@ -8065,7 +8086,7 @@ template<bool me> void root()
 			ex_value = PVEntry->exclusion;
 			knodes = PVEntry->knodes;
 		}
-	}
+	}HERE
 	LastTime = 0;
 	if (hash_depth > 0 && PVN == 1)
 	{
@@ -8095,7 +8116,7 @@ template<bool me> void root()
 			//		set_prev_time:
 			LastTime = prev_time = time_est;
 		}
-	}
+	}HERE
 
 	memcpy(SaveBoard, Board, sizeof(GBoard));
 	memcpy(SaveData, Data, sizeof(GData));
@@ -8107,7 +8128,7 @@ template<bool me> void root()
 			Say("info depth " + Str(depth / 2) + "\n");
 		if (SHARED->best.depth > depth)	// we have fallen too far behind
 			continue;
-
+		HERE
 		memset(Data + 1, 0, 127 * sizeof(GData));
 		CurrentSI->Early = 1;
 		CurrentSI->Change = CurrentSI->FailHigh = CurrentSI->FailLow = CurrentSI->Singular = 0;
@@ -8124,18 +8145,25 @@ template<bool me> void root()
 			if (SHARED->best.depth == depth)
 			{
 				Previous = SHARED->best.value;
-				if (SHARED->best.failLow)
-					deltaHi = 0;
-				else
-				{
-					deltaLo /= 2;
-					deltaHi /= 2;
-				}
-			}
+				deltaLo /= 2;
+				deltaHi /= 2;
+			}HERE
 			alpha = Previous - deltaLo;
 			beta = Previous + deltaHi;
-			for (; ; )	// loop:
+			if (SHARED->best.failLow)
 			{
+				alpha -= 1 + deltaHi;
+				beta -= 1 + deltaHi;
+				if (INFO->id & 1)
+				{
+					// try to escape fail-low state quickly
+					alpha -= (alpha * INFO->id) % 256;
+					beta = alpha + 1;
+				}
+			}HERE
+			for ( ; ; )
+			{
+				HERE
 				if (SHARED->best.depth > depth)	// search has moved beyond us
 				{
 					Previous = value = SHARED->best.value;
@@ -8145,8 +8173,9 @@ template<bool me> void root()
 				{
 					LastValue = LastExactValue = value = pv_search<me, 1>(-MateValue, MateValue, depth, FlagNeatSearch);
 					break;
-				}
+				}HERE
 				value = pv_search<me, 1>(alpha, beta, depth, FlagNeatSearch);
+				HERE
 				if (value <= alpha)
 				{
 					CurrentSI->FailHigh = 0;
@@ -8172,7 +8201,7 @@ template<bool me> void root()
 					beta += deltaHi;
 					deltaHi += (deltaHi * FailHiGrowth) / 64 + FailHiDelta;
 					LastDepth = depth;
-					LastTime = Max(prev_time, (int)(get_time() - SHARED->startTime));
+					LastTime = Max<int>(prev_time, millisecs(SHARED->startTime, now()));
 					LastSpeed = INFO->nodes / Max(LastTime, 1);
 					if (depth + 2 < SHARED->depthLimit)
 						depth += 2;
@@ -8191,16 +8220,17 @@ template<bool me> void root()
 				{
 					LastValue = LastExactValue = value;
 					break;
-				}
-			}
-		}
+				}HERE
+			}HERE
+		}HERE
 
 		if (!SHARED->stopAll)
 		{
+			HERE
 			CurrentSI->Bad = value < Previous - 12 * CP_SEARCH;
 			memcpy(BaseSI, CurrentSI, sizeof(GSearchInfo));
 			LastDepth = depth;
-			LastTime = Max(prev_time, int(get_time() - SHARED->startTime));
+			LastTime = Max<int>(prev_time, millisecs(SHARED->startTime, now()));
 			LastSpeed = INFO->nodes / Max(LastTime, 1);
 			Previous = value;
 			InstCnt = 0;
@@ -8231,7 +8261,7 @@ template<bool me> int multipv(int depth)
 	{
 		MultiPV[cnt] = move;
 		send_curr_move(move, cnt);
-		new_depth = depth - 2 + (ext = extension<me, 1>(move, depth));
+		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
 		do_move<me>(move);
 		value = -pv_search<opp, 0>(-MateValue, MateValue, new_depth, ExtToFlag(ext));
 		MultiPV[cnt] |= value << 16;
@@ -8254,7 +8284,7 @@ template<bool me> int multipv(int depth)
 	{
 		MultiPV[cnt] = move;
 		send_curr_move(move, cnt);
-		new_depth = depth - 2 + (ext = extension<me, 1>(move, depth));
+		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
 		do_move<me>(move);
 		value = -scout<opp, 0>(-low, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value > low)
@@ -8290,7 +8320,8 @@ static void send_pv
 	 int selDepth,
 	 int bestScore,
 	 int bestMove,
-	 uint64_t startTime)
+	 bool fail_low,
+	 const std::chrono::high_resolution_clock::time_point& startTime)
 {
 	const char *scoreType = "mate";
 	if (bestScore > EvalValue)
@@ -8299,12 +8330,12 @@ static void send_pv
 		bestScore = -(bestScore + MateValue + 1) / 2;
 	else
 	{
-		scoreType = "cp";
+		scoreType = fail_low ? "cp<" : "cp";
 		bestScore /= CP_SEARCH;
 	}
 
-	uint64_t currTime = get_time();
-	uint64_t elapsedTime = currTime - startTime;
+	auto currTime = now();
+	auto elapsedTime = millisecs(startTime, currTime);
 	if (elapsedTime == 0)
 		elapsedTime = 1;
 
@@ -8336,7 +8367,11 @@ static void send_pv
 	}
 	pvStr[pvPos++] = '\0';
 
-	Say("info depth " + Str(depth / 2) + " seldepth " + Str(selDepth) + " score " + string(scoreType) + " " + Str(bestScore) + " nodes " + Str(nodes) + " nps " + Str(nps) + " tbhits " + Str(tbHits) + " time " + Str(currTime - startTime) + " pv" + string(pvStr) + "\n");
+	Say("info depth " + Str(depth / 2) + 
+		" seldepth " + Str(selDepth) + 
+		" score " + string(scoreType) + " " + Str(bestScore) + 
+		" nodes " + Str(nodes) + " nps " + Str(nps) + " tbhits " + Str(tbHits) + 
+		" time " + Str(millisecs(startTime, currTime)) + " pv" + string(pvStr) + "\n");
 }
 
 void send_pv(int depth, int alpha, int beta, bool fail_low = false)
@@ -8374,7 +8409,7 @@ void send_pv(int depth, int alpha, int beta, bool fail_low = false)
 		tbHits += THREADS[i]->tbHits;
 	}
 	const ThreadOwn_ my = *THREADS[INFO->id];
-	send_pv(&my.PV[0], nodes, tbHits, my.depth, my.selDepth, my.bestScore, my.bestMove, SHARED->startTime);
+	send_pv(&my.PV[0], nodes, tbHits, my.depth, my.selDepth, my.bestScore, my.bestMove, fail_low, SHARED->startTime);
 }
 
 void send_multipv(int depth, int curr_number)
@@ -8386,10 +8421,9 @@ void send_curr_move(int move, int cnt)
 {
 	if (INFO->id != 0)
 		return;
-	uint64_t currTime = get_time();
-	uint64_t diffTime = currTime - SHARED->startTime;
-	if (currTime - SHARED->startTime <= InfoLag ||
-		currTime - InfoTime <= InfoDelay)
+	auto currTime = now();
+	auto diffTime = millisecs(SHARED->startTime, currTime);
+	if (diffTime <= InfoLag || millisecs(InfoTime, currTime) <= InfoDelay)
 		return;
 	InfoTime = currTime;
 	char moveStr[16];
@@ -8405,9 +8439,9 @@ void send_move_info(int bestScore)
 		nodes += THREADS[i]->nodes;
 		tbHits += THREADS[i]->tbHits;
 	}
-	uint64_t stopTime = get_time();
-	uint64_t time = stopTime - SHARED->startTime;
-	uint64_t nps = (nodes / Max(time / 1000, 1ull));
+	auto stopTime = now();
+	auto time = millisecs(SHARED->startTime, stopTime);
+	uint64_t nps = (nodes / Max(time / 1000, 1u));
 	const char *scoreType = "mate";
 	if (bestScore > EvalValue)
 		bestScore = (MateValue - bestScore + 1) / 2;
@@ -8561,7 +8595,7 @@ namespace Version
 void uci(void)
 {
 	char line[4 * PIPE_BUF];
-	uint64_t currTime = get_time();
+	auto currTime = now();
 
 	while (true)
 	{
@@ -8573,13 +8607,13 @@ void uci(void)
 			//				timeout = 100;          // 100ms
 
 			bool timedout = get_line(line, sizeof(line) - 1, timeout);
-			currTime = get_time();
+			currTime = now();
 
 			if (mutex_try_lock(&SHARED->mutex, 500))
 				mutex_unlock(&SHARED->mutex);
 			else
 				emergency_stop();
-			if (!SHARED->working.Empty() && currTime >= SHARED->startTime + SHARED->hardTimeLimit / 2)
+			if (!SHARED->working.Empty() && millisecs(SHARED->startTime, currTime) >= SHARED->hardTimeLimit / 2)
 			{
 				stop();
 				wait_for_stop();
@@ -8670,9 +8704,9 @@ void uci(void)
 				Sleep(i);
 				if (SHARED->working.Empty())
 					break;
-				if (get_time() > SHARED->startTime + SHARED->hardTimeLimit)
+				if (millisecs(SHARED->startTime, now()) > SHARED->hardTimeLimit)
 				{
-					//LOCK_SHARED;
+					VSAY("Hard stop\n");
 					SHARED->stopAll = true;
 				}
 			}
@@ -8694,14 +8728,12 @@ void uci(void)
 							Say("id name worker " + Str(ii) + " still active\n");
 					}
 				}
-				if (SHARED->stopAll)
-					Say("id name stop requested\n");
-				else
-					Say("id name no stop requested\n");
-				if (SHARED->best.move)
-					Say("id name stored candidate is move " + Str(SHARED->best.move) + " depth " + Str(SHARED->best.depth) + " score " + Str(SHARED->best.value) + " worker " + Str(SHARED->best.worker) + "\n");
-				else
-					Say("id name no stored candidate\n");
+				//if (SHARED->stopAll)
+				//	VSAY("info " + Str(INFO->id) + "received stop request\n");
+				//if (SHARED->best.move)
+				//	VSAY("info stored candidate is move " + Str(SHARED->best.move) + " depth " + Str(SHARED->best.depth) + " score " + Str(SHARED->best.value) + " worker " + Str(SHARED->best.worker) + "\n");
+				//else
+				//	VSAY("info no stored candidate\n");
 			}
 			if (SHARED->working.Empty())
 				continue;
@@ -8803,10 +8835,8 @@ void uci(void)
 				"id author Demichev/Falcinelli/Hyer\n"
 				"option name Hash type spin min 1 max 8388608 default 128\n"
 				"option name Threads type spin min 1 max 64 default 4\n"
-				"option name Contempt type spin min 0 max 64 default 8\n"
-				"option name Wobble type spin min 0 max 8 default 0\n"
 				"option name SyzygyPath type string default <empty>\n"
-				"option name SyzygyProbeDepth type spin min 0 max 64 default 7\n"
+				"option name SyzygyProbeDepth type spin min 0 max 64 "
 				"default 1\n"
 				"uciok\n";
 			char* dst = &reply[12];
@@ -8831,37 +8861,37 @@ void worker()
 	while (true)
 	{
 		Current = Data;
-		//		while (!SHARED->stopAll)
-		//			Sleep(1);	// can get here if we finish the search before timing out
-		//		while (SHARED->stopAll)
 		wait_for_go();
-
-		bool newGame = INFO->newGame;
-		INFO->newGame = false;
-
-		{
-			LOCK_SHARED;
-			SHARED->working.Insert(INFO->id);
-		}
-
-		if (newGame)
-			init_search(false);
-
-		memcpy(Board, &SHARED->rootBoard, sizeof(GBoard));
-		memcpy(Current, &SHARED->rootData, sizeof(GData));
-		memcpy(&Stack[0], &SHARED->rootStack, SHARED->rootSp * sizeof(uint64_t));
-		sp = SHARED->rootSp;
-		Stack[sp] = Current->key;
-		check_node = INFO->nodes + 1024;	// should cause a check within a millisecond
 
 		try
 		{
+			bool newGame = INFO->newGame;
+			INFO->newGame = false;
+
+			{
+				LOCK_SHARED;
+				SHARED->working.Insert(INFO->id);
+			}
+
+			if (newGame)
+				init_search(false);
+
+			memcpy(Board, &SHARED->rootBoard, sizeof(GBoard));
+			memcpy(Current, &SHARED->rootData, sizeof(GData));
+			memcpy(&Stack[0], &SHARED->rootStack, SHARED->rootSp * sizeof(uint64_t));
+			sp = SHARED->rootSp;
+			Stack[sp] = Current->key;
+			check_node = INFO->nodes + 1024;	// should cause a check within a millisecond
+
 			if (Current->turn == White)
 				root<0>();
 			else
 				root<1>();
 		}
-		catch (...) {}	// reserve the right to use exceptions to halt work
+		catch (...) 	// reserve the right to use exceptions to halt work
+		{
+			VSAY("Hard stop of worker " + Str(INFO->id) + " after line " + Str(debug_loc) + "\n");
+		}
 
 		LOCK_SHARED;
 		SHARED->working.Remove(INFO->id);
@@ -8947,7 +8977,17 @@ int main(int argc, char **argv)
 			LOCK_SHARED;
 			SHARED->working.Remove(INFO->id);
 		}
-		worker();   // Wait for work from parent.
+		try
+		{
+			worker();   // Wait for work from parent.
+		}
+		catch (...)
+		{
+			Say("Unexpected death\n");
+			Say("At line " + Str(debugLine) + "\n");
+			Say("Worker " + Str(INFO->id) + "\n");
+			Say("*********************************************************************************\n");
+		}
 	}
 	else if (argc > 2 && strcmp(argv[1], "bench") == 0)
 	{
@@ -8970,7 +9010,8 @@ int main(int argc, char **argv)
 		INFO->pid = GetCurrentProcessId();
 		THREADS[0] = INFO;
 
-		uint64_t t0 = get_time(), nodes = 0;
+		auto t0 = now();
+		uint64_t nodes = 0;
 		for (int i = 3; i < argc; i++)
 		{
 			init_search(true);
@@ -8985,7 +9026,7 @@ int main(int argc, char **argv)
 			send_best_move();
 			nodes += INFO->nodes;
 		}
-		Say("TIME : " + Str(get_time() - t0) + "\nNODES: " + Str(nodes) + "\n");
+		Say("TIME : " + Str(millisecs(t0, now())) + "\nNODES: " + Str(nodes) + "\n");
 		exit(EXIT_SUCCESS);
 	}
 	else if (argc > 1)
@@ -9134,17 +9175,15 @@ int main(int argc, char *argv[])
 }
 #endif
 
-// Fathom/Syzygy code at end where its #defines cannot screw us up
 #if TB
+#pragma optimize("gy", off)
+#define Say(x)	// mute TB query
+// Fathom/Syzygy code at end where its #defines cannot screw us up
 #undef LOCK
 #undef UNLOCK
-#pragma optimize("", off)
-#define Say(x)	// mute TB query
 #include "src\tbconfig.h"
 #include "src\tbcore.h"
 #include "src\tbprobe.c"
-#undef LOCK
-#undef UNLOCK
 #pragma optimize("", on)
 
 int GetTBMove(unsigned res, int* best_score)
@@ -9164,6 +9203,8 @@ int GetTBMove(unsigned res, int* best_score)
 	}
 	return retval;
 }
+#undef LOCK
+#undef UNLOCK
 
 unsigned tb_probe_root_fwd(
 	uint64_t _white,
@@ -9187,4 +9228,4 @@ bool tb_init_fwd(const char* path)
 }
 
 #endif
-
+#pragma optimize("", on)
