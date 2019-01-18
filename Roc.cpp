@@ -1134,8 +1134,8 @@ namespace Params
 		16, 20, 24, 0,
 		20, 28, 36, 0,
 		-12, -22, -32, 0,
-		-10, 0, 34, 0,
-		6, 6, -2, 0,
+		-10, 20, 64, 0,
+		6, 21, 21, 0,
 		0, -12, -24, 0,
 		4, 8, 12, 0,
 		0, 0, 0, -100 };
@@ -1409,9 +1409,9 @@ namespace Params
 		-4, -4, -4, 0,
 		56, 26, -4, 0,
 		20, 0, -20, 0,
-		-20, -10, 0, 0,
-		-24, 4, 32, 0,
-		-28, 48, 124, 0 };
+		0, 30, 10, 0,
+		0, 28, 32, 0,
+		0, 76, 124, 0 };
 }
 namespace Values
 {
@@ -1550,7 +1550,7 @@ namespace Params
 		KnightPawnSpread,
 		KnightPawnGap
 	};
-	static constexpr array<int, 20> KnightSpecial = {  // tuner: type=array, var=26, active=0
+	static constexpr array<int, 24> KnightSpecial = {  // tuner: type=array, var=26, active=0
 		40, 40, 24, 0,
 		41, 40, 0, 0,
 		44, 44, 18, 0,
@@ -4547,6 +4547,9 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		if (!(RO->KAtt[EI.king[opp]] & (~(Piece(opp) | Current->att[me]))))
 			score += KingNoMoves;
 	}
+	score = score < KingAttackThreshold
+			? Square(score) / (2 * KingAttackThreshold)
+			: score - KingAttackThreshold / 2;
 
 	int adjusted = ((score * RO->KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
 	if (myN && (myQ || cnt > 6))
@@ -4823,7 +4826,7 @@ template<class POP> void evaluation()
 
 	UnpackScore_<POP> value(EI.material);
 	Current->score = value.mat_ + value(EI.score);
-																																		// apply contempt before drawishness
+	// apply contempt before drawishness
 	if (Contempt > 0)
 	{
 		int maxContempt = (value.phase_ * Contempt * CP_EVAL) / 64;
@@ -5301,10 +5304,8 @@ template<bool me> int extension(int pv, int move, int depth, bool* check = nullp
 {
 	if (is_check<me>(move))
 	{
-		static const array<array<int, 2>, 2> DepthCut = { { {{16, 16}}, {{50, 50}} } };
 		if (check) *check = true;
-		const bool isQ = (PieceAt(From(move)) & ~Black) == WhiteQueen;
-		return see<me>(move, -SeeThreshold, SeeValue) + T(depth < DepthCut[pv][T(isQ)]);
+		return see<me>(move, -SeeThreshold, SeeValue) + T(pv || depth < 16);
 	}
 	if (check) *check = false;
 	int from = From(move);
@@ -5321,6 +5322,9 @@ template<bool me> int extension(int pv, int move, int depth, bool* check = nullp
 				if (T((PAtts<me>(Pawn(me) & RO->File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & RO->File[kf]) & Piece(me))))
 					return 1;
 			}
+//	if (depth < (pv ? 14 : 10) && PieceAt(from) < WhiteKnight && T(RO->PCone[me][from] & King(opp)) && F(RO->PWay[me][from] & Pawn(opp)))
+//		return 1;
+//	contradictory test results; revisit
 
 	return 0;
 }
@@ -6831,7 +6835,7 @@ INLINE int RazoringThreshold(int score, int depth, int height)
 
 INLINE int reduction_n(int depth, int n)
 {
-	return msb(Square(Square(Square(uint64(n))))) / (6 + depth / 10);
+	return msb(Square(Square(Square(uint64(n))))) / (5 + depth / 8);
 }
 
 template<int principal> INLINE void check_recapture(int to, int depth, int* ext)
