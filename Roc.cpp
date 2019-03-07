@@ -1014,11 +1014,11 @@ INLINE int ExclDouble(int depth)
 const sint8 DistC[8] = { 3, 2, 1, 0, 0, 1, 2, 3 };
 const sint8 RankR[8] = { -3, -2, -1, 0, 1, 2, 3, 4 };
 
-static constexpr uint16 SeeValue[16] = { 0, 0, 360, 360, 1300, 1300, 1300, 1300, 1300, 1300, 2040, 2040, 3900, 3900, 30000, 30000 };
-static constexpr int PieceType[16] = { 0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5 };
-static constexpr array<int, 5> Phase = { 0, SeeValue[4], SeeValue[6], SeeValue[10], SeeValue[12] };
-static constexpr int PhaseMin = 2 * Phase[3] + Phase[1] + Phase[2];
-static constexpr int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 * Phase[3] + 2 * Phase[4];
+constexpr uint16 SeeValue[16] = { 0, 0, 360, 360, 1300, 1300, 1300, 1300, 1300, 1300, 2040, 2040, 3900, 3900, 30000, 30000 };
+constexpr int PieceType[16] = { 0, 0, 0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 4, 4, 5, 5 };
+constexpr array<int, 5> Phase = { 0, SeeValue[4], SeeValue[6], SeeValue[10], SeeValue[12] };
+constexpr int PhaseMin = 2 * Phase[3] + Phase[1] + Phase[2];
+constexpr int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 * Phase[3] + 2 * Phase[4];
 
 #define V(x) (x)
 
@@ -1087,11 +1087,10 @@ enum
 };
 
 // pawn, knight, bishop, rook, queen, pair
-static constexpr array<int, 6> MatLinear = { 21, -20, -8, 86, -15, -1 };
-static constexpr int MatWinnable = 160;
+constexpr array<int, 6> MatLinear = { 21, -20, -8, 86, -15, -1 };
 
 // T(pawn), pawn, knight, bishop, rook, queen
-const array<int, 21> MatQuadMe = { // tuner: type=array, var=1000, active=0
+constexpr array<int, 21> MatQuadMe = { // tuner: type=array, var=1000, active=0
 	NULL, 0, 0, 0, 0, 0,
 	-33, 117, -23, -155, -247,
 	15, 296, -105, -83,
@@ -1099,17 +1098,17 @@ const array<int, 21> MatQuadMe = { // tuner: type=array, var=1000, active=0
 	-861, -1013,
 	NULL
 };
-const array<int, 15> MatQuadOpp = { // tuner: type=array, var=1000, active=0
+constexpr array<int, 15> MatQuadOpp = { // tuner: type=array, var=1000, active=0
 	0, 0, 0, 0, 0,
 	-114, -96, -20, -278,
 	35, 39, 49,
 	9, -2,
 	75
 };
-const int BishopPairQuad[9] = { // tuner: type=array, var=1000, active=0
+constexpr array<int, 9> BishopPairQuad = { // tuner: type=array, var=1000, active=0
 	-38, 164, 99, 246, -84, -57, -184, 88, -186
 };
-static constexpr array<int, 6> MatClosed = { -20, 22, -33, 18, -2, 26 };
+constexpr array<int, 6> MatClosed = { -20, 22, -33, 18, -2, 26 };
 
 namespace Params
 {
@@ -1127,7 +1126,7 @@ namespace Params
 		MatM,
 		MatPawnOnly
 	};
-	static constexpr array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
+	constexpr array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
 		52, 0, -52, -10,
 		40, 2, -36, -10,
 		32, 40, 48, 0,
@@ -1142,7 +1141,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::MatSpecial, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::MatSpecial, Params::name)
 	VALUE(MatRB);
 	VALUE(MatRN);
 	VALUE(MatQRR);
@@ -1169,32 +1168,32 @@ namespace PstW
 		} op_, md_, eg_, cl_;
 	};
 
-	static constexpr Weights_ Pawn = {
+	constexpr Weights_ Pawn = {
 		{ { -48, -275, 165, 0 },{ -460, -357, -359, 437 },{ 69, -28 } },
 		{ {-85, -171, 27, 400},{ -160, -133, 93, 1079 },{ 13, -6 }},
 		{ {-80, -41, -85, 782},{ 336, 303, 295, 1667 },{ -35, 13 }},
 		{ {2, 13, 11, 23},{ 6, 14, 37, -88 },{ 14, -2 }} };
-	static constexpr Weights_ Knight = {
+	constexpr Weights_ Knight = {
 		{ { -134, 6, -12, -72 },{ -680, -343, -557, 1128 },{ -32, 14 } },
 		{ { -315, -123, -12, -90 },{ -449, -257, -390, 777 },{ -24, -3 } },
 		{ { -501, -246, -12, -107 },{ 61, -274, -357, 469 },{ -1, -16 } },
 		{ { -12, -5, -2, -22 },{ 96, 69, -64, -23 },{ -5, -8 } } };
-	static constexpr Weights_ Bishop = {
+	constexpr Weights_ Bishop = {
 		{ { -123, -62, 54, -116 },{ 24, -486, -350, -510 },{ 8, -58 } },
 		{ { -168, -49, 24, -48 },{ -323, -289, -305, -254 },{ -7, -21 } },
 		{ { -249, -33, 4, -14 },{ -529, -232, -135, 31 },{ -32, 0 } },
 		{ { 4, -10, 9, -13 },{ 91, -43, -34, 29 },{ -13, -10 } } };
-	static constexpr Weights_ Rook = {
+	constexpr Weights_ Rook = {
 		{ { -260, 12, -49, 324 },{ -777, -223, 245, 670 },{ -7, -25 } },
 		{ { -148, -88, -9, 165 },{ -448, -278, -63, 580 },{ -7, 0 } },
 		{ { 13, -149, 14, 46 },{ -153, -225, -246, 578 },{ -6, 16 } },
 		{ { 0, 8, -15, 8 },{ -32, -29, 10, -51 },{ -6, -23 } } };
-	static constexpr Weights_ Queen = {
+	constexpr Weights_ Queen = {
 		{ { -270, -18, -19, -68 },{ -520, 444, 474, -186 },{ 18, -6 } },
 		{ { -114, -209, 21, -103 },{ -224, -300, 73, 529 },{ -13, 1 } },
 		{ { 2, -341, 58, -160 },{ 40, -943, -171, 1328 },{ -34, 27 } },
 		{ { -3, -26, 9, 5 },{ -43, -18, -107, 60 },{ 5, 12 } } };
-	static constexpr Weights_ King = {
+	constexpr Weights_ King = {
 		{ { -266, -694, -12, 170 },{ 1077, 3258, 20, -186 },{ -18, 3 } },
 		{ { -284, -451, -31, 43 },{ 230, 1219, -425, 577 },{ -1, 5 } },
 		{ { -334, -157, -67, -93 },{ -510, -701, -863, 1402 },{ 37, -8 } },
@@ -1202,14 +1201,14 @@ namespace PstW
 }
 
 // coefficient (Linear, Log, Locus) * phase (4)
-static constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 27, 2000, 891, 89, -175, 257, 289, -47, 163 };
-static constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 127, 1687, 1644, 1594, -565, -96, 437, 136, 502 };
-static constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 10, -565, 248, 1251, -5, 74, 72, 45, -12 };
-static constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -7, 1755, 324, -1091, -9, 78, 109, 17, -12 };
-static constexpr int N_LOCUS = 22;
+constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 27, 2000, 891, 89, -175, 257, 289, -47, 163 };
+constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 127, 1687, 1644, 1594, -565, -96, 437, 136, 502 };
+constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 10, -565, 248, 1251, -5, 74, 72, 45, -12 };
+constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -7, 1755, 324, -1091, -9, 78, 109, 17, -12 };
+constexpr int N_LOCUS = 22;
 
 // file type (3) * distance from 2d rank/open (5)
-static constexpr array<int, 15> ShelterValue = {  // tuner: type=array, var=26, active=0
+constexpr array<int, 15> ShelterValue = {  // tuner: type=array, var=26, active=0
 	8, 36, 44, 0, 0,	// h-pawns
 	48, 72, 44, 0, 8,	// g
 	96, 28, 32, 0, 0	// f
@@ -1222,7 +1221,7 @@ enum
 	StormOfValue,
 	StormOfScale
 };
-static constexpr array<int, 4> ShelterMod = { 0, 0, 88, 0 };
+constexpr array<int, 4> ShelterMod = { 0, 0, 88, 0 };
 
 enum
 {
@@ -1232,15 +1231,15 @@ enum
 	StormOpenMul,
 	StormFreeMul
 };
-static constexpr array<int, 5> StormQuad = {  // tuner: type=array, var=640, active=0
+constexpr array<int, 5> StormQuad = {  // tuner: type=array, var=640, active=0
 	504, 1312, 1852, 860, 356
 };
-static constexpr array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=0
+constexpr array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=0
 	332, 624, 1752, 1284, 48
 };
 
 // type (9: general, blocked, free, supported, protected, connected, outside, candidate, clear) * phase (4)
-static constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
+constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
 	76, 64, 52, 0,
 	84, 48, 12, 0,
 	-96, 204, 504, 0,
@@ -1250,7 +1249,7 @@ static constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, a
 	128, 32, -64, 0,
 	52, 34, 16,  0,
 	4, 4, 4, 0 };
-static constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
+constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
 	164, 86, 8, 0,
 	444, 394, 344, 0,
 	712, 582, 452, 0,
@@ -1260,7 +1259,7 @@ static constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512,
 	344, 356, 368, 0,
 	108, 122, 136, 0,
 	-72, -50, -28, 0 };
-static constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
+constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
 	0, 0, 0, 0,
 	0, 0, 0, 0,
 	0, 0, 0, 0,
@@ -1271,23 +1270,23 @@ static constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=20
 	0, 0, 0, 0,
 	0, 0, 0, 0 };
 // type (2: att, def) * scaling (2: linear, log) 
-static constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
+constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
 	764, 204, 332, 76
 };
-static constexpr array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
+constexpr array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
 	2536, 16, 932, 264
 };
-static constexpr array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=0
+constexpr array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=0
 	0, 0, 0, 0
 };
 enum { PasserOnePiece, PasserOpKingControl, PasserOpMinorControl, PasserOpRookBlock };
 // case(4) * phase(3 -- no opening)
-static constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active=0
+constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active=0
 	26, 52, 0
 };
 namespace Values
 {
-	static constexpr packed_t PasserOpRookBlock = 
+	constexpr packed_t PasserOpRookBlock = 
 			Pack4(0, Av(PasserSpecial, 3, ::PasserOpRookBlock, 0), Av(PasserSpecial, 3, ::PasserOpRookBlock, 1), Av(PasserSpecial, 3, ::PasserOpRookBlock, 2));
 }
 
@@ -1303,7 +1302,7 @@ namespace Params
 		IsolatedForPiece,
 		JoinedForPiece
 	};
-	static constexpr array<int, 28> Isolated = {
+	constexpr array<int, 28> Isolated = {
 		36, 28, 19, 1,
 		40, 21, 1, 12,
 		-40, -20, -3, -3,
@@ -1315,7 +1314,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::Isolated, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::Isolated, Params::name)
 	VALUE(IsolatedOpen);
 	VALUE(IsolatedClosed);
 	VALUE(IsolatedBlocked);
@@ -1334,14 +1333,14 @@ namespace Params
 		PasserTarget,
 		ChainRoot
 	};
-	static constexpr array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
+	constexpr array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
 		16, 18, 20, 0,
 		-20, -12, -4, 0,
 		36, 16, -4, 0 };
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::Unprotected, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::Unprotected, Params::name)
 	VALUE(UpBlocked);
 	VALUE(PasserTarget);
 	VALUE(ChainRoot);
@@ -1355,13 +1354,13 @@ namespace Params
 		BackwardOpen,
 		BackwardClosed
 	};
-	static constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
+	constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
 		68, 54, 40, 0,
 		16, 10, 4, 0 };
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::Backward, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::Backward, Params::name)
 	VALUE(BackwardOpen);
 	VALUE(BackwardClosed);
 #undef VALUE
@@ -1374,13 +1373,13 @@ namespace Params
 		DoubledOpen,
 		DoubledClosed
 	};
-	static constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
+	constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
 		12, 6, 0, 0,
 		4, 2, 0, 0 };
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::Doubled, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::Doubled, Params::name)
 	VALUE(DoubledOpen);
 	VALUE(DoubledClosed);
 #undef VALUE
@@ -1401,7 +1400,7 @@ namespace Params
 		Rook7thK8th,
 		Rook7thDoubled
 	};
-	static constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
+	constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
 		32, 16, 0, 0,
 		8, 4, 0, 0,
 		44, 38, 32, 0,
@@ -1415,7 +1414,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::RookSpecial, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::RookSpecial, Params::name)
 	VALUE(RookHof);
 	VALUE(RookHofWeakPAtt);
 	VALUE(RookOf);
@@ -1439,10 +1438,9 @@ namespace Params
 		TacticalMinorMinor,
 		TacticalThreat,
 		TacticalDoubleThreat,
-		TacticalNonQuiescent,
 		TacticalUnguardedQ
 	};
-	static constexpr array<int, 32> Tactical = {  // tuner: type=array, var=51, active=0
+	constexpr array<int, 32> Tactical = {  // tuner: type=array, var=51, active=0
 		-6, 12, 23, 0,
 		-1, 10, 22, -1,
 		34, 81, 112, 5,
@@ -1454,7 +1452,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::Tactical, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::Tactical, Params::name)
 	VALUE(TacticalMajorPawn);
 	VALUE(TacticalMinorPawn);
 	VALUE(TacticalMajorMinor);
@@ -1473,14 +1471,14 @@ namespace Params
 		KingDefBishop,
 		KingDefQueen
 	};
-	static constexpr array<int, 12> KingDefence = {  // tuner: type=array, var=13, active=0
+	constexpr array<int, 12> KingDefence = {  // tuner: type=array, var=13, active=0
 		8, 4, 0, 0,
 		0, 2, 4, 0,
 		16, 8, 0, 0 };
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::KingDefence, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::KingDefence, Params::name)
 	VALUE(KingDefKnight);
 	VALUE(KingDefBishop);
 	VALUE(KingDefQueen);
@@ -1496,7 +1494,7 @@ namespace Params
 		PawnBlocked,
 		PawnFileSpan
 	};
-	static constexpr array<int, 16> PawnSpecial = {  // tuner: type=array, var=26, active=0
+	constexpr array<int, 16> PawnSpecial = {  // tuner: type=array, var=26, active=0
 		44, 40, 36, 0,
 		36, 26, 16, 0,
 		0, 18, 36, 0,
@@ -1505,7 +1503,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::PawnSpecial, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::PawnSpecial, Params::name)
 	VALUE(PawnChainLinear);
 	VALUE(PawnChain);
 	VALUE(PawnBlocked);
@@ -1518,23 +1516,17 @@ namespace Params
 	enum 
 	{ 
 		BishopPawnBlock, 
-		BishopOppPawnOffColor, 
-		BishopOppPawnBlock,
 		BishopOutpostNoMinor
 	};
-	static constexpr array<int, 16> BishopSpecial = { // tuner: type=array, var=20, active=0
+	constexpr array<int, 16> BishopSpecial = { // tuner: type=array, var=20, active=0
 		0, 6, 14, 6,
-		12, 4, 12, 0,
-		8, 10, 8, 2,
-		60, 60, 45, 0
+		30, 30, 25, 0
 	};
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::BishopSpecial, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::BishopSpecial, Params::name)
 	VALUE(BishopPawnBlock);
-	VALUE(BishopOppPawnOffColor);
-	VALUE(BishopOppPawnBlock);
 	VALUE(BishopOutpostNoMinor);
 #undef VALUE
 }
@@ -1550,7 +1542,7 @@ namespace Params
 		KnightPawnSpread,
 		KnightPawnGap
 	};
-	static constexpr array<int, 24> KnightSpecial = {  // tuner: type=array, var=26, active=0
+	constexpr array<int, 24> KnightSpecial = {  // tuner: type=array, var=26, active=0
 		40, 40, 24, 0,
 		41, 40, 0, 0,
 		44, 44, 18, 0,
@@ -1561,7 +1553,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::KnightSpecial, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::KnightSpecial, Params::name)
 	VALUE(KnightOutpost);
 	VALUE(KnightOutpostProtected);
 	VALUE(KnightOutpostPawnAtt);
@@ -1581,7 +1573,7 @@ namespace Params
 		SelfPawnPin,
 		SelfPiecePin
 	};
-	static constexpr array<int, 20> Pin = {  // tuner: type=array, var=51, active=0
+	constexpr array<int, 20> Pin = {  // tuner: type=array, var=51, active=0
 		84, 120, 156, 0,
 		24, 172, 320, 0,
 		180, 148, 116, 0,
@@ -1590,7 +1582,7 @@ namespace Params
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::Pin, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::Pin, Params::name)
 	VALUE(WeakPin);
 	VALUE(StrongPin);
 	VALUE(ThreatPin);
@@ -1607,43 +1599,43 @@ namespace Params
 		RKingRay,
 		BKingRay
 	};
-	static constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
+	constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 		17, 26, 33, -2,
 		0, 15, 42, 0,
 		46, 8, 0, -1 };
 }
 namespace Values
 {
-#define VALUE(name) static constexpr packed_t name = Ca4(Params::KingRay, Params::name)
+#define VALUE(name) constexpr packed_t name = Ca4(Params::KingRay, Params::name)
 	VALUE(QKingRay);
 	VALUE(RKingRay);
 	VALUE(BKingRay);
 #undef VALUE
 }
 
-static constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
+constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
 constexpr uint16 KingAttackThreshold = 48;
 
-static constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
-static constexpr array<int, 2> PushW = { 7, -9 };
-static constexpr array<int, 2> Push = { 8, -8 };
-static constexpr array<int, 2> PushE = { 9, -7 };
+constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
+constexpr array<int, 2> PushW = { 7, -9 };
+constexpr array<int, 2> Push = { 8, -8 };
+constexpr array<int, 2> PushE = { 9, -7 };
 
-static constexpr uint16 KingNFlag = 64, KingQFlag = KingNFlag << 2;
-static constexpr uint32 KingNAttack1 = UPack(KingNFlag + 1, KingAttackWeight[0]);
-static constexpr uint32 KingNAttack = UPack(KingNFlag + 2, KingAttackWeight[1]);
-static constexpr uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
-static constexpr uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
-static constexpr uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
-static constexpr uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
-static constexpr uint32 KingQAttack1 = UPack(KingQFlag + 1, KingAttackWeight[6]);
-static constexpr uint32 KingQAttack = UPack(KingQFlag + 2, KingAttackWeight[7]);
-static constexpr uint32 KingPAttack = UPack(2, 0);
-static constexpr uint32 KingAttack = UPack(1, 0);
-static constexpr uint32 KingAttackSquare = KingAttackWeight[8];
-static constexpr uint32 KingNoMoves = KingAttackWeight[9];
-static constexpr uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
+constexpr uint16 KingNFlag = 64, KingQFlag = KingNFlag << 2;
+constexpr uint32 KingNAttack1 = UPack(KingNFlag + 1, KingAttackWeight[0]);
+constexpr uint32 KingNAttack = UPack(KingNFlag + 2, KingAttackWeight[1]);
+constexpr uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
+constexpr uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
+constexpr uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
+constexpr uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
+constexpr uint32 KingQAttack1 = UPack(KingQFlag + 1, KingAttackWeight[6]);
+constexpr uint32 KingQAttack = UPack(KingQFlag + 2, KingAttackWeight[7]);
+constexpr uint32 KingPAttack = UPack(2, 0);
+constexpr uint32 KingAttack = UPack(1, 0);
+constexpr uint32 KingAttackSquare = KingAttackWeight[8];
+constexpr uint32 KingNoMoves = KingAttackWeight[9];
+constexpr uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
 
 template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 {
@@ -1652,8 +1644,8 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-static constexpr array<uint16, 16> XKingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
-static constexpr array<int, 4> XKingCenterScale = { 51, 50, 58, 55 };
+constexpr array<uint16, 16> XKingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
+constexpr array<int, 4> XKingCenterScale = { 51, 50, 58, 55 };
 
 // tuner: stop
 
@@ -3129,12 +3121,6 @@ void calc_material(int index, GMaterial& material)
 		+ (SeeValue[WhiteRook] + Av(MatLinear, 0, 0, 3)) * (rooks[White] - rooks[Black])
 		+ (SeeValue[WhiteQueen] + Av(MatLinear, 0, 0, 4)) * (queens[White] - queens[Black])
 		+ (50 * CP_EVAL + Av(MatLinear, 0, 0, 5)) * ((bishops[White] / 2) - (bishops[Black] / 2));
-	for (int me = 0; me < 2; ++me)
-	{
-		if (pawns[me] > pawns[opp] && queens[me] >= queens[opp] &&
-			((major[me] > major[opp] && major[me] + minor[me] >= major[opp] + minor[opp]) || (major[me] == major[opp] && minor[me] > minor[opp])))
-			score += (me ? -1 : 1) * MatWinnable;
-	}
 
 	int phase = Phase[PieceType[WhitePawn]] * (pawns[White] + pawns[Black])
 		+ Phase[PieceType[WhiteKnight]] * (knights[White] + knights[Black])
@@ -4473,13 +4459,11 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		uint64 v = RO->BishopForward[me][sq] & Pawn(me) & myArea;
 		v |= (v & (RO->File[2] | RO->File[3] | RO->File[4] | RO->File[5] | RO->BMask[sq])) >> 8;	// the ">>8" is just a trick to double-count these without two calls to pop()
 		DecV(EI.score, Values::BishopPawnBlock * pop(v));
-		DecV(EI.score, Values::BishopOppPawnOffColor * pop(Pawn(opp) & ~myArea));
-		DecV(EI.score, Values::BishopOppPawnBlock * pop(Pawn(opp) & myArea & ~EI.free[me]));
 		if (T(b & Outpost[me]) 
 			&& F(Knight(opp)) 
 			&& T(Current->patt[me] & b)
-			&& F(Pawn(opp) & RO->PIsolated[FileOf(sq)] & RO->Forward[me][RankOf(sq)])
-			&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
+			&& F(Pawn(opp) & (RO->PCone[me][sq] ^ RO->PWay[me][sq]))
+			&& F(Bishop(opp) & myArea))
 					IncV(EI.score, Values::BishopOutpostNoMinor);
 	}
 }
@@ -4575,7 +4559,7 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 12, 8, 2, -2 };
+	constexpr array<int, 4> PHASE = { 12, 8, 2, -2 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
@@ -4695,8 +4679,8 @@ template<class POP> int closure()
 
 template<bool me> void eval_castling(GEvalInfo& EI)
 {
-	static constexpr array<int, 2> now = { 30, 10 };
-	static constexpr array<int, 2> later = { 15, 5 };
+	constexpr array<int, 2> now = { 30, 10 };
+	constexpr array<int, 2> later = { 15, 5 };
 	uint64 occ = PieceAll();
 	if (can_castle(occ, me, true))
 		IncV(EI.score, Pack4(now[0], 0, 0, 0));
@@ -8145,7 +8129,6 @@ sint64 get_time()
 void send_pv(int depth, int alpha, int beta, int score)
 {
 	int i, pos, move, mate = 0, mate_score, sel_depth;
-	sint64 nps, snodes, tbhits = 0;
 	if (F(Print))
 		return;
 	for (sel_depth = 1; sel_depth < 127 && T((Data + sel_depth)->att[0]); ++sel_depth)
@@ -8216,27 +8199,24 @@ void send_pv(int depth, int alpha, int beta, int score)
 		score_string[2] = ' ';
 		score_string[3] = 0;
 	}
-	nps = get_time() - StartTime;
+	sint64 tbhits = 0, elapsed = get_time() - StartTime;
 #ifdef MP_NPS
-	snodes = Smpi->nodes;
+	sint64 snodes = Smpi->nodes;
 #ifdef TB
 	tbhits = Smpi->tb_hits;
 #endif
 #else
-	snodes = nodes;
+	sint64 snodes = nodes;
 #endif
-	if (nps)
-		nps = (snodes * 1000ll) / nps;
-	else
-		nps = 12345;
+	sint64 nps = elapsed ? (snodes * 1000ll) / elapsed : 12345;
 	if (score < beta)
 	{
 		if (score <= alpha)
-			fprintf(stdout, "info depth %d seldepth %d score %s%d upperbound nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
-					(mate ? mate_score : score / CP_SEARCH), snodes, nps, tbhits, pv_string);
+			fprintf(stdout, "info depth %d seldepth %d score %s%d upperbound time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, 
+					score_string, (mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
 		else
-			fprintf(stdout, "info depth %d seldepth %d score %s%d nodes %I64d nps  %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string, 
-					(mate ? mate_score : score / CP_SEARCH), snodes, nps, tbhits, pv_string);
+			fprintf(stdout, "info depth %d seldepth %d score %s%d time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string, 
+					(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
 	}
 	else
 		fprintf(stdout, "info depth %d seldepth %d score %s%d lowerbound nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
