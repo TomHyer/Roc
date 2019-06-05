@@ -744,7 +744,7 @@ uint64 RMagicMask[64];
 uint64 NAtt[64];
 uint64 RangeK1[64];
 uint64 RangeK2[64];
-uint64 NArea[64];
+uint64 NAttAtt[64];
 uint64 BishopForward[2][64];
 uint64 PAtt[2][64];
 uint64 PMove[2][64];
@@ -3338,7 +3338,7 @@ void init_misc()
 	for (int i = 0; i < 64; ++i)
 	{
 		HLine[i] = VLine[i] = NDiag[i] = SDiag[i] = RMask[i] = BMask[i] = QMask[i] = 0;
-		BMagicMask[i] = RMagicMask[i] = NAtt[i] = RangeK1[i] = RangeK2[i] = NArea[i] = 0;
+		BMagicMask[i] = RMagicMask[i] = NAtt[i] = RangeK1[i] = RangeK2[i] = NAttAtt[i] = 0;
 		PAtt[0][i] = PAtt[1][i] = PMove[0][i] = PMove[1][i] = PWay[0][i] = PWay[1][i] = PCone[0][i] = PCone[1][i] 
 				= PSupport[0][i] = PSupport[1][i] = BishopForward[0][i] = BishopForward[1][i] = 0;
 		for (int j = 0; j < 64; ++j) 
@@ -3423,7 +3423,7 @@ void init_misc()
 	for (int i = 0; i < 64; ++i)
 		for (int j = 0; j < 64; ++j)
 			if (NAtt[i] & NAtt[j])
-				NArea[i] |= Bit(j);
+				NAttAtt[i] |= Bit(j);
 
 	for (int i = 0; i < 8; ++i)
 	{
@@ -6061,8 +6061,8 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 {
 	POP pop;
 	Current->xray[me] = 0;
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? RO->KingPAttack : 0;
-	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * RO->PawnSpecial[PawnBlocked]);
+	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingPAttack : 0;
+	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * PawnSpecial[PawnBlocked]);
 	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
 	eval_queens<me, POP>(EI);
 	EI.free[me] |= Rook(opp);
@@ -7031,6 +7031,19 @@ template <bool me> void gen_root_moves()
 	*p = 0;
 }
 
+template<bool me> INLINE bool forkable(int dst)
+{
+	if (NAttAtt[dst] & King(me))
+	{
+		for (uint64 nn = Knight(opp) & NAttAtt[dst]; nn; Cut(nn))
+		{
+			if (T(NAtt[dst] & NAtt[lsb(nn)] & NAtt[lsb(King(me))]))
+				return true;
+		}
+	}
+	return false;
+}
+
 template <bool me> int* gen_captures(int* list)
 {
 	uint64 u, v;
@@ -7041,9 +7054,10 @@ template <bool me> int* gen_captures(int* list)
 	for (u = Pawn(me) & OwnLine(me, 6); T(u); Cut(u))
 		if (F(PieceAt(lsb(u) + Push[me])))
 		{
-			list = AddMove(list, lsb(u), lsb(u) + Push[me], FlagPQueen, MvvLvaPromotion);
-			if (HasBit(NAtt[lsb(King(opp))], lsb(u) + Push[me]))
-				list = AddMove(list, lsb(u), lsb(u) + Push[me], FlagPKnight, MvvLvaPromotionKnight);
+			int from = lsb(u), to = from + Push[me];
+			list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotion);
+			if (T(NAtt[to] & King(opp)) || forkable<me>(to))	// Roc v Hannibal, 64th amateur series A round 2, proved the need for this second test
+				list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnight);
 		}
 	for (v = ShiftW<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
 	{
@@ -7370,7 +7384,7 @@ template <bool me> int* gen_checks(int* list)
 	}
 
 	const uint64 nonDiscover = ~(Current->xray[me] & Piece(me));  // exclude pieces already checked
-	for (u = Knight(me) & NArea[king] & nonDiscover; T(u); Cut(u))
+	for (u = Knight(me) & NAttAtt[king] & nonDiscover; T(u); Cut(u))
 		for (v = NAtt[king] & NAtt[lsb(u)] & clear; T(v); Cut(v))
 			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
 
