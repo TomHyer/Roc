@@ -495,8 +495,8 @@ static const int FailLoGrowth = 37;	// numerator; denominator is 64
 static const int FailHiGrowth = 26;	// numerator; denominator is 64
 static const int FailLoDelta = 27;
 static const int FailHiDelta = 24;
-static const int InitiativeConst = 3 * CP_SEARCH;
-static const int InitiativePhase = 0 * CP_SEARCH;
+static const int InitiativeConst = 2 * CP_SEARCH;
+static const int InitiativePhase = 2 * CP_SEARCH;
 static const int FutilityThreshold = 50 * CP_SEARCH;
 
 #ifdef EXPLAIN_EVAL
@@ -7578,8 +7578,10 @@ template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int fla
 		return q_evasion<me, pv>(alpha, beta, depth, FlagHashCheck);
 
 	int initiative = InitiativeConst;
-//	if (F(Current->material & FlagUnusualMaterial) && Current->material < TotalMat)
-//		initiative += (InitiativePhase * Material[Current->material].phase) / MAX_PHASE;
+	if (F(NonPawnKing(me) | (Current->passer & Pawn(me))))
+		initiative = 0;
+	else if (F(Current->material & FlagUnusualMaterial) && Current->material < TotalMat)
+		initiative += (InitiativePhase * Material[Current->material].phase) / MAX_PHASE;
 	score = Current->score + initiative;
 	if (score > alpha)
 	{
