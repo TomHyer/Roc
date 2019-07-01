@@ -4314,15 +4314,15 @@ template<bool me> void eval_np(GEvalInfo& EI, pop_func_t)
 template<bool me> void eval_knppkbx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Knight(me) && Single(Knight(me)) && Multiple(Pawn(me)) && Bishop(opp) && Single(Bishop(opp)));
-	static const uint64 AB = File[0] | File[1], ABC = AB | File[2];
-	static const uint64 GH = File[6] | File[7], FGH = GH | File[5];
+	constexpr uint64 AB = File[0] | File[1], ABC = AB | File[2];
+	constexpr uint64 GH = File[6] | File[7], FGH = GH | File[5];
 	if (F(Pawn(me) & ~AB) && T(King(opp) & ABC))
 	{
 		uint64 back = Forward[opp][RankOf(lsb(King(opp)))];
 		if (T(back & Pawn(me)))
 			EI.mul = Min(EI.mul, T(King(me) & AB & ~back) ? 24 : 8);
 	}
-	if (F(Pawn(me) & ~GH) && T(King(opp) & FGH))
+	else if (F(Pawn(me) & ~GH) && T(King(opp) & FGH))
 	{
 		uint64 back = Forward[opp][RankOf(lsb(King(opp)))];
 		if (T(back & Pawn(me)))
@@ -6584,15 +6584,17 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 	best->ply = Current->ply;
 }
 
-template <bool pv> INLINE int extension(int move, int depth)
+template<bool me, bool pv> INLINE int extension(int move, int depth)
 {
 	int from = From(move);
-	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
+	if (HasBit(Current->passer, from))
 	{
-		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][from] & Pawn(Current->turn))))
+		int rank = OwnRank(me, from);
+		if (rank >= 5 && depth < 16)
 			return pv ? 2 : 1;
+		//if (2*rank + depth >= 18 && 2 * rank + depth <= 24 && F(PWay[me][from] & Piece(opp)) && F(PCone[me][from] & King(opp)))
+		//	return (pv && depth < 10) ? 2 : 1;
 	}
-
 	return 0;
 }
 
@@ -8266,7 +8268,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = is_check<me>(move) ? 1 + (depth < 16) : extension<0>(move, depth);
+				ext = is_check<me>(move) ? 1 + (depth < 16) : extension<me, 0>(move, depth);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -8348,7 +8350,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		if (check && see<me>(move, 0, SeeValue))
 			ext = 1 + (depth < 16);
 		else
-			ext = extension<0>(move, depth);
+			ext = extension<me, 0>(move, depth);
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -8591,7 +8593,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = is_check<me>(move) ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<0>(move, depth));
+				ext = is_check<me>(move) ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<me, 0>(move, depth));
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -8644,7 +8646,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			continue;
 		}
 		bool check = is_check<me>(move);
-		ext = check ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<0>(move, depth));
+		ext = check ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<me, 0>(move, depth));
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -8820,7 +8822,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 			if (Print)
 				sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt);
 		}
-		ext = is_check<me>(move) ? 2 : Max(pext, extension<1>(move, depth));
+		ext = is_check<me>(move) ? 2 : Max(pext, extension<me, 1>(move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
 			int margin_one = hash_value - ExclSinglePV(depth);
@@ -8921,7 +8923,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		if (IsRepetition(alpha + 1, move))
 			continue;
 		bool check = is_check<me>(move);
-		ext = check ? 2 : Max(pext, extension<1>(move, depth));
+		ext = check ? 2 : Max(pext, extension<me, 1>(move, depth));
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
@@ -9305,7 +9307,7 @@ template <bool me> int multipv(int depth)
 		move_to_string(move, score_string);
 		if (T(Print))
 			sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt + 1);
-		new_depth = depth - 2 + (ext = extension<1>(move, depth));
+		new_depth = depth - 2 + (ext = extension<me, 1>(move, depth));
 		do_move<me>(move);
 		value = -pv_search<opp, 0>(-MateValue, MateValue, new_depth, ExtToFlag(ext));
 		MultiPV[cnt] |= value << 16;
@@ -9330,7 +9332,7 @@ template <bool me> int multipv(int depth)
 		move_to_string(move, score_string);
 		if (T(Print))
 			sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt + 1);
-		new_depth = depth - 2 + (ext = extension<1>(move, depth));
+		new_depth = depth - 2 + (ext = extension<me, 1>(move, depth));
 		do_move<me>(move);
 		value = -scout<opp, 0>(-low, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value > low)
