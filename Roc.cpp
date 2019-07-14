@@ -128,7 +128,7 @@ unsigned tb_probe_root_fwd(
 	unsigned _ep,
 	bool     _turn);
 
-static inline unsigned tb_probe_root_checked(
+inline unsigned tb_probe_root_checked(
 	uint64_t _white,
 	uint64_t _black,
 	uint64_t _kings,
@@ -170,11 +170,11 @@ INLINE sint16 Closed(packed_t x) { return 0; }
 #else
 typedef sint64 packed_t;
 
-INLINE packed_t Pack4(sint16 op, sint16 mid, sint16 eg, sint16 asym)
+INLINE constexpr packed_t Pack4(sint16 op, sint16 mid, sint16 eg, sint16 asym)
 {
 	return op + (static_cast<sint64>(mid) << 16) + (static_cast<sint64>(eg) << 32) + (static_cast<sint64>(asym) << 48);
 }
-INLINE packed_t Pack2(sint16 x, sint16 y)
+INLINE constexpr packed_t Pack2(sint16 x, sint16 y)
 {
 	return Pack4(x, (x + y) / 2, y, 0);
 }
@@ -188,7 +188,7 @@ INLINE sint16 Closed(packed_t x) { return static_cast<sint16>((x >> 48) + ((x >>
 
 
 // unsigned for king_att
-INLINE uint32 UPack(uint16 x, uint16 y)
+INLINE constexpr uint32 UPack(uint16 x, uint16 y)
 {
 	return x + (static_cast<uint32>(y) << 16);
 }
@@ -273,11 +273,11 @@ inline void SetScore(int* move, uint16 score)
 	*move = (*move & 0xFFFF) | (score << 16);
 }  // notice this operates on long-form (int) moves
 
-static const uint64 Filled = 0xFFFFFFFFFFFFFFFF;
-static const uint64 Interior = 0x007E7E7E7E7E7E00;
-static const uint64 Boundary = ~Interior;
-static const uint64 LightArea = 0x55AA55AA55AA55AA;
-static const uint64 DarkArea = ~LightArea;
+constexpr uint64 Filled = 0xFFFFFFFFFFFFFFFF;
+constexpr uint64 Interior = 0x007E7E7E7E7E7E00;
+constexpr uint64 Boundary = ~Interior;
+constexpr uint64 LightArea = 0x55AA55AA55AA55AA;
+constexpr uint64 DarkArea = ~LightArea;
 
 INLINE uint32 High32(const uint64& x)
 {
@@ -288,18 +288,18 @@ INLINE uint32 Low32(const uint64& x)
 	return (uint32)(x);
 }
 
-static const int N_KILLER = 2;
+constexpr int N_KILLER = 2;
 
-static const int MAX_PHASE = 128;
-static const int MIDDLE_PHASE = 64;
-static const int PHASE_M2M = MAX_PHASE - MIDDLE_PHASE;
+constexpr int MAX_PHASE = 128;
+constexpr int MIDDLE_PHASE = 64;
+constexpr int PHASE_M2M = MAX_PHASE - MIDDLE_PHASE;
 
-static const int MAX_HEIGHT = 128;
+constexpr int MAX_HEIGHT = 128;
 
 typedef sint16 score_t;
 
-static const score_t CP_EVAL = 4;	// numeric value of 1 centipawn, in eval phase
-static const score_t CP_SEARCH = 4;	// numeric value of 1 centipawn, in search phase (# of value equivalence classes in 1-cp interval)
+constexpr score_t CP_EVAL = 4;	// numeric value of 1 centipawn, in eval phase
+constexpr score_t CP_SEARCH = 4;	// numeric value of 1 centipawn, in search phase (# of value equivalence classes in 1-cp interval)
 
 // helper to divide intermediate quantities to form scores
 // note that straight integer division (a la Gull) creates an attractor at 0
@@ -308,52 +308,52 @@ template<int DEN, int SINK> struct Div_
 {
 	int operator()(int x) const
 	{
-		static const int shift = std::numeric_limits<int>::max / (2 * DEN);
-		static const int shrink = (SINK - DEN) / 2;
+		constexpr int shift = std::numeric_limits<int>::max / (2 * DEN);
+		constexpr int shrink = (SINK - DEN) / 2;
 		x = x > 0 ? max(0, x - shrink) : min(0, x + shrink);
 		return (y + DEN * shift) / DEN - shift;
 	}
 };
 
-static const uint8 White = 0;
-static const uint8 Black = 1;
-static const uint8 WhitePawn = 2;
-static const uint8 BlackPawn = 3;
-static const uint8 IPawn[2] = { WhitePawn, BlackPawn };
-static const uint8 WhiteKnight = 4;
-static const uint8 BlackKnight = 5;
-static const uint8 IKnight[2] = { WhiteKnight, BlackKnight };
-static const uint8 WhiteLight = 6;
-static const uint8 BlackLight = 7;
-static const uint8 ILight[2] = { WhiteLight, BlackLight };
-static const uint8 WhiteDark = 8;
-static const uint8 BlackDark = 9;
-static const uint8 IDark[2] = { WhiteDark, BlackDark };
-static const uint8 WhiteRook = 10;
-static const uint8 BlackRook = 11;
-static const uint8 IRook[2] = { WhiteRook, BlackRook };
-static const uint8 WhiteQueen = 12;
-static const uint8 BlackQueen = 13;
-static const uint8 IQueen[2] = { WhiteQueen, BlackQueen };
-static const uint8 WhiteKing = 14;
-static const uint8 BlackKing = 15;
-static const uint8 IKing[2] = { WhiteKing, BlackKing };
+constexpr uint8 White = 0;
+constexpr uint8 Black = 1;
+constexpr uint8 WhitePawn = 2;
+constexpr uint8 BlackPawn = 3;
+constexpr uint8 IPawn[2] = { WhitePawn, BlackPawn };
+constexpr uint8 WhiteKnight = 4;
+constexpr uint8 BlackKnight = 5;
+constexpr uint8 IKnight[2] = { WhiteKnight, BlackKnight };
+constexpr uint8 WhiteLight = 6;
+constexpr uint8 BlackLight = 7;
+constexpr uint8 ILight[2] = { WhiteLight, BlackLight };
+constexpr uint8 WhiteDark = 8;
+constexpr uint8 BlackDark = 9;
+constexpr uint8 IDark[2] = { WhiteDark, BlackDark };
+constexpr uint8 WhiteRook = 10;
+constexpr uint8 BlackRook = 11;
+constexpr uint8 IRook[2] = { WhiteRook, BlackRook };
+constexpr uint8 WhiteQueen = 12;
+constexpr uint8 BlackQueen = 13;
+constexpr uint8 IQueen[2] = { WhiteQueen, BlackQueen };
+constexpr uint8 WhiteKing = 14;
+constexpr uint8 BlackKing = 15;
+constexpr uint8 IKing[2] = { WhiteKing, BlackKing };
 INLINE bool IsBishop(uint8 piece)
 {
 	return piece >= WhiteLight && piece < WhiteRook;
 }
 
-static const uint8 CanCastle_OO = 1;
-static const uint8 CanCastle_oo = 2;
-static const uint8 CanCastle_OOO = 4;
-static const uint8 CanCastle_ooo = 8;
+constexpr uint8 CanCastle_OO = 1;
+constexpr uint8 CanCastle_oo = 2;
+constexpr uint8 CanCastle_OOO = 4;
+constexpr uint8 CanCastle_ooo = 8;
 
-static const uint16 FlagCastling = 0x1000;  // also overloaded to flag "joins", desirable quiet moves
-static const uint16 FlagEP = 0x2000;
-static const uint16 FlagPKnight = 0x4000;
-static const uint16 FlagPBishop = 0x6000;
-static const uint16 FlagPRook = 0xA000;
-static const uint16 FlagPQueen = 0xC000;
+constexpr uint16 FlagCastling = 0x1000;  // also overloaded to flag "joins", desirable quiet moves
+constexpr uint16 FlagEP = 0x2000;
+constexpr uint16 FlagPKnight = 0x4000;
+constexpr uint16 FlagPBishop = 0x6000;
+constexpr uint16 FlagPRook = 0xA000;
+constexpr uint16 FlagPQueen = 0xC000;
 
 INLINE bool IsPromotion(uint16 move)
 {
@@ -413,25 +413,25 @@ constexpr array<int, 64> ROffset = { 5248,  9344,  11392, 13440, 15488, 17536, 1
 uint64* BOffsetPointer[64];
 uint64* ROffsetPointer[64];
 
-static const int MatWQ = 1;
-static const int MatBQ = 3 * MatWQ;
-static const int MatWR = 3 * MatBQ;
-static const int MatBR = 3 * MatWR;
-static const int MatWL = 3 * MatBR;
-static const int MatBL = 2 * MatWL;
-static const int MatWD = 2 * MatBL;
-static const int MatBD = 2 * MatWD;
-static const int MatWN = 2 * MatBD;
-static const int MatBN = 3 * MatWN;
-static const int MatWP = 3 * MatBN;
-static const int MatBP = 9 * MatWP;
-static const int TotalMat = 2 * (MatWQ + MatBQ) + MatWL + MatBL + MatWD + MatBD + 2 * (MatWR + MatBR + MatWN + MatBN) + 8 * (MatWP + MatBP) + 1;
-static const int FlagUnusualMaterial = 1 << 30;
+constexpr int MatWQ = 1;
+constexpr int MatBQ = 3 * MatWQ;
+constexpr int MatWR = 3 * MatBQ;
+constexpr int MatBR = 3 * MatWR;
+constexpr int MatWL = 3 * MatBR;
+constexpr int MatBL = 2 * MatWL;
+constexpr int MatWD = 2 * MatBL;
+constexpr int MatBD = 2 * MatWD;
+constexpr int MatWN = 2 * MatBD;
+constexpr int MatBN = 3 * MatWN;
+constexpr int MatWP = 3 * MatBN;
+constexpr int MatBP = 9 * MatWP;
+constexpr int TotalMat = 2 * (MatWQ + MatBQ) + MatWL + MatBL + MatWD + MatBD + 2 * (MatWR + MatBR + MatWN + MatBN) + 8 * (MatWP + MatBP) + 1;
+constexpr int FlagUnusualMaterial = 1 << 30;
 
 constexpr array<int, 16> MatCode = { 0, 0, MatWP, MatBP, MatWN, MatBN, MatWL, MatBL, MatWD, MatBD, MatWR, MatBR, MatWQ, MatBQ, 0, 0 };
-static const uint64 FileA = 0x0101010101010101;
+constexpr uint64 FileA = 0x0101010101010101;
 constexpr array<uint64, 8> File = { FileA, FileA << 1, FileA << 2, FileA << 3, FileA << 4, FileA << 5, FileA << 6, FileA << 7 };
-static const uint64 Line0 = 0x00000000000000FF;
+constexpr uint64 Line0 = 0x00000000000000FF;
 constexpr array<uint64, 8> Line = { Line0, (Line0 << 8), (Line0 << 16), (Line0 << 24), (Line0 << 32), (Line0 << 40), (Line0 << 48), (Line0 << 56) };
 
 #define opp (1 ^ (me))
@@ -465,9 +465,9 @@ template <bool me> INLINE uint64 Shift(const uint64& target)
 {
 	return me ? target >> 8 : target << 8;
 }
-static constexpr array<int, 2> PushW = { 7, -9 };
-static constexpr array<int, 2> Push = { 8, -8 };
-static constexpr array<int, 2> PushE = { 9, -7 };
+constexpr array<int, 2> PushW = { 7, -9 };
+constexpr array<int, 2> Push = { 8, -8 };
+constexpr array<int, 2> PushE = { 9, -7 };
 
 // THIS IS A NON-TEMPLATE FUNCTION BECAUSE MY COMPILER (Visual C++ 2015, Community Edition) CANNOT INLINE THE TEMPLATE VERSION CORRECTLY
 INLINE const uint64& OwnLine(bool me, int n)
@@ -476,28 +476,28 @@ INLINE const uint64& OwnLine(bool me, int n)
 }
 
 // Constants controlling play
-static const int PliesToEvalCut = 50;	// halfway to 50-move
-static const int KingSafetyNoQueen = 8;	// numerator; denominator is 16
-static const int SeeThreshold = 40 * CP_EVAL;
-static const int DrawCapConstant = 100 * CP_EVAL;
-static const int DrawCapLinear = 0;	// numerator; denominator is 64
-static const int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
-static const int TBMinDepth = 7;
+constexpr int PliesToEvalCut = 50;	// halfway to 50-move
+constexpr int KingSafetyNoQueen = 8;	// numerator; denominator is 16
+constexpr int SeeThreshold = 40 * CP_EVAL;
+constexpr int DrawCapConstant = 100 * CP_EVAL;
+constexpr int DrawCapLinear = 0;	// numerator; denominator is 64
+constexpr int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
+constexpr int TBMinDepth = 7;
 
 inline int MapPositive(int scale, int param)
 {
 	return param > scale ? param : (scale * scale) / (2 * scale - param);
 }
 
-static const int FailLoInit = 22;
-static const int FailHiInit = 31;
-static const int FailLoGrowth = 37;	// numerator; denominator is 64
-static const int FailHiGrowth = 26;	// numerator; denominator is 64
-static const int FailLoDelta = 27;
-static const int FailHiDelta = 24;
-static const int InitiativeConst = 2 * CP_SEARCH;
-static const int InitiativePhase = 2 * CP_SEARCH;
-static const int FutilityThreshold = 50 * CP_SEARCH;
+constexpr int FailLoInit = 22;
+constexpr int FailHiInit = 31;
+constexpr int FailLoGrowth = 37;	// numerator; denominator is 64
+constexpr int FailHiGrowth = 26;	// numerator; denominator is 64
+constexpr int FailLoDelta = 27;
+constexpr int FailHiDelta = 24;
+constexpr int InitiativeConst = 2 * CP_SEARCH;
+constexpr int InitiativePhase = 2 * CP_SEARCH;
+constexpr int FutilityThreshold = 50 * CP_SEARCH;
 
 #ifdef EXPLAIN_EVAL
 FILE* fexplain;
@@ -514,9 +514,9 @@ char GullCppFile[16384][256];
 #endif
 #define DecV(var, x) IncV(var, -(x))
 
-static const sint16 KpkValue = 300 * CP_EVAL;
-static const sint16 EvalValue = 30000;
-static const sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
+constexpr sint16 KpkValue = 300 * CP_EVAL;
+constexpr sint16 EvalValue = 30000;
+constexpr sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
 
 
 /*
@@ -551,8 +551,8 @@ const int MvvLvaAttackerKB[16] = { 0, 0, 9, 9, 7, 7, 5, 5, 5, 5, 3, 3, 1, 1, 11,
 #define MvvLvaPromotionKnightCap(capture) (MvvLva[WhiteKing][capture])
 #define MvvLvaXray (MvvLva[WhiteQueen][WhitePawn])
 #define MvvLvaXrayCap(capture) (MvvLva[WhiteKing][capture])
-static const int RefOneScore = (0xFF << 16) | (3 << 24);
-static const int RefTwoScore = (0xFF << 16) | (2 << 24);
+constexpr int RefOneScore = (0xFF << 16) | (3 << 24);
+constexpr int RefTwoScore = (0xFF << 16) | (2 << 24);
 
 #define halt_check                         \
     if ((Current - Data) >= 126)           \
@@ -573,13 +573,13 @@ INLINE int ExtFromFlag(int flags)
 {
 	return (flags >> 16) & 0xF;
 }
-static const int FlagHashCheck = 1 << 20;  // first 20 bits are reserved for the hash killer and extension
-static const int FlagHaltCheck = 1 << 21;
-static const int FlagCallEvaluation = 1 << 22;
-static const int FlagDisableNull = 1 << 23;
-static const int FlagNeatSearch = FlagHashCheck | FlagHaltCheck | FlagCallEvaluation;
-static const int FlagNoKillerUpdate = 1 << 24;
-static const int FlagReturnBestMove = 1 << 25;
+constexpr int FlagHashCheck = 1 << 20;  // first 20 bits are reserved for the hash killer and extension
+constexpr int FlagHaltCheck = 1 << 21;
+constexpr int FlagCallEvaluation = 1 << 22;
+constexpr int FlagDisableNull = 1 << 23;
+constexpr int FlagNeatSearch = FlagHashCheck | FlagHaltCheck | FlagCallEvaluation;
+constexpr int FlagNoKillerUpdate = 1 << 24;
+constexpr int FlagReturnBestMove = 1 << 25;
 
 typedef struct
 {
@@ -633,8 +633,8 @@ typedef struct
 } GData;
 __declspec(align(64)) GData Data[MAX_HEIGHT];
 GData* Current = Data;
-static const uint8 FlagSort = 1 << 0;
-static const uint8 FlagNoBcSort = 1 << 1;
+constexpr uint8 FlagSort = 1 << 0;
+constexpr uint8 FlagNoBcSort = 1 << 1;
 GData SaveData[1];
 
 enum
@@ -656,7 +656,7 @@ enum
 	r_checks,
 	r_none
 };
-static const int StageNone = (1 << s_none) | (1 << e_none) | (1 << r_none);
+constexpr int StageNone = (1 << s_none) | (1 << e_none) | (1 << r_none);
 
 typedef struct
 {
@@ -669,11 +669,11 @@ typedef struct
 	uint8 low_depth;
 	uint8 high_depth;
 } GEntry;
-static GEntry NullEntry = { 0, 1, 0, 0, 0, 0, 0, 0 };
+constexpr GEntry NullEntry = { 0, 1, 0, 0, 0, 0, 0, 0 };
 #ifndef TUNER
-static const int initial_hash_size = 1024 * 1024;
+constexpr int initial_hash_size = 1024 * 1024;
 #else
-static const int initial_hash_size = 64 * 1024;
+constexpr int initial_hash_size = 64 * 1024;
 GEntry HashOne[initial_hash_size];
 GEntry HashTwo[initial_hash_size];
 #endif
@@ -688,17 +688,17 @@ struct GPawnEntry
 	array<sint16, 2> shelter;
 	array<uint8, 2> passer, draw;
 };
-static const GPawnEntry NullPawnEntry = { 0, 0, {0, 0}, {0, 0}, {0, 0} };
+constexpr GPawnEntry NullPawnEntry = { 0, 0, {0, 0}, {0, 0}, {0, 0} };
 #ifndef TUNER
-static const int pawn_hash_size = 1 << 20;
+constexpr int pawn_hash_size = 1 << 20;
 __declspec(align(64)) array<GPawnEntry, pawn_hash_size> PawnHash;
 #else
-static const int pawn_hash_size = 1 << 15;
+constexpr int pawn_hash_size = 1 << 15;
 __declspec(align(64)) GPawnEntry PawnHashOne[pawn_hash_size];
 __declspec(align(64)) GPawnEntry PawnHashTwo[pawn_hash_size];
 GPawnEntry* PawnHash = PawnHashOne;
 #endif
-static const int pawn_hash_mask = pawn_hash_size - 1;
+constexpr int pawn_hash_mask = pawn_hash_size - 1;
 
 typedef struct
 {
@@ -712,16 +712,16 @@ typedef struct
 	uint8 depth;
 	uint8 ex_depth;
 } GPVEntry;
-static const GPVEntry NullPVEntry = { 0, 0, 0, 1, 0, 0, 0, 0, 0 };
+constexpr GPVEntry NullPVEntry = { 0, 0, 0, 1, 0, 0, 0, 0, 0 };
 #ifndef TUNER
-static const int pv_hash_size = 1 << 20;
+constexpr int pv_hash_size = 1 << 20;
 #else
-static const int pv_hash_size = 1 << 14;
+constexpr int pv_hash_size = 1 << 14;
 GPVEntry PVHashOne[pv_hash_size];
 GPVEntry PVHashTwo[pv_hash_size];
 #endif
-static const int pv_cluster_size = 1 << 2;
-static const int pv_hash_mask = pv_hash_size - pv_cluster_size;
+constexpr int pv_cluster_size = 1 << 2;
+constexpr int pv_hash_mask = pv_hash_size - pv_cluster_size;
 GPVEntry* PVHash = nullptr;
 
 array<int, 256> RootList;
@@ -747,10 +747,10 @@ uint64 KAttAtt[64];
 uint64 NAttAtt[64];
 uint64 BishopForward[2][64];
 uint64 PAtt[2][64];
+uint64 PSupport[2][64];
 uint64 PMove[2][64];
 uint64 PWay[2][64];
 uint64 PCone[2][64];	// wider than PWay
-uint64 PSupport[2][64];
 uint64 Between[64][64];
 uint64 FullLine[64][64];
 
@@ -890,8 +890,8 @@ struct GMaterial
 #endif
 };
 GMaterial* Material;
-static const int FlagSingleBishop[2] = { 1, 2 };
-static const int FlagCallEvalEndgame[2] = { 4, 8 };
+constexpr int FlagSingleBishop[2] = { 1, 2 };
+constexpr int FlagCallEvalEndgame[2] = { 4, 8 };
 #ifndef TUNER
 array<packed_t, 16 * 64> PstVals;
 #else
@@ -1084,18 +1084,18 @@ int CpuTiming = 0, UciMaxDepth = 0, UciMaxKNodes = 0, UciBaseTime = 1000, UciInc
 int GlobalTime[2] = { 0, 0 };
 int GlobalInc[2] = { 0, 0 };
 int GlobalTurn = 0;
-static const sint64 CyclesPerMSec = 3400000;
+constexpr sint64 CyclesPerMSec = 3400000;
 #endif
 int Aspiration = 1, LargePages = 1;
-static const int TimeSingTwoMargin = 20;
-static const int TimeSingOneMargin = 30;
-static const int TimeNoPVSCOMargin = 60;
-static const int TimeNoChangeMargin = 70;
-static const int TimeRatio = 120;
-static const int PonderRatio = 120;
-static const int MovesTg = 30;
-static const int InfoLag = 5000;
-static const int InfoDelay = 1000;
+constexpr int TimeSingTwoMargin = 20;
+constexpr int TimeSingOneMargin = 30;
+constexpr int TimeNoPVSCOMargin = 60;
+constexpr int TimeNoChangeMargin = 70;
+constexpr int TimeRatio = 120;
+constexpr int PonderRatio = 120;
+constexpr int MovesTg = 30;
+constexpr int InfoLag = 5000;
+constexpr int InfoDelay = 1000;
 sint64 StartTime, InfoTime, CurrTime;
 uint16 SMoves[256];
 
@@ -1133,7 +1133,7 @@ constexpr int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 * Phase
 #ifndef TUNER
 #define V(x) (x)
 #else
-static const int MaxVariables = 1024;
+constexpr int MaxVariables = 1024;
 int var_number, active_vars;
 typedef struct
 {
@@ -1426,7 +1426,7 @@ constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active
 };
 namespace Values
 {
-	static const packed_t PasserOpRookBlock = 
+	constexpr packed_t PasserOpRookBlock = 
 			Pack4(0, Av(PasserSpecial, 3, ::PasserOpRookBlock, 0), Av(PasserSpecial, 3, ::PasserOpRookBlock, 1), Av(PasserSpecial, 3, ::PasserOpRookBlock, 2));
 }
 
@@ -1610,18 +1610,18 @@ constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 
 constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
-static const uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
-static const uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
-static const uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
-static const uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
-static const uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
-static const uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
-static const uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
-static const uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
-static const uint32 KingAttack = UPack(1, 0);
-static const uint32 KingAttackSquare = KingAttackWeight[8];
-static const uint32 KingNoMoves = KingAttackWeight[9];
-static const uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
+constexpr uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
+constexpr uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
+constexpr uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
+constexpr uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
+constexpr uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
+constexpr uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
+constexpr uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
+constexpr uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
+constexpr uint32 KingAttack = UPack(1, 0);
+constexpr uint32 KingAttackSquare = KingAttackWeight[8];
+constexpr uint32 KingNoMoves = KingAttackWeight[9];
+constexpr uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
 
 template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 {
@@ -1653,9 +1653,9 @@ constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 
 int PrN = 1, CPUs = 1, HT = 0, parent = 1, child = 0, WinParId, Id = 0, ResetHash = 1, NewPrN = 0;
 HANDLE ChildPr[MaxPrN];
-static const int SplitDepth = 10;
-static const int SplitDepthPV = 4;
-static const int MaxSplitPoints = 64;  // mustn't exceed 64
+constexpr int SplitDepth = 10;
+constexpr int SplitDepthPV = 4;
+constexpr int MaxSplitPoints = 64;  // mustn't exceed 64
 
 typedef struct
 {
@@ -1665,8 +1665,8 @@ typedef struct
 	array<array<uint16, N_KILLER>, 16> killer;
 } GPos;
 
-static const int FlagClaimed = 1 << 1;
-static const int FlagFinished = 1 << 2;
+constexpr int FlagClaimed = 1 << 1;
+constexpr int FlagFinished = 1 << 2;
 
 typedef struct
 {
@@ -1702,7 +1702,7 @@ typedef struct
 #endif
 } GSMPI;
 
-static const int MAGIC_SIZE = 107648;
+constexpr int MAGIC_SIZE = 107648;
 uint64* MagicAttacks;
 
 #define SharedMaterialOffset (sizeof(GSMPI))
@@ -3285,7 +3285,7 @@ static bool boardExists = 0;
 static bool debugWK = 1;
 static bool debugBK = 1;
 static std::ofstream SHOUT("C:\\dev\\debug.txt");
-static const int TheMemorySize = 200;
+constexpr int TheMemorySize = 200;
 struct MemEntry_
 {
 	GData d_;
@@ -3771,7 +3771,7 @@ double KingLocusDist(int x, int y)
 }
 uint64 make_klocus(int k_loc)
 {
-	static const double CENTER_WEIGHT = 1.0;	// relative importance of center vis-a-vis king
+	constexpr double CENTER_WEIGHT = 1.0;	// relative importance of center vis-a-vis king
 	if (N_LOCUS <= 0)
 		return 0ull;
 	array<pair<double, int>, 64> temp;
@@ -5164,7 +5164,7 @@ template <bool me> bool draw_in_pv()
 template <bool me> void do_move(int move)
 {MOVING 
 	// clang-format off
-	static constexpr array<uint8, 64> UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
+	constexpr array<uint8, 64> UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
 		0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -5442,9 +5442,11 @@ typedef struct
 	packed_t score;
 } GPawnEvalInfo;
 
+constexpr array<array<uint64, 2>, 2> RFileBlockMask =
+		{ array<uint64, 2>({0x0202000000000000, 0x8080000000000000}), array<uint64, 2>({0x0202, 0x8080}) };
+
 template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawnEvalInfo& PEI)
 {
-	static constexpr array<array<uint64, 2>, 2> RFileBlockMask = {array<uint64, 2>({0x0202000000000000, 0x8080000000000000}), array<uint64, 2>({0x0202, 0x8080}) };
 	POP pop;
 	int kf = FileOf(PEI.king[me]);
 	int kr = RankOf(PEI.king[me]);
@@ -5649,50 +5651,13 @@ template <class POP> INLINE void eval_pawn_structure(const GEvalInfo& EI, GPawnE
 template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 {
 	POP pop;
-	uint64 u, b;
-	for (u = Queen(me); T(u); u ^= b)
+	for (uint64 b, u = Queen(me); T(u); u ^= b)
 	{
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = QueenAttacks(sq, EI.occ);
 		Current->att[me] |= att;
-		if (QMask[sq] & King(opp))
-			if (uint64 v = Between[EI.king[opp]][sq] & EI.occ)
-				if (Single(v))
-				{
-					Current->xray[me] |= v;
-					int square = lsb(v);
-					int piece = PieceAt(square);
-					int katt = 0;
-					if (piece == IPawn[me])
-					{
-						if (!PieceAt(square + Push[me]))
-							IncV(EI.score, Ca4(Pin, SelfPawnPin));
-					}
-					else if ((piece & 1) == me)
-					{
-						IncV(EI.score, Ca4(Pin, SelfPiecePin));
-						katt = 1;
-					}
-					else if (piece != IPawn[opp] && !(((BMask[sq] & Bishop(opp)) | (RMask[sq] & Rook(opp)) | Queen(opp)) & v))
-					{
-						IncV(EI.score, Ca4(Pin, WeakPin));
-						if (!(Current->patt[opp] & v))
-							katt = 1;
-					}
-					if (katt && !(att & EI.area[opp]))
-						EI.king_att[me] += KingAttack;
-				}
-				else if (v == (v & Minor(opp)))
-					IncV(EI.score, Ca4(KingRay, QKingRay));
 
-		if (uint64 a = att & EI.area[opp])
-		{
-			EI.king_att[me] += Single(a) ? KingQAttack1 : KingQAttack;
-			for (uint64 v = att & EI.area[opp]; T(v); Cut(v))
-				if (FullLine[sq][lsb(v)] & att & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq])))
-					EI.king_att[me]++;
-		}
 		uint64 control = att & EI.free[me];
 		IncV(EI.score, MobQueen[0][pop(control)]);
 		IncV(EI.score, MobQueen[1][pop(control & KingLocus[EI.king[opp]])]);
@@ -5702,61 +5667,67 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 			IncV(EI.score, Ca4(Tactical, TacticalMajorMinor));
 		if (att & EI.area[me])
 			IncV(EI.score, Ca4(KingDefence, KingDefQueen));
+		uint64 att_opp = att & EI.area[opp];
+		if (att_opp)
+		{
+			EI.king_att[me] += Single(att_opp) ? KingQAttack1 : KingQAttack;
+			for (uint64 v = att_opp; T(v); Cut(v))
+				if (FullLine[sq][lsb(v)] & att & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq])))
+					EI.king_att[me]++;
+		}
+
+		uint64 in_ray;
+		if (T(QMask[sq] & King(opp)) && T(in_ray = Between[EI.king[opp]][sq] & EI.occ))
+		{
+			if (Single(in_ray))
+			{
+				Current->xray[me] |= in_ray;
+				int square = lsb(in_ray), katt = 0;
+				int piece = PieceAt(square);
+				if ((piece & 1) == me)
+				{
+					if (piece == IPawn[me])
+					{
+						if (!PieceAt(square + Push[me]))
+						{
+							IncV(EI.score, Ca4(Pin, SelfPawnPin));
+							katt = 1;
+						}
+					}
+					else
+					{
+						IncV(EI.score, Ca4(Pin, SelfPiecePin));
+						katt = 1;
+					}
+				}
+				else if (piece != IPawn[opp] && F(((BMask[sq] & Bishop(opp)) | (RMask[sq] & Rook(opp)) | Queen(opp)) & in_ray))
+				{
+					IncV(EI.score, Ca4(Pin, WeakPin));
+					if (F(Current->patt[opp] & Piece(opp) & in_ray))
+						katt = 1;
+				}
+				if (katt && att_opp)
+					EI.king_att[me] += KingAttack;
+			}
+			else
+			{
+				uint64 pinnable = (RMask[sq] & Bishop(opp)) | (BMask[sq] & Rook(opp)) | Knight(opp);
+				if (F(in_ray & ~pinnable))
+					IncV(EI.score, Ca4(KingRay, QKingRay));
+			}
+		}
 	}
 }
 
 template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 {
 	POP pop;
-	uint64 u, b;
-	for (u = Rook(me); T(u); u ^= b)
+	for (uint64 b, u = Rook(me); T(u); u ^= b)
 	{
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = RookAttacks(sq, EI.occ);
 		Current->att[me] |= att;
-		if (RMask[sq] & King(opp))
-			if (uint64 v = Between[EI.king[opp]][sq] & EI.occ)
-				if (Single(v))
-				{
-					Current->xray[me] |= v;
-					int square = lsb(v);
-					int piece = PieceAt(square);
-					int katt = 0;
-					if (piece == IPawn[me])
-					{
-						if (!PieceAt(square + Push[me]))
-							IncV(EI.score, Ca4(Pin, SelfPawnPin));
-					}
-					else if ((piece & 1) == me)
-					{
-						IncV(EI.score, Ca4(Pin, SelfPiecePin));
-						katt = 1;
-					}
-					else if (piece != IPawn[opp])
-					{
-						if (piece < WhiteRook)
-						{
-							IncV(EI.score, Ca4(Pin, WeakPin));
-							if (!(Current->patt[opp] & v))
-								katt = 1;
-						}
-						else if (piece >= WhiteQueen)
-							IncV(EI.score, Ca4(Pin, ThreatPin));
-					}
-					if (katt && F(att & EI.area[opp]))
-						EI.king_att[me] += KingAttack;
-				}
-				else if (F(v & ~Minor(opp) & ~Queen(opp)))
-					IncV(EI.score, Ca4(KingRay, RKingRay));
-
-		if (uint64 a = att & EI.area[opp])
-		{
-			EI.king_att[me] += Single(a) ? KingRAttack1 : KingRAttack;
-			for (uint64 v = att & EI.area[opp]; T(v); Cut(v))
-				if (FullLine[sq][lsb(v)] & att & Major(me))
-					EI.king_att[me]++;
-		}
 		Current->threat |= att & Queen(opp);
 		uint64 control = att & EI.free[me];
 		IncV(EI.score, MobRook[0][pop(control)]);
@@ -5765,31 +5736,83 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 			IncV(EI.score, Ca4(Tactical, TacticalMajorPawn));
 		if (control & Minor(opp))
 			IncV(EI.score, Ca4(Tactical, TacticalMajorMinor));
-		if (!(PWay[me][sq] & Pawn(me)))
+		uint64 att_opp = att & EI.area[opp];
+		if (att_opp)
+		{
+			EI.king_att[me] += Single(att_opp) ? KingRAttack1 : KingRAttack;
+			for (uint64 v = att_opp; T(v); Cut(v))
+				if (FullLine[sq][lsb(v)] & att & Major(me))
+					EI.king_att[me]++;
+		}
+
+		uint64 in_ray;
+		if (T(RMask[sq] & King(opp)) && T(in_ray = Between[EI.king[opp]][sq] & EI.occ))
+		{
+			if (Single(in_ray))
+			{
+				Current->xray[me] |= in_ray;
+				int square = lsb(in_ray), katt = F(att_opp);
+				int piece = PieceAt(square);
+				if ((piece & 1) == me)
+				{
+					if (piece == IPawn[me])
+					{
+						if (!PieceAt(square + Push[me]))
+							IncV(EI.score, Ca4(Pin, SelfPawnPin));
+						else
+							katt = 0;
+					}
+					else
+						IncV(EI.score, Ca4(Pin, SelfPiecePin));
+				}
+				else if (piece != IPawn[opp])
+				{
+					if (piece < WhiteRook)
+					{
+						IncV(EI.score, Ca4(Pin, WeakPin));
+						if (T(Current->patt[opp] & in_ray & Piece(opp)))
+							katt = 0;
+					}
+					else if (piece >= WhiteQueen)
+					{
+						IncV(EI.score, Ca4(Pin, ThreatPin));
+						katt = 0;
+					}
+				}
+				else
+					katt = 0;
+				if (katt)
+					EI.king_att[me] += KingAttack;
+			}
+			else if (F(in_ray & ~Minor(opp) & ~Queen(opp)))
+				IncV(EI.score, Ca4(KingRay, RKingRay));
+		}
+
+		if (F(PWay[me][sq] & Pawn(me)))
 		{
 			IncV(EI.score, Ca4(RookSpecial, RookHof));
 			packed_t hof_score = 0;
-			if (!(PWay[me][sq] & Pawn(opp)))
+			if (F(PWay[me][sq] & Pawn(opp)))
 			{
 				IncV(EI.score, Ca4(RookSpecial, RookOf));
 				if (att & OwnLine(me, 7))
 					hof_score += Ca4(RookSpecial, RookOfOpen);
 				else if (uint64 target = att & PWay[me][sq] & Minor(opp))
 				{
-					if (!(Current->patt[opp] & target))
+					if (T(Current->patt[opp] & target))
+						hof_score += Ca4(RookSpecial, RookOfMinorFixed);
+					else
 					{
 						hof_score += Ca4(RookSpecial, RookOfMinorHanging);
 						if (PWay[me][sq] & King(opp))
 							hof_score += Ca4(RookSpecial, RookOfKingAtt);
 					}
-					else
-						hof_score += Ca4(RookSpecial, RookOfMinorFixed);
 				}
 			}
 			else if (att & PWay[me][sq] & Pawn(opp))
 			{
 				uint64 square = lsb(att & PWay[me][sq] & Pawn(opp));
-				if (!(PSupport[opp][square] & Pawn(opp)))
+				if (F(PSupport[opp][square] & Pawn(opp)))
 					hof_score += Ca4(RookSpecial, RookHofWeakPAtt);
 			}
 			IncV(EI.score, hof_score);
@@ -8270,7 +8293,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = is_check<me>(move) ? 1 + (depth < 16) : extension<me, 0>(move, depth);
+				ext = is_check<me>(move) ? 1 + T(depth < 16) : extension<me, 0>(move, depth);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -8336,7 +8359,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 	if (depth >= SplitDepth && PrN > 1 && parent && !exclusion)
 		do_split = 1;
 
-	while (move = get_move<me, 0>(Odd(depth)))
+	while (move = get_move<me, 0>(depth))
 	{
 		if (move == hash_move)
 			continue;
@@ -8350,7 +8373,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		}
 		bool check = Current->stage == r_checks || is_check<me>(move);
 		if (check && see<me>(move, 0, SeeValue))
-			ext = 1 + (depth < 16);
+			ext = 1 + T(depth < 16);
 		else
 			ext = extension<me, 0>(move, depth);
 		new_depth = depth - 2 + ext;
@@ -8595,7 +8618,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = is_check<me>(move) ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<me, 0>(move, depth));
+				ext = is_check<me>(move) ? Max(pext, 1 + T(depth < 16)) : Max(pext, extension<me, 0>(move, depth));
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -8906,7 +8929,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 	if (PrN > 1 && !root && parent && depth >= SplitDepthPV)
 		do_split = 1;
 
-	while (move = get_move<me, root>(Odd(depth)))
+	while (move = get_move<me, root>(depth))
 	{
 		if (move == hash_move)
 			continue;
@@ -10632,7 +10655,7 @@ ostream& operator<<(ostream& dst, const WriteMove_& m)
 
 void Test1(const char* fen, int max_depth, const char* solution)
 {
-	static const int DEPTH_LIMIT = 32;
+	constexpr int DEPTH_LIMIT = 32;
 	max_depth = Min(max_depth, DEPTH_LIMIT);
 	init_search(1);
 	get_board(fen);
