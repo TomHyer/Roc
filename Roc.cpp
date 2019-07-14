@@ -6595,6 +6595,8 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 		//if (2*rank + depth >= 18 && 2 * rank + depth <= 24 && F(PWay[me][from] & Piece(opp)) && F(PCone[me][from] & King(opp)))
 		//	return (pv && depth < 10) ? 2 : 1;
 	}
+	if (HasBit(Piece(opp), To(move)) && Current->score > 120 + 30 * depth)
+		return 1;
 	return 0;
 }
 
