@@ -5682,32 +5682,28 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 			if (Single(in_ray))
 			{
 				Current->xray[me] |= in_ray;
-				int square = lsb(in_ray), katt = 0;
+				int square = lsb(in_ray), katt = F(att_opp);
 				int piece = PieceAt(square);
 				if ((piece & 1) == me)
 				{
 					if (piece == IPawn[me])
 					{
-						if (!PieceAt(square + Push[me]))
-						{
+						if (T(PieceAt(square + Push[me])))
+							katt = 0;
+						else
 							IncV(EI.score, Ca4(Pin, SelfPawnPin));
-							katt = 1;
-						}
 					}
 					else
-					{
 						IncV(EI.score, Ca4(Pin, SelfPiecePin));
-						katt = 1;
-					}
 				}
 				else if (piece != IPawn[opp] && F(((BMask[sq] & Bishop(opp)) | (RMask[sq] & Rook(opp)) | Queen(opp)) & in_ray))
 				{
 					IncV(EI.score, Ca4(Pin, WeakPin));
-					if (F(Current->patt[opp] & Piece(opp) & in_ray))
-						katt = 1;
+					katt *= F(Current->patt[opp] & in_ray);
 				}
-				if (katt && att_opp)
-					EI.king_att[me] += KingAttack;
+				else
+					katt = 0;
+				EI.king_att[me] += katt * KingAttack;
 			}
 			else
 			{
@@ -5770,8 +5766,7 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 					if (piece < WhiteRook)
 					{
 						IncV(EI.score, Ca4(Pin, WeakPin));
-						if (T(Current->patt[opp] & in_ray & Piece(opp)))
-							katt = 0;
+						katt *= F(Current->patt[opp] & in_ray);
 					}
 					else if (piece >= WhiteQueen)
 					{
@@ -5781,8 +5776,7 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 				}
 				else
 					katt = 0;
-				if (katt)
-					EI.king_att[me] += KingAttack;
+				EI.king_att[me] += katt * KingAttack;
 			}
 			else if (F(in_ray & ~Minor(opp) & ~Queen(opp)))
 				IncV(EI.score, Ca4(KingRay, RKingRay));
@@ -5840,43 +5834,9 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		b = Bit(sq);
 		uint64 att = BishopAttacks(sq, EI.occ);
 		Current->att[me] |= att;
-		if (BMask[sq] & King(opp))
-			if (uint64 v = Between[EI.king[opp]][sq] & EI.occ)
-				if (Single(v))  // pin or discovery threat
-				{
-					Current->xray[me] |= v;
-					int square = lsb(v);
-					int piece = PieceAt(square);
-					int katt = 0;
-					if (piece == IPawn[me])
-					{
-						if (!PieceAt(square + Push[me]))
-							IncV(EI.score, Ca4(Pin, SelfPawnPin));
-					}
-					else if ((piece & 1) == me)
-					{
-						IncV(EI.score, Ca4(Pin, SelfPiecePin));
-						katt = 1;
-					}
-					else if (piece != IPawn[opp])
-					{
-						if (piece < WhiteLight)
-						{
-							IncV(EI.score, Ca4(Pin, StrongPin));
-							if (!(Current->patt[opp] & v))
-								katt = 1;
-						}
-						else if (piece >= WhiteRook)
-							IncV(EI.score, Ca4(Pin, ThreatPin));
-					}
-					if (katt && F(att & EI.area[opp]))
-						EI.king_att[me] += KingAttack;
-				}
-				else if (F(v & ~Knight(opp) & ~Major(opp)))
-					IncV(EI.score, Ca4(KingRay, BKingRay));
-
-		if (uint64 a = att & EI.area[opp])
-			EI.king_att[me] += Single(a) ? KingBAttack1 : KingBAttack;
+		uint64 att_opp = att & EI.area[opp];
+		if (att_opp)
+			EI.king_att[me] += Single(att_opp) ? KingBAttack1 : KingBAttack;
 		uint64 control = att & EI.free[me];
 		IncV(EI.score, MobBishop[0][pop(control)]);
 		IncV(EI.score, MobBishop[1][pop(control & KingLocus[EI.king[opp]])]);
@@ -5897,6 +5857,47 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 			&& F(Pawn(opp) & PIsolated[FileOf(sq)] & Forward[me][RankOf(sq)])
 			&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
 			IncV(EI.score, Ca4(BishopSpecial, BishopOutpostNoMinor));
+
+		uint64 in_ray;
+		if (BMask[sq] & King(opp) && T(in_ray = Between[EI.king[opp]][sq] & EI.occ))
+		{
+			if (Single(in_ray))  // pin or discovery threat
+			{
+				Current->xray[me] |= in_ray;
+				int square = lsb(in_ray), katt = F(att_opp);
+				int piece = PieceAt(square);
+				if ((piece & 1) == me)
+				{
+					if (piece == IPawn[me])
+					{
+						if (T(PieceAt(square + Push[me])))
+							katt = 0;
+						else
+							IncV(EI.score, Ca4(Pin, SelfPawnPin));
+					}
+					else if ((piece & 1) == me)
+						IncV(EI.score, Ca4(Pin, SelfPiecePin));
+				}
+				else if (piece != IPawn[opp])
+				{
+					if (piece == IKnight[opp])
+					{
+						IncV(EI.score, Ca4(Pin, StrongPin));
+						katt *= F(Current->patt[opp] & in_ray);
+					}
+					else if (piece >= WhiteRook)
+					{
+						IncV(EI.score, Ca4(Pin, ThreatPin));
+						katt = 0;
+					}
+				}
+				else
+					katt = 0;
+				EI.king_att[me] += katt * KingAttack;
+			}
+			else if (F(in_ray & ~Knight(opp) & ~Major(opp)))
+				IncV(EI.score, Ca4(KingRay, BKingRay));
+		}
 	}
 }
 
@@ -6615,12 +6616,15 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 		int rank = OwnRank(me, from);
 		if (rank >= 5 && depth < 16)
 			return pv ? 2 : 1;
-		//if (2*rank + depth >= 18 && 2 * rank + depth <= 24 && F(PWay[me][from] & Piece(opp)) && F(PCone[me][from] & King(opp)))
-		//	return (pv && depth < 10) ? 2 : 1;
 	}
-	if (HasBit(Piece(opp), To(move)) && Current->score > 120 + 30 * depth)
+	if (HasBit(Piece(opp), To(move)) && (pv || Current->score > 120 + 30 * depth))
 		return 1;
 	return 0;
+}
+
+template<bool me, bool pv> INLINE int check_extension(int move, int depth)
+{
+	return pv ? 2 : T(depth < 12) + T(depth < 24);
 }
 
 void sort(int* start, int* finish)
@@ -8293,7 +8297,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = is_check<me>(move) ? 1 + T(depth < 16) : extension<me, 0>(move, depth);
+				ext = is_check<me>(move) ? check_extension<me, 0>(move, depth) : extension<me, 0>(move, depth);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -8373,7 +8377,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		}
 		bool check = Current->stage == r_checks || is_check<me>(move);
 		if (check && see<me>(move, 0, SeeValue))
-			ext = 1 + T(depth < 16);
+			ext = check_extension<me, 0>(move, depth);
 		else
 			ext = extension<me, 0>(move, depth);
 		new_depth = depth - 2 + ext;
@@ -8618,7 +8622,8 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
 				++cnt;
-				ext = is_check<me>(move) ? Max(pext, 1 + T(depth < 16)) : Max(pext, extension<me, 0>(move, depth));
+				ext = is_check<me>(move) ? check_extension<me, 0>(move, depth) : extension<me, 0>(move, depth);
+				ext = Max(pext, ext);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					int margin_one = beta - ExclSingle(depth);
@@ -8671,7 +8676,8 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			continue;
 		}
 		bool check = is_check<me>(move);
-		ext = check ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<me, 0>(move, depth));
+		ext = check ? check_extension<me, 0>(move, depth) : extension<me, 0>(move, depth);
+		ext = Max(pext, ext);
 		new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
@@ -8847,7 +8853,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 			if (Print)
 				sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt);
 		}
-		ext = is_check<me>(move) ? 2 : Max(pext, extension<me, 1>(move, depth));
+		ext = is_check<me>(move) ? check_extension<me, 1>(move, depth) : Max(pext, extension<me, 1>(move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
 			int margin_one = hash_value - ExclSinglePV(depth);
@@ -8948,7 +8954,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		if (IsRepetition(alpha + 1, move))
 			continue;
 		bool check = is_check<me>(move);
-		ext = check ? 2 : Max(pext, extension<me, 1>(move, depth));
+		ext = check ? check_extension<me, 1>(move, depth) : Max(pext, extension<me, 1>(move, depth));
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
@@ -10185,7 +10191,7 @@ void epd_test(char filename[], int time_limit)
 void uci()
 {
 	const char* mdy = __DATE__;
-	const char now[10] = { mdy[7], mdy[8], mdy[9], mdy[10], mdy[0], mdy[1], mdy[2], mdy[4], mdy[5], 0 };
+	const char now[10] = { mdy[7], mdy[8], mdy[9], mdy[10], mdy[0], mdy[1], mdy[2], mdy[4] == ' ' ? '0' : mdy[4], mdy[5], 0 };
 	char* ptr = nullptr;
 	char * strtok_context = nullptr;
 	int i;
