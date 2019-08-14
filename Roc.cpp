@@ -4846,7 +4846,7 @@ void init_search(int clear_hash)
 
 	memset(DeltaVals, 0, 16 * 4096 * sizeof(sint16));
 	memset(Ref, 0, 16 * 64 * sizeof(GRef));
-	memset(Data + 1, 0, 127 * sizeof(GData));
+	memset(Data + 1, 0, (MAX_HEIGHT - 1) * sizeof(GData));
 	if (clear_hash)
 	{
 		date = 0;
@@ -8133,9 +8133,21 @@ template<bool me> bool IsThreat(int move)
 	return false;
 }
 
+struct LMR_
+{
+	double scale_;
+	LMR_(int depth) : scale_(0.15 * max(0.0, 1.0 - Square(4.0 / depth))) {}
+	INLINE int operator()(int cnt) const
+	{
+		return scale_ > 0 && cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt - 1)))))) : 0;
+	}
+};
+
 template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, int flags)
 {
 	int height = (int)(Current - Data);
+	if (height > 100)
+		++beta;
 	GSP* Sp = nullptr;
 
 	if (!evasion)
@@ -8185,11 +8197,8 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 	int hash_move = flags & 0xFFFF, cnt = 0, played = 0;
 	int do_split = 0, sp_init = 0;
 	int singular = 0;
-	int high_depth = 0, hash_depth = -1;
-	bool can_hash = true;
 	if (exclusion)
 	{
-		can_hash = false;
 		score = beta - 1;
 		if (evasion)
 		{
@@ -8217,6 +8226,7 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 		}
 
 		Current->best = hash_move;
+		int high_depth = 0, hash_depth = -1;
 		int high_value = MateValue, hash_value = -MateValue;
 		if (GEntry* Entry = probe_hash())
 		{
@@ -8254,8 +8264,9 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 							UpdateRef(Entry->move);
 						}
 					}
+					return Entry->low;
 				}
-				if (F(flags & FlagReturnBestMove))	
+				if (evasion || F(flags & FlagReturnBestMove))	
 					return Entry->low;
 			}
 			if (evasion && Entry->low_depth >= depth - 8 && Entry->low > hash_value)
@@ -8397,6 +8408,7 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 	}
 
 	// done with hash 
+	bool can_hash_d0 = !exclusion && !evasion;
 	int margin = 0;
 	if (evasion)
 	{
@@ -8414,7 +8426,7 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 		margin = RazoringThreshold(Current->score, depth, height);
 		if (margin < beta)
 		{
-			can_hash = false;
+			can_hash_d0 = false;
 			score = Max(margin, score);
 			Current->stage = stage_razoring;
 			Current->mask = Piece(opp);
@@ -8444,6 +8456,7 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 			move_back = 0;
 	}
 
+	LMR_ reduction_n(depth);
 	while (int move = evasion ? pick_move() : get_move<me, 0>(depth))
 	{
 		if (move == hash_move)
@@ -8474,9 +8487,9 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 					Current->gen_flags &= ~FlagSort;
 					continue;
 				}
-				if (depth >= 6 && (!evasion || cnt > 3))
+				if (!evasion)
 				{
-					int reduction = msb(cnt);
+					int reduction = reduction_n(cnt);
 					if (!evasion && move == Current->ref[0] || move == Current->ref[1])
 						reduction = Max(0, reduction - 1);
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
@@ -8485,7 +8498,7 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 						reduction += 2;
 					if (!evasion && reduction == 1 && new_depth > 4)
 						reduction = cnt > 3 ? 2 : 0;
-					new_depth = Max(3, new_depth - reduction);
+					new_depth = max(new_depth - reduction, min(depth - 3, 3));
 				}
 			}
 			if (!check)
@@ -8570,7 +8583,7 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 		if (value >= beta)
 			return cut_search<exclusion, evasion>(Sp->best_move, hash_move, score, beta, depth, flags, sp_init);
 	}
-	if (!evasion && F(cnt) && can_hash)
+	if (can_hash_d0 && F(cnt))
 	{
 		hash_high(0, 127);
 		hash_low(0, 0, 127);
@@ -8801,6 +8814,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 	if (PrN > 1 && !root && parent && depth >= SplitDepthPV)
 		do_split = 1;
 
+	LMR_ reduction_n(depth);
 	while (move = get_move<me, root>(depth))
 	{
 		if (move == hash_move)
@@ -8822,14 +8836,14 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		bool check = is_check<me>(move);
 		ext = check ? check_extension<me, 1>(move, depth) : Max(pext, extension<me, 1>(move, depth));
 		new_depth = depth - 2 + ext;
-		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
+		if (F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))))
 		{
-			int reduction = msb(cnt) - 1;
+			int reduction = max(0, reduction_n(cnt) - 1);
 			if (move == Current->ref[0] || move == Current->ref[1])
 				reduction = Max(0, reduction - 1);
 			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 				reduction += reduction / 2;
-			new_depth = Max(3, new_depth - reduction);
+			new_depth = max(new_depth - reduction, min(depth - 3, 3));
 		}
 		if (do_split && played >= 1)
 		{
@@ -10565,9 +10579,9 @@ void main(int argc, char *argv[])
 	//Test1("4r1k1/4ppbp/r5p1/3Np3/2PnP3/3P2Pq/1R3P2/2BQ1RK1 w - - 0 1", 20, "b2-b1");
 	//Test1("R7/6k1/8/8/6P1/6K1/8/7r w - - 0 1", 24, "g4-g5");
 
-	Test1("rnb1k2r/pp2qppp/3p1n2/2pp2B1/1bP5/2N1P3/PP2NPPP/R2QKB1R w KQkq - 0 1", 20, "a2-a3");	// Roc fails until depth 9
+	//Test1("rnb1k2r/pp2qppp/3p1n2/2pp2B1/1bP5/2N1P3/PP2NPPP/R2QKB1R w KQkq - 0 1", 20, "a2-a3");	// Roc fails until depth 9
 	//Test1("r4rk1/pb3p2/1pp4p/2qn2p1/2B5/6BP/PPQ2PP1/3RR1K1 w - - 0 1", 15, "e1-e6");	// Roc fails until depth 19
-	//Test1("3B4/8/2B5/1K6/8/8/3p4/3k4 w - - 0 1", 15, "b5-a6");						// Roc fails until depth 18
+	Test1("3B4/8/2B5/1K6/8/8/3p4/3k4 w - - 0 1", 15, "b5-a6");						// Roc fails until depth 18
 	//Test1("2krr3/1p4pp/p1bRpp1n/2p5/P1B1PP2/8/1PP3PP/R1K3B1 w - - 0 1", 15, "d6-c6");	// Roc fails until depth 17
 	//Test1("r5k1/pp2p1bp/6p1/n1p1P3/2qP1NP1/2PQB3/P5PP/R4K2 b - - 0 1", 18, "g6-g5");	// Roc fails until depth 20
 	//Test1("1br3k1/p4p2/2p1r3/3p1b2/3Bn1p1/1P2P1Pq/P3Q1BP/2R1NRK1 b - - 0 1", 20, "h3-h2");	// Roc fails until depth 21
