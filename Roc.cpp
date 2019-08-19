@@ -8143,6 +8143,212 @@ struct LMR_
 	}
 };
 
+
+struct HashResult_
+{
+	bool done_;
+	int score_;
+	int hashMove_;
+	int played_;
+	int singular_;
+};
+
+template<bool me, bool evasion> HashResult_ try_hash(int beta, int depth, int flags)
+{
+	auto abort = [](int score) {return HashResult_({ true, score, 0, 0,  }); };
+	int height = (int)(Current - Data);
+	if (flags & FlagCallEvaluation)
+		evaluate();
+	if (!evasion && IsCheck(me))
+		return abort(scout<me, 0, 1>(beta, depth, flags & (~(FlagHaltCheck | FlagCallEvaluation))));
+
+	if (!evasion)
+	{
+		int value = Current->score - (90 + depth * 8 + Max(depth - 5, 0) * 32) * CP_SEARCH;
+		if (value >= beta && depth <= 13 && T(NonPawnKing(me)) && F(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())) && F(flags & (FlagReturnBestMove | FlagDisableNull)))
+			return abort(value);
+
+		value = Current->score + FutilityThreshold;
+		if (value < beta && depth <= 3)
+			return abort(Max(value, q_search<me, 0>(beta - 1, beta, 1, FlagHashCheck | (flags & 0xFFFF))));
+	}
+
+	int hash_move = Current->best = flags & 0xFFFF;
+	Current->best = hash_move;
+	int high_depth = 0, hash_depth = -1;
+	int high_value = MateValue, hash_value = -MateValue;
+	if (GEntry* Entry = probe_hash())
+	{
+		if (Entry->high < beta && Entry->high_depth >= depth)
+			return abort(Entry->high);
+		if (!evasion && Entry->high_depth > high_depth)
+		{
+			high_depth = Entry->high_depth;
+			high_value = Entry->high;
+		}
+		if (T(Entry->move) && Entry->low_depth > hash_depth)
+		{
+			Current->best = hash_move = Entry->move;
+			hash_depth = Entry->low_depth;
+			if (!evasion && Entry->low_depth)
+				hash_value = Entry->low;
+		}
+		if (Entry->low >= beta && Entry->low_depth >= depth)
+		{
+			if (Entry->move)
+			{
+				Current->best = Entry->move;
+				if (F(PieceAt(To(Entry->move))) && F(Entry->move & 0xE000))
+				{
+					if (evasion)
+						UpdateCheckRef(Entry->move);
+					else
+					{
+						if (Current->killer[1] != Entry->move && F(flags & FlagNoKillerUpdate))
+						{
+							for (int jk = N_KILLER; jk > 1; --jk)
+								Current->killer[jk] = Current->killer[jk - 1];
+							Current->killer[1] = Entry->move;
+						}
+						UpdateRef(Entry->move);
+					}
+				}
+				return abort(Entry->low);
+			}
+			if (evasion || F(flags & FlagReturnBestMove))
+				return abort(Entry->low);
+		}
+		if (evasion && Entry->low_depth >= depth - 8 && Entry->low > hash_value)
+			hash_value = Entry->low;
+	}
+
+#if TB
+	if (hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
+		auto res = TBProbe(tb_probe_wdl, me);
+		if (res != TB_RESULT_FAILED) {
+			tb_hits++;
+			hash_high(TbValues[res], TbDepth(depth));
+			hash_low(0, TbValues[res], TbDepth(depth));
+			return abort(TbValues[res]);
+		}
+	}
+#endif
+
+	if (GPVEntry* PVEntry = (depth < 20 ? nullptr : probe_pv_hash()))
+	{
+		hash_low(PVEntry->move, PVEntry->value, PVEntry->depth);
+		hash_high(PVEntry->value, PVEntry->depth);
+		if (PVEntry->depth >= depth)
+		{
+			if (PVEntry->move)
+				Current->best = PVEntry->move;
+			if (F(flags & FlagReturnBestMove) && (Current->ply <= PliesToEvalCut) == (PVEntry->ply <= PliesToEvalCut))
+				return abort(PVEntry->value);
+		}
+		if (T(PVEntry->move) && PVEntry->depth > hash_depth)
+		{
+			Current->best = hash_move = PVEntry->move;
+			hash_depth = PVEntry->depth;
+			hash_value = PVEntry->value;
+		}
+	}
+
+	int score = depth < 10 ? height - MateValue : beta - 1;
+	if (evasion && hash_depth >= depth && hash_value > -EvalValue)
+		score = Min(beta - 1, Max(score, hash_value));
+	if (evasion && T(flags & FlagCallEvaluation))
+		evaluate();
+
+	if (!evasion && depth >= 12 && (F(hash_move) || hash_value < beta || hash_depth < depth - 12) && (high_value >= beta || high_depth < depth - 12) &&
+		F(flags & FlagDisableNull))
+	{
+		int new_depth = depth - 8;
+		int value = scout<me, 0, 0>(beta, new_depth, FlagHashCheck | FlagNoKillerUpdate | FlagDisableNull | FlagReturnBestMove | hash_move);
+		if (value >= beta)
+		{
+			if (Current->best)
+				hash_move = Current->best;
+			hash_depth = new_depth;
+			hash_value = beta;
+		}
+	}
+	if (!evasion && depth >= 4 && Current->score + 3 * CP_SEARCH >= beta && F(flags & (FlagDisableNull | FlagReturnBestMove)) && (high_value >= beta || high_depth < depth - 10) &&
+		(depth < 12 || (hash_value >= beta && hash_depth >= depth - 12)) && beta > -EvalValue && T(NonPawnKing(me)))
+	{
+		int new_depth = depth - 8;
+		do_null();
+		int value = -scout<opp, 0, 0>(1 - beta, new_depth, FlagHashCheck);
+		undo_null();
+		if (value >= beta)
+		{
+			if (depth < 12)
+				hash_low(0, value, depth);
+			return abort(value);
+		}
+	}
+
+	if (evasion)
+	{
+		Current->mask = Filled;
+		if (depth < 4 && Current->score - 10 * CP_SEARCH < beta)
+		{
+			score = Current->score - 10 * CP_SEARCH;
+			Current->mask = capture_margin_mask<me>(beta - 1, &score);
+		}
+		(void)gen_evasions<me>(Current->moves);
+		if (F(Current->moves[0]))
+			return abort(score);
+	}
+
+	if (T(hash_move))
+	{
+		int singular = 0;
+		auto succeed = [&](int score) {return HashResult_({ true, score, hash_move, 1, singular }); };
+		int move = hash_move;
+		if (is_legal<me>(move) && !IsIllegal(me, move))
+		{
+			int ext = evasion && F(Current->moves[1])
+					? 2
+					: (is_check<me>(move) ? check_extension<me, 0> : extension<me, 0>)(move, depth);
+			if (ext < 2 && depth >= 16 && hash_value >= beta)
+			{
+				int test_depth = depth - Min(12, depth / 2);
+				if (hash_depth >= test_depth)
+				{
+					int margin_one = beta - ExclSingle(depth);
+					int margin_two = beta - ExclDouble(depth);
+					int prev_ext = ExtFromFlag(flags);
+					if (singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, test_depth, hash_move))
+						ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
+				}
+			}
+			int to = To(move);
+			if (depth < 16 && to == To(Current->move) && T(PieceAt(to)))	// recapture extension
+				ext = Max(ext, 2);
+			int new_depth = depth - 2 + ext;
+			do_move<me>(move);
+			if (evasion)
+				evaluate();
+			if (evasion && T(Current->att[opp] & King(me)))
+			{
+				undo_move<me>(move);
+				return HashResult_({ false, score, hash_move, 0 });
+			}
+			int new_flags = (evasion ? FlagNeatSearch ^ FlagCallEvaluation : FlagNeatSearch)
+				| ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0)
+				| ExtToFlag(ext);
+
+			int value = -scout<opp, 0, 0>(1 - beta, new_depth, new_flags);
+			undo_move<me>(move);
+			if (value > score)
+				score = value;
+			return HashResult_({ false, score, hash_move, 1, singular });
+		}
+	}
+	return HashResult_({ false, score, hash_move, 0, 0 });
+}
+
+
 template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, int flags)
 {
 	int height = (int)(Current - Data);
@@ -8209,202 +8415,15 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 	}
 	else
 	{
-		if (flags & FlagCallEvaluation)
-			evaluate();
-		if (!evasion && IsCheck(me))
-			return scout<me, 0, 1>(beta, depth, flags & (~(FlagHaltCheck | FlagCallEvaluation)));
-
-		if (!evasion)
-		{
-			int value = Current->score - (90 + depth * 8 + Max(depth - 5, 0) * 32) * CP_SEARCH;
-			if (value >= beta && depth <= 13 && T(NonPawnKing(me)) && F(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())) && F(flags & (FlagReturnBestMove | FlagDisableNull)))
-				return value;
-
-			value = Current->score + FutilityThreshold;
-			if (value < beta && depth <= 3)
-				return Max(value, q_search<me, 0>(beta - 1, beta, 1, FlagHashCheck | (flags & 0xFFFF)));
-		}
-
-		Current->best = hash_move;
-		int high_depth = 0, hash_depth = -1;
-		int high_value = MateValue, hash_value = -MateValue;
-		if (GEntry* Entry = probe_hash())
-		{
-			if (Entry->high < beta && Entry->high_depth >= depth)
-				return Entry->high;
-			if (!evasion && Entry->high_depth > high_depth)
-			{
-				high_depth = Entry->high_depth;
-				high_value = Entry->high;
-			}
-			if (T(Entry->move) && Entry->low_depth > hash_depth)
-			{
-				Current->best = hash_move = Entry->move;
-				hash_depth = Entry->low_depth;
-				if (!evasion && Entry->low_depth)
-					hash_value = Entry->low;
-			}
-			if (Entry->low >= beta && Entry->low_depth >= depth)
-			{
-				if (Entry->move)
-				{
-					Current->best = Entry->move;
-					if (F(PieceAt(To(Entry->move))) && F(Entry->move & 0xE000))
-					{
-						if (evasion)
-							UpdateCheckRef(Entry->move);
-						else
-						{
-							if (Current->killer[1] != Entry->move && F(flags & FlagNoKillerUpdate))
-							{
-								for (int jk = N_KILLER; jk > 1; --jk)
-									Current->killer[jk] = Current->killer[jk - 1];
-								Current->killer[1] = Entry->move;
-							}
-							UpdateRef(Entry->move);
-						}
-					}
-					return Entry->low;
-				}
-				if (evasion || F(flags & FlagReturnBestMove))	
-					return Entry->low;
-			}
-			if (evasion && Entry->low_depth >= depth - 8 && Entry->low > hash_value)
-				hash_value = Entry->low;
-		}
-
-#if TB
-		if (hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
-			auto res = TBProbe(tb_probe_wdl, me);
-			if (res != TB_RESULT_FAILED) {
-				tb_hits++;
-				hash_high(TbValues[res], TbDepth(depth));
-				hash_low(0, TbValues[res], TbDepth(depth));
-				return TbValues[res];
-			}
-		}
-#endif
-
-		if (GPVEntry* PVEntry = (depth < 20 ? nullptr : probe_pv_hash()))
-		{
-			hash_low(PVEntry->move, PVEntry->value, PVEntry->depth);
-			hash_high(PVEntry->value, PVEntry->depth);
-			if (PVEntry->depth >= depth)
-			{
-				if (PVEntry->move)
-					Current->best = PVEntry->move;
-				if (F(flags & FlagReturnBestMove) && (Current->ply <= PliesToEvalCut) == (PVEntry->ply <= PliesToEvalCut))
-					return PVEntry->value;
-			}
-			if (T(PVEntry->move) && PVEntry->depth > hash_depth)
-			{
-				Current->best = hash_move = PVEntry->move;
-				hash_depth = PVEntry->depth;
-				hash_value = PVEntry->value;
-			}
-		}
-
-		score = depth < 10 ? height - MateValue : beta - 1;
-		if (evasion && hash_depth >= depth && hash_value > -EvalValue)
-			score = Min(beta - 1, Max(score, hash_value));
-		if (evasion && T(flags & FlagCallEvaluation))
-			evaluate();
-
-		if (!evasion && depth >= 12 && (F(hash_move) || hash_value < beta || hash_depth < depth - 12) && (high_value >= beta || high_depth < depth - 12) &&
-			F(flags & FlagDisableNull))
-		{
-			int new_depth = depth - 8;
-			int value = scout<me, 0, 0>(beta, new_depth, FlagHashCheck | FlagNoKillerUpdate | FlagDisableNull | FlagReturnBestMove | hash_move);
-			if (value >= beta)
-			{
-				if (Current->best)
-					hash_move = Current->best;
-				hash_depth = new_depth;
-				hash_value = beta;
-			}
-		}
-		if (!evasion && depth >= 4 && Current->score + 3 * CP_SEARCH >= beta && F(flags & (FlagDisableNull | FlagReturnBestMove)) && (high_value >= beta || high_depth < depth - 10) &&
-			(depth < 12 || (hash_value >= beta && hash_depth >= depth - 12)) && beta > -EvalValue && T(NonPawnKing(me)))
-		{
-			int new_depth = depth - 8;
-			do_null();
-			int value = -scout<opp, 0, 0>(1 - beta, new_depth, FlagHashCheck);
-			undo_null();
-			if (value >= beta)
-			{
-				if (depth < 12)
-					hash_low(0, value, depth);
-				return value;
-			}
-		}
-
-		if (evasion)
-		{
-			Current->mask = Filled;
-			if (depth < 4 && Current->score - 10 * CP_SEARCH < beta)
-			{
-				score = Current->score - 10 * CP_SEARCH;
-				Current->mask = capture_margin_mask<me>(beta - 1, &score);
-			}
-			(void)gen_evasions<me>(Current->moves);
-			if (F(Current->moves[0]))
-				return score;
-		}
-
-
-		cnt = singular = played = 0;
-		if (T(hash_move))
-		{
-			int move = hash_move;
-			if (is_legal<me>(move) && !IsIllegal(me, move))
-			{
-				++cnt;
-				int ext = evasion && F(Current->moves[1]) 
-						? 2 
-						: (is_check<me>(move) ? check_extension<me, 0> : extension<me, 0>)(move, depth);
-				if (ext < 2 && depth >= 16 && hash_value >= beta)
-				{
-					int test_depth = depth - Min(12, depth / 2);
-					if (hash_depth >= test_depth)
-					{
-						int margin_one = beta - ExclSingle(depth);
-						int margin_two = beta - ExclDouble(depth);
-						int prev_ext = ExtFromFlag(flags);
-						if (int singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, test_depth, hash_move))
-							ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
-					}
-				}
-				int to = To(move);
-				if (depth < 16 && to == To(Current->move) && T(PieceAt(to)))	// recapture extension
-					ext = Max(ext, 2);
-				int new_depth = depth - 2 + ext;
-				do_move<me>(move);
-				if (evasion)
-					evaluate();
-				if (evasion && Current->att[opp] & King(me))
-				{
-					undo_move<me>(move);
-					--cnt;
-				}
-				else
-				{
-					int new_flags = (evasion ? FlagNeatSearch ^ FlagCallEvaluation : FlagNeatSearch)
-						| ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0)
-						| ExtToFlag(ext);
-
-
-					int value = -scout<opp, 0, 0>(1 - beta, new_depth, new_flags);
-					undo_move<me>(move);
-					++played;
-					if (value > score)
-					{
-						score = value;
-						if (value >= beta)
-							return cut_search<exclusion, evasion>(move, hash_move, score, beta, depth, flags, 0);
-					}
-				}
-			}
-		}
+		HashResult_ hash_info = try_hash<me, evasion>(beta, depth, flags);
+		score = hash_info.score_;
+		if (hash_info.done_)
+			return score;
+		hash_move = hash_info.hashMove_;
+		if (score >= beta)
+			return cut_search<exclusion, evasion>(hash_move, hash_move, score, beta, depth, flags, 0);
+		cnt = played = hash_info.played_;
+		singular = hash_info.singular_;
 	}
 
 	// done with hash 
