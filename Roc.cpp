@@ -1611,8 +1611,8 @@ constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 	-14, 15, 42, 0,
 	43, 14, -9, -1 };
 
-constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
-	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
+constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
+	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
 constexpr uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
 constexpr uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
 constexpr uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
@@ -1621,10 +1621,11 @@ constexpr uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
 constexpr uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
 constexpr uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
 constexpr uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
+constexpr uint32 KingPAttackInc = UPack(0, KingAttackWeight[8]);
 constexpr uint32 KingAttack = UPack(1, 0);
-constexpr uint32 KingAttackSquare = KingAttackWeight[8];
-constexpr uint32 KingNoMoves = KingAttackWeight[9];
-constexpr uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
+constexpr uint32 KingAttackSquare = KingAttackWeight[9];
+constexpr uint32 KingNoMoves = KingAttackWeight[10];
+constexpr uint32 KingShelterQuad = KingAttackWeight[11];	// a scale factor, not a score amount
 
 template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 {
@@ -1790,71 +1791,6 @@ inline int FileSpan(const uint64& occ)
 	uint64 temp = occ;
 	return FileSpan(&temp);
 }
-
-uint64 BMagicAttacks(int i, uint64 occ);
-uint64 RMagicAttacks(int i, uint64 occ);
-uint16 rand16();
-uint64 rand64();
-void init_pst();
-void init_eval();
-void init();
-void init_search(int clear_hash);
-void setup_board();
-void get_board(const char fen[]);
-void init_hash();
-void move_to_string(int move, char string[]);
-int move_from_string(char string[]);
-void pick_pv();
-template <bool me> void do_move(int move);
-INLINE void do_move(bool me, int move)
-{
-	if (me)
-		do_move<true>(move);
-	else
-		do_move<false>(move);
-}
-template <bool me> void undo_move(int move);
-INLINE void undo_move(bool me, int move)
-{
-	if (me)
-		undo_move<true>(move);
-	else
-		undo_move<false>(move);
-}
-void do_null();
-void undo_null();
-INLINE void evaluate();
-template <bool me> bool is_legal(int move);
-template <bool me> bool is_check(int move);
-void hash_high(int value, int depth);
-int hash_low(int move, int value, int depth);	// returns input value
-void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int knodes);
-INLINE int pick_move();
-template <bool me, bool root> int get_move(int depth);
-template <bool me> bool see(int move, int margin, const uint16* mat_value);
-template <bool me> void gen_root_moves();
-template <bool me> int* gen_captures(int* list);
-template <bool me> int* gen_evasions(int* list);
-void mark_evasions(int* list);
-template <bool me> int* gen_quiet_moves(int* list);
-template <bool me> int* gen_checks(int* list);
-template <bool me> int* gen_delta_moves(int* list);
-template <bool me, bool pv> int q_search(int alpha, int beta, int depth, int flags);
-template <bool me, bool pv> int q_evasion(int alpha, int beta, int depth, int flags);
-template <bool me, bool exclusion, bool evasion> int scout(int beta, int depth, int flags);
-template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int flags);
-template <bool me> void root();
-template <bool me> int multipv(int depth);
-void send_pv(int depth, int alpha, int beta, int score);
-void send_multipv(int depth, int curr_number);
-void send_best_move();
-void get_position(char string[]);
-void get_time_limit(char string[]);
-sint64 get_time();
-int time_to_stop(GSearchInfo* SI, int time, int searching);
-void check_time(const int* time, int searching);
-int input();
-void uci();
 
 bool IsIllegal(bool me, int move)
 {
@@ -4842,46 +4778,6 @@ inline int HistInitPst(int piece, int to, bool good)
 	return Max(1, good ? delta : -delta);
 }
 
-void init_search(int clear_hash)
-{
-	for (int ih = 0; ih < 16 * 64; ++ih)
-		HistoryVals[ih] = HistoryVals[ih + 16 * 64] = (1 << 8) | 2;	// Leave memory for joins, etc, in History
-
-	memset(DeltaVals, 0, 16 * 4096 * sizeof(sint16));
-	memset(Ref, 0, 16 * 64 * sizeof(GRef));
-	memset(Data + 1, 0, (MAX_HEIGHT - 1) * sizeof(GData));
-	if (clear_hash)
-	{
-		date = 0;
-		date = 1;
-		memset(Hash, 0, hash_size * sizeof(GEntry));
-		memset(PVHash, 0, pv_hash_size * sizeof(GPVEntry));
-	}
-	get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-	nodes = tb_hits = 0;
-	best_move = best_score = 0;
-	LastTime = LastValue = LastExactValue = InstCnt = 0;
-	LastSpeed = 0;
-	PVN = 1;
-	Contempt = 8;
-	Wobble = 0;
-	Infinite = 1;
-	SearchMoves = 0;
-	TimeLimit1 = TimeLimit2 = 0;
-	Stop = Searching = 0;
-	if (MaxPrN > 1)
-		ZERO_BIT_64(Smpi->searching, 0);
-	DepthLimit = MAX_HEIGHT;
-	LastDepth = MAX_HEIGHT;
-	Print = 1;
-	memset(CurrentSI, 0, sizeof(GSearchInfo));
-	memset(BaseSI, 0, sizeof(GSearchInfo));
-#ifdef CPU_TIMING
-	GlobalTime[GlobalTurn] = UciBaseTime;
-	GlobalInc[GlobalTurn] = UciIncTime;
-#endif
-}
-
 void setup_board()
 {
 	int i;
@@ -5005,6 +4901,46 @@ void get_board(const char fen[])
 	setup_board();
 }
 
+void init_search(int clear_hash)
+{
+	for (int ih = 0; ih < 16 * 64; ++ih)
+		HistoryVals[ih] = HistoryVals[ih + 16 * 64] = (1 << 8) | 2;	// Leave memory for joins, etc, in History
+
+	memset(DeltaVals, 0, 16 * 4096 * sizeof(sint16));
+	memset(Ref, 0, 16 * 64 * sizeof(GRef));
+	memset(Data + 1, 0, (MAX_HEIGHT - 1) * sizeof(GData));
+	if (clear_hash)
+	{
+		date = 0;
+		date = 1;
+		memset(Hash, 0, hash_size * sizeof(GEntry));
+		memset(PVHash, 0, pv_hash_size * sizeof(GPVEntry));
+	}
+	get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+	nodes = tb_hits = 0;
+	best_move = best_score = 0;
+	LastTime = LastValue = LastExactValue = InstCnt = 0;
+	LastSpeed = 0;
+	PVN = 1;
+	Contempt = 8;
+	Wobble = 0;
+	Infinite = 1;
+	SearchMoves = 0;
+	TimeLimit1 = TimeLimit2 = 0;
+	Stop = Searching = 0;
+	if (MaxPrN > 1)
+		ZERO_BIT_64(Smpi->searching, 0);
+	DepthLimit = MAX_HEIGHT;
+	LastDepth = MAX_HEIGHT;
+	Print = 1;
+	memset(CurrentSI, 0, sizeof(GSearchInfo));
+	memset(BaseSI, 0, sizeof(GSearchInfo));
+#ifdef CPU_TIMING
+	GlobalTime[GlobalTurn] = UciBaseTime;
+	GlobalInc[GlobalTurn] = UciIncTime;
+#endif
+}
+
 INLINE GEntry* probe_hash()
 {
 	GEntry* start = Hash + (High32(Current->key) & hash_mask);
@@ -5072,71 +5008,6 @@ int move_from_string(char string[])
 			move |= FlagPBishop;
 	}
 	return move;
-}
-
-struct ScopedMove_
-{
-	int move_;
-	ScopedMove_(int move) : move_(move)
-	{
-		if (Current->turn)
-			do_move<1>(move);
-		else
-			do_move<0>(move);
-	}
-	~ScopedMove_()
-	{
-		if (Current->turn ^ 1)
-			undo_move<1>(move_);
-		else
-			undo_move<0>(move_);
-	}
-};
-
-void pick_pv()
-{
-	GEntry* Entry;
-	GPVEntry* PVEntry;
-	int i, depth, move;
-	if (pvp >= Min(pv_length, 64))
-	{
-		PV[pvp] = 0;
-		return;
-	}
-	move = 0;
-	depth = -256;
-	if (Entry = probe_hash())
-		if (T(Entry->move) && Entry->low_depth > depth)
-		{
-			depth = Entry->low_depth;
-			move = Entry->move;
-		}
-	if (PVEntry = probe_pv_hash())
-		if (T(PVEntry->move) && PVEntry->depth > depth)
-		{
-			depth = PVEntry->depth;
-			move = PVEntry->move;
-		}
-	evaluate();
-	if (Current->att[Current->turn] & King(Current->turn ^ 1))
-		PV[pvp] = 0;
-	else if (move && (Current->turn ? is_legal<1>(move) : is_legal<0>(move)))
-	{
-		PV[pvp] = move;
-		++pvp;
-		ScopedMove_ raii(move);
-		if (Current->ply >= 100)
-			return;
-		for (i = 4; i <= Current->ply; i += 2)
-			if (Stack[sp - i] == Current->key)
-			{
-				PV[pvp] = 0;
-				return;
-			}
-		pick_pv();
-	}
-	else
-		PV[pvp] = 0;
 }
 
 template <bool me> bool draw_in_pv()
@@ -5436,6 +5307,41 @@ void undo_null()
 	--Current;
 	--sp;
 }
+
+INLINE void do_move(bool me, int move)
+{
+	if (me)
+		do_move<true>(move);
+	else
+		do_move<false>(move);
+}
+INLINE void undo_move(bool me, int move)
+{
+	if (me)
+		undo_move<true>(move);
+	else
+		undo_move<false>(move);
+}
+
+struct ScopedMove_
+{
+	int move_;
+	ScopedMove_(int move) : move_(move)
+	{
+		if (Current->turn)
+			do_move<1>(move);
+		else
+			do_move<0>(move);
+	}
+	~ScopedMove_()
+	{
+		if (Current->turn ^ 1)
+			undo_move<1>(move_);
+		else
+			undo_move<0>(move_);
+	}
+};
+
 
 typedef struct
 {
@@ -6126,16 +6032,16 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 {
 	POP pop;
 	Current->xray[me] = 0;
+	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
+	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
 	EI.king_att[me] = 0;
 	if (uint64 patt = Current->patt[me] & EI.area[opp])
 	{
 		int eff = 1 + T(Multiple(patt));
 		uint64 src = (ShiftW<opp>(patt) | ShiftE<opp>(patt)) & Pawn(me);
 		eff += T(src & Current->patt[me]);
-		EI.king_att[me] = eff * KingPAttack;
+		EI.king_att[me] = KingAttack + eff * KingPAttackInc;
 	}
-	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * PawnSpecial[PawnBlocked]);
-	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
 	eval_queens<me, POP>(EI);
 	EI.free[me] |= Rook(opp);
 	eval_rooks<me, POP>(EI);
@@ -6170,30 +6076,8 @@ template<class POP> void evaluation()
 	else
 		EI.material = 0;
 
-#define me White
-	Current->xray[me] = 0;
-	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
-	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingAttack : 0;
-	eval_queens<me, POP>(EI);
-	EI.free[me] |= Rook(opp);
-	eval_rooks<me, POP>(EI);
-	EI.free[me] |= Minor(opp);
-	eval_bishops<me, POP>(EI);
-	eval_knights<me, POP>(EI);
-#undef me
-#define me Black
-	Current->xray[me] = 0;
-	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
-	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingAttack : 0;
-	eval_queens<me, POP>(EI);
-	EI.free[me] |= Rook(opp);
-	eval_rooks<me, POP>(EI);
-	EI.free[me] |= Minor(opp);
-	eval_bishops<me, POP>(EI);
-	eval_knights<me, POP>(EI);
-#undef me
+	eval_sequential<White, POP>(EI);
+	eval_sequential<Black, POP>(EI);
 
 	EI.PawnEntry = &PawnHash[Current->pawn_key & pawn_hash_mask];
 	if (Current->pawn_key != EI.PawnEntry->key)
@@ -6448,6 +6332,52 @@ template<bool me> bool is_legal(int move)
 	}
 }
 
+void pick_pv()
+{
+	GEntry* Entry;
+	GPVEntry* PVEntry;
+	int i, depth, move;
+	if (pvp >= Min(pv_length, 64))
+	{
+		PV[pvp] = 0;
+		return;
+	}
+	move = 0;
+	depth = -256;
+	if (Entry = probe_hash())
+		if (T(Entry->move) && Entry->low_depth > depth)
+		{
+			depth = Entry->low_depth;
+			move = Entry->move;
+		}
+	if (PVEntry = probe_pv_hash())
+		if (T(PVEntry->move) && PVEntry->depth > depth)
+		{
+			depth = PVEntry->depth;
+			move = PVEntry->move;
+		}
+	evaluate();
+	if (Current->att[Current->turn] & King(Current->turn ^ 1))
+		PV[pvp] = 0;
+	else if (move && (Current->turn ? is_legal<1>(move) : is_legal<0>(move)))
+	{
+		PV[pvp] = move;
+		++pvp;
+		ScopedMove_ raii(move);
+		if (Current->ply >= 100)
+			return;
+		for (i = 4; i <= Current->ply; i += 2)
+			if (Stack[sp - i] == Current->key)
+			{
+				PV[pvp] = 0;
+				return;
+			}
+		pick_pv();
+	}
+	else
+		PV[pvp] = 0;
+}
+
 template <bool me> bool is_check(int move)
 {  // doesn't detect castling and ep checks
 	uint64 king;
@@ -6640,7 +6570,9 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 	int from = From(move);
 	if (HasBit(Current->passer, from))
 	{
-		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][from] & Pawn(Current->turn))))
+		if (T(Current->passer & Pawn(opp)) && (pv || depth < 10))
+			return 2;
+		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][RankOf(from)] & Pawn(Current->turn))))
 			return pv ? 2 : 1;
 		//int rank = OwnRank(me, from);
 		//if (rank >= 5 && depth < 16)
@@ -8166,7 +8098,7 @@ template<bool me> bool IsThreat(int move)
 struct LMR_
 {
 	double scale_;
-	LMR_(int depth) : scale_(depth < 6 ? 0.0 : 0.11 + 0.12 / sqrt(double(depth)))
+	LMR_(int depth) : scale_(depth < 4 ? 0.0 : 0.05 + 0.53 / sqrt(double(depth)) - 2.99 / Square(double(depth)))
 	{
 /*		if (F(Current->material & FlagUnusualMaterial))
 		{
@@ -8386,6 +8318,96 @@ template<bool me, bool evasion> HashResult_ try_hash(int beta, int depth, int fl
 	return HashResult_({ false, score, hash_move, 0, 0 });
 }
 
+int input()
+{
+	if (child)
+		return 0;
+	DWORD p;
+	if (F(Input))
+		return 0;
+	if (F(Console))
+	{
+		if (PeekNamedPipe(StreamHandle, nullptr, 0, nullptr, &p, nullptr))
+			return (p > 0);
+		else
+			return 1;
+	}
+	else
+		return 0;
+}
+
+void get_position(char string[])
+{
+	const char* fen;
+	char* moves;
+	const char* ptr;
+	int move, move1 = 0;
+
+	fen = strstr(string, "fen ");
+	moves = strstr(string, "moves ");
+	if (fen != nullptr)
+		get_board(fen + 4);
+	else
+		get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+	PrevMove = 0;
+	if (moves != nullptr)
+	{
+		ptr = moves + 6;
+		while (*ptr != 0)
+		{
+			pv_string[0] = *ptr++;
+			pv_string[1] = *ptr++;
+			pv_string[2] = *ptr++;
+			pv_string[3] = *ptr++;
+			if (*ptr == 0 || *ptr == ' ')
+				pv_string[4] = 0;
+			else
+			{
+				pv_string[4] = *ptr++;
+				pv_string[5] = 0;
+			}
+			evaluate();
+			move = move_from_string(pv_string);
+			PrevMove = move1;
+			move1 = move;
+			if (Current->turn)
+				do_move<1>(move);
+			else
+				do_move<0>(move);
+			memcpy(Data, Current, sizeof(GData));
+			Current = Data;
+			while (*ptr == ' ') ++ptr;
+		}
+	}
+	copy(Stack.begin() + sp - Current->ply, Stack.begin() + sp + 1, Stack.begin());
+	//memcpy(Stack, Stack + sp - Current->ply, (Current->ply + 1) * sizeof(uint64));
+	sp = Current->ply;
+}
+
+sint64 get_time()
+{
+#ifdef CPU_TIMING
+#ifndef TIMING
+	if (CpuTiming)
+	{
+#endif
+		uint64 ctime;
+		QueryProcessCycleTime(GetCurrentProcess(), &ctime);
+#ifdef TIMING
+		return ctime / (CyclesPerMSec / 1000);
+#endif
+		return (ctime / CyclesPerMSec);
+#ifndef TIMING
+	}
+#endif
+#endif
+
+#ifdef W32_BUILD
+	return GetTickCount();
+#else
+	return GetTickCount64();
+#endif
+}
 
 template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, int flags)
 {
@@ -8446,7 +8468,7 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 		score = beta - 1;
 		if (evasion)
 		{
-			(void) gen_evasions<me>(Current->moves);
+			(void)gen_evasions<me>(Current->moves);
 			if (F(Current->moves[0]))
 				return score;
 		}
@@ -8579,7 +8601,7 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 		{
 			if ((Current->stage == s_bad_cap && depth <= 5)
 				|| (Current->stage == r_cap && !see<me>(move, -SeeThreshold, SeeValue)))
-					continue;
+				continue;
 		}
 		if (do_split && played >= 1)
 		{
@@ -8673,7 +8695,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		auto p = &RootList[0];
 		while (*p) ++p;
 		sort_moves(&RootList[0], p);
-		for (p = &RootList[0]; *p; ++p) *p &= 0xFFFF;
+		for (p = &RootList[0]; *p; ++p)* p &= 0xFFFF;
 		SetScore(&RootList[0], 2);
 	}
 	else
@@ -8690,7 +8712,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 	// check hash
 	hash_depth = -1;
 	Current->best = hash_move = 0;
-	if (GPVEntry* PVEntry = probe_pv_hash())
+	if (GPVEntry * PVEntry = probe_pv_hash())
 	{
 		hash_low(PVEntry->move, PVEntry->value, PVEntry->depth);
 		hash_high(PVEntry->value, PVEntry->depth);
@@ -8709,7 +8731,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 			hash_value = PVEntry->value;
 		}
 	}
-	if (GEntry* Entry = probe_hash())
+	if (GEntry * Entry = probe_hash())
 	{
 		if (T(Entry->move) && Entry->low_depth > hash_depth)
 		{
@@ -8807,7 +8829,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		}
 		new_depth = depth - 2 + ext;
 		do_move<me>(move);
-		if (PrN > 1) 
+		if (PrN > 1)
 		{
 			evaluate();
 			if (Current->att[opp] & King(me))
@@ -8946,7 +8968,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 			value = -pv_search<opp, 0>(-beta, -alpha, new_depth, ExtToFlag(ext));
 			if (root)
 			{
-				if (value <= alpha) 
+				if (value <= alpha)
 					best_move = old_best;
 			}
 		}
@@ -9004,7 +9026,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 
 template <bool me> void root()
 {
-	int i, depth, value, alpha, beta, start_depth = 2, hash_depth = 0, hash_value = 0; 
+	int i, depth, value, alpha, beta, start_depth = 2, hash_depth = 0, hash_value = 0;
 	int store_time = 0, time_est, ex_depth = 0, ex_value, prev_time = 0, knodes = 0;
 	sint64 time;
 	GPVEntry* PVEntry;
@@ -9019,7 +9041,7 @@ template <bool me> void root()
 	Current = Data;
 
 #ifdef TB
-	if (popcnt(PieceAll()) <= int(TB_LARGEST)) 
+	if (popcnt(PieceAll()) <= int(TB_LARGEST))
 	{
 		auto res = TBProbe(tb_probe_root_checked, me);
 		if (res != TB_RESULT_FAILED) {
@@ -9157,7 +9179,7 @@ template <bool me> void root()
 	}
 	else
 		LastTime = 0;
-	
+
 	// set_jmp
 	memcpy(SaveBoard, Board, sizeof(GBoard));
 	memcpy(SaveData, Data, sizeof(GData));
@@ -9328,285 +9350,6 @@ template <bool me> int multipv(int depth)
 	return Current->score;
 }
 
-void send_pv(int depth, int alpha, int beta, int score)
-{
-	int i, pos, move, mate = 0, mate_score, sel_depth;
-	sint64 nps, snodes, tbhits = 0;
-	if (F(Print))
-		return;
-	for (sel_depth = 1; sel_depth < 127 && T((Data + sel_depth)->att[0]); ++sel_depth)
-		;
-	--sel_depth;
-	pv_length = 64;
-	if (F(move = best_move))
-		move = RootList[0];
-	if (F(move))
-		return;
-	PV[0] = move;
-	if (Current->turn)
-		do_move<1>(move);
-	else
-		do_move<0>(move);
-	pvp = 1;
-	pick_pv();
-	if (Current->turn ^ 1)
-		undo_move<1>(move);
-	else
-		undo_move<0>(move);
-	pos = 0;
-	for (i = 0; i < 64 && T(PV[i]); ++i)
-	{
-		if (pos > 0)
-		{
-			pv_string[pos] = ' ';
-			++pos;
-		}
-		move = PV[i];
-		pv_string[pos++] = ((move >> 6) & 7) + 'a';
-		pv_string[pos++] = ((move >> 9) & 7) + '1';
-		pv_string[pos++] = (move & 7) + 'a';
-		pv_string[pos++] = ((move >> 3) & 7) + '1';
-		if (IsPromotion(move))
-		{
-			if ((move & 0xF000) == FlagPQueen)
-				pv_string[pos++] = 'q';
-			else if ((move & 0xF000) == FlagPRook)
-				pv_string[pos++] = 'r';
-			else if ((move & 0xF000) == FlagPBishop)
-				pv_string[pos++] = 'b';
-			else if ((move & 0xF000) == FlagPKnight)
-				pv_string[pos++] = 'n';
-		}
-		pv_string[pos] = 0;
-	}
-	score_string[0] = 'c';
-	score_string[1] = 'p';
-	if (score > EvalValue)
-	{
-		mate = 1;
-		strcpy_s(score_string, "mate ");
-		mate_score = (MateValue - score + 1) / 2;
-		score_string[6] = 0;
-	}
-	else if (score < -EvalValue)
-	{
-		mate = 1;
-		strcpy_s(score_string, "mate ");
-		mate_score = -(score + MateValue + 1) / 2;
-		score_string[6] = 0;
-	}
-	else
-	{
-		score_string[0] = 'c';
-		score_string[1] = 'p';
-		score_string[2] = ' ';
-		score_string[3] = 0;
-	}
-	sint64 elapsed = get_time() - StartTime;
-#ifdef MP_NPS
-	snodes = Smpi->nodes;
-#ifdef TB
-	tbhits = Smpi->tb_hits;
-#endif
-#else
-	snodes = nodes;
-#endif
-	nps = elapsed ? (snodes * 1000) / elapsed : 12345;
-	if (score < beta)
-	{
-		if (score <= alpha)
-			fprintf(stdout, "info depth %d seldepth %d score %s%d upperbound time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
-					(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
-		else
-			fprintf(stdout, "info depth %d seldepth %d score %s%d time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string, 
-					(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
-	}
-	else
-		fprintf(stdout, "info depth %d seldepth %d score %s%d lowerbound time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
-				(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
-	fflush(stdout);
-}
-
-void send_multipv(int depth, int curr_number)
-{
-	int i, j, pos, move, score;
-	sint64 nps, snodes, tbhits = 0;
-	if (F(Print))
-		return;
-	for (j = 0; j < PVN && T(MultiPV[j]); ++j)
-	{
-		pv_length = 63;
-		pvp = 0;
-		move = MultiPV[j] & 0xFFFF;
-		score = MultiPV[j] >> 16;
-		memset(PV, 0, 64 * sizeof(uint16));
-		if (Current->turn)
-			do_move<1>(move);
-		else
-			do_move<0>(move);
-		pick_pv();
-		if (Current->turn ^ 1)
-			undo_move<1>(move);
-		else
-			undo_move<0>(move);
-		for (i = 63; i > 0; --i) PV[i] = PV[i - 1];
-		PV[0] = move;
-		pos = 0;
-		for (i = 0; i < 64 && T(PV[i]); ++i)
-		{
-			if (pos > 0)
-			{
-				pv_string[pos] = ' ';
-				++pos;
-			}
-			move = PV[i];
-			pv_string[pos++] = ((move >> 6) & 7) + 'a';
-			pv_string[pos++] = ((move >> 9) & 7) + '1';
-			pv_string[pos++] = (move & 7) + 'a';
-			pv_string[pos++] = ((move >> 3) & 7) + '1';
-			if (IsPromotion(move))
-			{
-				if ((move & 0xF000) == FlagPQueen)
-					pv_string[pos++] = 'q';
-				else if ((move & 0xF000) == FlagPRook)
-					pv_string[pos++] = 'r';
-				else if ((move & 0xF000) == FlagPBishop)
-					pv_string[pos++] = 'b';
-				else if ((move & 0xF000) == FlagPKnight)
-					pv_string[pos++] = 'n';
-			}
-			pv_string[pos] = 0;
-		}
-		score_string[0] = 'c';
-		score_string[1] = 'p';
-		if (score > EvalValue)
-		{
-			strcpy_s(score_string, "mate ");
-			score = (MateValue - score + 1) / 2;
-			score_string[6] = 0;
-		}
-		else if (score < -EvalValue)
-		{
-			strcpy_s(score_string, "mate ");
-			score = -(score + MateValue + 1) / 2;
-			score_string[6] = 0;
-		}
-		else
-		{
-			score_string[0] = 'c';
-			score_string[1] = 'p';
-			score_string[2] = ' ';
-			score_string[3] = 0;
-		}
-		nps = get_time() - StartTime;
-#ifdef MP_NPS
-		snodes = Smpi->nodes;
-#ifdef TB
-		tbhits = Smpi->tb_hits;
-#endif
-#else
-		snodes = nodes;
-#endif
-		if (nps)
-			nps = (snodes * 1000) / nps;
-		fprintf(stdout, "info multipv %d depth %d score %s%d nodes %I64d nps %I64d tbhits %I64d pv %s\n", 
-					j + 1, (j <= curr_number ? depth : depth - 1), score_string, score,	snodes, nps, tbhits, pv_string);
-		fflush(stdout);
-	}
-}
-
-void send_best_move()
-{
-	uint64 snodes;
-	int ponder;
-#ifdef CPU_TIMING
-	GlobalTime[GlobalTurn] -= static_cast<int>(get_time() - StartTime) - GlobalInc[GlobalTurn];
-	if (GlobalTime[GlobalTurn] < GlobalInc[GlobalTurn])
-		GlobalTime[GlobalTurn] = GlobalInc[GlobalTurn];
-#endif
-	if (F(Print))
-		return;
-#ifdef MP_NPS
-	snodes = Smpi->nodes;
-#else
-	snodes = nodes;
-#endif
-	fprintf(stdout, "info nodes %I64d score cp %d\n", snodes, best_score / CP_SEARCH);
-	if (!best_move)
-		return;
-	Current = Data;
-	evaluate();
-	if (Current->turn)
-		do_move<1>(best_move);
-	else
-		do_move<0>(best_move);
-	pv_length = 1;
-	pvp = 0;
-	pick_pv();
-	ponder = PV[0];
-	if (Current->turn ^ 1)
-		undo_move<1>(best_move);
-	else
-		undo_move<0>(best_move);
-	move_to_string(best_move, pv_string);
-	if (ponder)
-	{
-		move_to_string(ponder, score_string);
-		fprintf(stdout, "bestmove %s ponder %s\n", pv_string, score_string);
-	}
-	else
-		fprintf(stdout, "bestmove %s\n", pv_string);
-	fflush(stdout);
-}
-
-void get_position(char string[])
-{
-	const char* fen;
-	char* moves;
-	const char* ptr;
-	int move, move1 = 0;
-
-	fen = strstr(string, "fen ");
-	moves = strstr(string, "moves ");
-	if (fen != nullptr)
-		get_board(fen + 4);
-	else
-		get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-	PrevMove = 0;
-	if (moves != nullptr)
-	{
-		ptr = moves + 6;
-		while (*ptr != 0)
-		{
-			pv_string[0] = *ptr++;
-			pv_string[1] = *ptr++;
-			pv_string[2] = *ptr++;
-			pv_string[3] = *ptr++;
-			if (*ptr == 0 || *ptr == ' ')
-				pv_string[4] = 0;
-			else
-			{
-				pv_string[4] = *ptr++;
-				pv_string[5] = 0;
-			}
-			evaluate();
-			move = move_from_string(pv_string);
-			PrevMove = move1;
-			move1 = move;
-			if (Current->turn)
-				do_move<1>(move);
-			else
-				do_move<0>(move);
-			memcpy(Data, Current, sizeof(GData));
-			Current = Data;
-			while (*ptr == ' ') ++ptr;
-		}
-	}
-	copy(Stack.begin() + sp - Current->ply, Stack.begin() + sp + 1, Stack.begin());
-	//memcpy(Stack, Stack + sp - Current->ply, (Current->ply + 1) * sizeof(uint64));
-	sp = Current->ply;
-}
-
 void get_time_limit(char string[])
 {
 	const char* ptr;
@@ -9761,31 +9504,6 @@ void get_time_limit(char string[])
 		root<1>();
 }
 
-sint64 get_time()
-{
-#ifdef CPU_TIMING
-#ifndef TIMING
-	if (CpuTiming)
-	{
-#endif
-		uint64 ctime;
-		QueryProcessCycleTime(GetCurrentProcess(), &ctime);
-#ifdef TIMING
-		return ctime / (CyclesPerMSec / 1000);
-#endif
-		return (ctime / CyclesPerMSec);
-#ifndef TIMING
-	}
-#endif
-#endif
-
-#ifdef W32_BUILD
-	return GetTickCount();
-#else
-	return GetTickCount64();
-#endif
-}
-
 int time_to_stop(GSearchInfo* SI, int time, int searching)
 {
 	if (Infinite)
@@ -9819,211 +9537,48 @@ int time_to_stop(GSearchInfo* SI, int time, int searching)
 	return 0;
 }
 
-void check_time(const int* time, int searching)
+void send_best_move()
 {
+	uint64 snodes;
+	int ponder;
 #ifdef CPU_TIMING
-	if (!time && CpuTiming && UciMaxKNodes && nodes > UciMaxKNodes * 1024)
-		Stop = 1;
+	GlobalTime[GlobalTurn] -= static_cast<int>(get_time() - StartTime) - GlobalInc[GlobalTurn];
+	if (GlobalTime[GlobalTurn] < GlobalInc[GlobalTurn])
+		GlobalTime[GlobalTurn] = GlobalInc[GlobalTurn];
 #endif
-#ifdef TUNER
-#ifndef TIMING
-	return;
-#endif
+	if (F(Print))
+		return;
+#ifdef MP_NPS
+	snodes = Smpi->nodes;
 #else
-	while (!Stop && input()) uci();
+	snodes = nodes;
 #endif
-	if (!Stop)
-	{
-		CurrTime = get_time();
-		int Time = static_cast<int>(CurrTime - StartTime);
-		if (T(Print) && Time > InfoLag && CurrTime - InfoTime > InfoDelay)
-		{
-			InfoTime = CurrTime;
-			if (info_string[0])
-			{
-				fprintf(stdout, "%s", info_string);
-				info_string[0] = 0;
-				fflush(stdout);
-			}
-		}
-		if (F(time_to_stop(CurrentSI, time ? *time : Time, searching)))
-			return;
-	}
-
-	Stop = 1;
-	longjmp(Jump, 1);
-}
-
-void check_state()
-{
-	GSP* Sp, *Spc;
-	int n, nc, score, best, pv, alpha, beta, new_depth, r_depth, ext, move, value;
-	GMove* M;
-
-	if (parent)
-	{
-		for (uint64 u = TEST_RESET(Smpi->fail_high); u; Cut(u))
-		{
-			Sp = &Smpi->Sp[lsb(u)];
-			LOCK(Sp->lock);
-			if (Sp->active && Sp->finished)
-			{
-				UNLOCK(Sp->lock);
-				longjmp(Sp->jump, 1);
-			}
-			UNLOCK(Sp->lock);
-		}
+	fprintf(stdout, "info nodes %I64d score cp %d\n", snodes, best_score / CP_SEARCH);
+	if (!best_move)
 		return;
-	}
-
-	for (; ; ) // start:
-	{
-		if (TEST_RESET_BIT(Smpi->stop, Id))
-			longjmp(CheckJump, 1);
-		if (HasBit(Smpi->searching, Id))
-			return;
-		if (!(Smpi->searching & 1))
-		{
-			Sleep(1);
-			return;
-		}
-		while ((Smpi->searching & 1) && !Smpi->active_sp) _mm_pause();
-		while ((Smpi->searching & 1) && !HasBit(Smpi->searching, Id - 1)) _mm_pause();
-
-		Sp = nullptr;
-		best = -0x7FFFFFFF;
-		for (uint64 u = Smpi->active_sp; u; Cut(u))
-		{
-			Spc = &Smpi->Sp[lsb(u)];
-			if (!Spc->active || Spc->finished || Spc->lock)
-				continue;
-			for (nc = Spc->current + 1; nc < Spc->move_number; ++nc)
-				if (!(Spc->move[nc].flags & FlagClaimed))
-					break;
-			if (nc < Spc->move_number)
-				score = 1024 * 1024 + 512 * 1024 * (Spc->depth >= 20) + 128 * 1024 * (!(Spc->split)) + ((Spc->depth + 2 * Spc->singular) * 1024) -
-				(((16 * 1024) * (nc - Spc->current)) / nc);
-			else
-				continue;
-			if (score > best)
-			{
-				best = score;
-				Sp = Spc;
-				n = nc;
-			}
-		}
-
-		if (Sp == nullptr)
-			continue;
-		if (!Sp->active || Sp->finished || (Sp->move[n].flags & FlagClaimed) || n <= Sp->current || n >= Sp->move_number)
-			continue;
-		if (Sp->lock)
-			continue;
-
-		LOCK(Sp->lock);
-		if (!Sp->active || Sp->finished || (Sp->move[n].flags & FlagClaimed) || n <= Sp->current || n >= Sp->move_number)
-		{
-			UNLOCK(Sp->lock);
-			continue;
-		}
-		break;
-	}
-
-	M = &Sp->move[n];
-	M->flags |= FlagClaimed;
-	M->id = Id;
-	Sp->split |= Bit(Id);
-	pv = Sp->pv;
-	alpha = Sp->alpha;
-	beta = Sp->beta;
-	new_depth = M->reduced_depth;
-	r_depth = M->research_depth;
-	ext = M->ext;
-	move = M->move;
-
 	Current = Data;
-	retrieve_position(Sp->Pos, 1);
 	evaluate();
-	SET_BIT_64(Smpi->searching, Id);
-	UNLOCK(Sp->lock);
-
-	if (setjmp(CheckJump))
+	if (Current->turn)
+		do_move<1>(best_move);
+	else
+		do_move<0>(best_move);
+	pv_length = 1;
+	pvp = 0;
+	pick_pv();
+	ponder = PV[0];
+	if (Current->turn ^ 1)
+		undo_move<1>(best_move);
+	else
+		undo_move<0>(best_move);
+	move_to_string(best_move, pv_string);
+	if (ponder)
 	{
-		ZERO_BIT_64(Smpi->searching, Id);
-		return;
-	}
-	if (Current->turn == White)
-	{
-		do_move<0>(move);
-		if (pv)
-		{
-			value = -scout<1, 0, 0>(-alpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
-			if (value > alpha)
-				value = -pv_search<1, 0>(-beta, -alpha, r_depth, ExtToFlag(ext));
-		}
-		else
-		{
-			value = -scout<1, 0, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
-			if (value >= beta && new_depth < r_depth)
-				value = -scout<1, 0, 0>(1 - beta, r_depth, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
-		}
-		undo_move<0>(move);
+		move_to_string(ponder, score_string);
+		fprintf(stdout, "bestmove %s ponder %s\n", pv_string, score_string);
 	}
 	else
-	{
-		do_move<1>(move);
-		if (pv)
-		{
-			value = -scout<0, 0, 0>(-alpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
-			if (value > alpha)
-				value = -pv_search<0, 0>(-beta, -alpha, r_depth, ExtToFlag(ext));
-		}
-		else
-		{
-			value = -scout<0, 0, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
-			if (value >= beta && new_depth < r_depth)
-				value = -scout<0, 0, 0>(1 - beta, r_depth, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
-		}
-		undo_move<1>(move);
-	}
-
-	LOCK(Sp->lock);
-	ZERO_BIT_64(Smpi->searching, Id);
-	if (TEST_RESET_BIT(Smpi->stop, Id))
-	{
-		UNLOCK(Sp->lock);
-		return;
-	}
-	M->flags |= FlagFinished;
-	if (value > Sp->alpha)
-	{
-		Sp->alpha = Min(value, beta);
-		Sp->best_move = move;
-		if (value >= beta)
-		{
-			Sp->finished = 1;
-			SET_BIT_64(Smpi->fail_high, (int)(Sp - Smpi->Sp));
-		}
-	}
-	UNLOCK(Sp->lock);
-}
-
-int input()
-{
-	if (child)
-		return 0;
-	DWORD p;
-	if (F(Input))
-		return 0;
-	if (F(Console))
-	{
-		if (PeekNamedPipe(StreamHandle, nullptr, 0, nullptr, &p, nullptr))
-			return (p > 0);
-		else
-			return 1;
-	}
-	else
-		return 0;
+		fprintf(stdout, "bestmove %s\n", pv_string);
+	fflush(stdout);
 }
 
 void epd_test(char filename[], int time_limit)
@@ -10050,7 +9605,7 @@ void epd_test(char filename[], int time_limit)
 		(void)fgets(mstring, 65536, fh);
 		ptr = strchr(mstring, '\n');
 		if (ptr != nullptr)
-			*ptr = 0;
+			* ptr = 0;
 		get_board(mstring);
 		evaluate();
 		if (Current->turn == White)
@@ -10077,26 +9632,26 @@ void epd_test(char filename[], int time_limit)
 		{
 			halt_all(0, 127);
 #ifdef TIME_TO_DEPTH
-		stop_searching:
+			stop_searching :
 #endif
-			ZERO_BIT_64(Smpi->searching, Id);
-			Searching = 0;
-			Current = Data;
-			new_time = Max(get_time() - StartTime, 1ll);
-			total_time += new_time;
+						   ZERO_BIT_64(Smpi->searching, Id);
+						   Searching = 0;
+						   Current = Data;
+						   new_time = Max(get_time() - StartTime, 1ll);
+						   total_time += new_time;
 #ifdef MP_NPS
-			all_nodes += Smpi->nodes;
+						   all_nodes += Smpi->nodes;
 #else
-			all_nodes += nodes;
+						   all_nodes += nodes;
 #endif
-			total_depth += LastDepth / 2;
+						   total_depth += LastDepth / 2;
 #ifndef TIME_TO_DEPTH
-			fprintf(stdout, "Position %d: %d [%lf, %lld]\n", n, LastDepth / 2, ((double)total_depth) / ((double)n), (all_nodes * 1000ull) / total_time);
+						   fprintf(stdout, "Position %d: %d [%lf, %lld]\n", n, LastDepth / 2, ((double)total_depth) / ((double)n), (all_nodes * 1000ull) / total_time);
 #else
-			prod += log((double)new_time);
-			fprintf(stdout, "Position %d: %lld [%.0lf, %lld]\n", n, new_time, exp(prod / (double)n), (all_nodes * 1000ull) / total_time);
+						   prod += log((double)new_time);
+						   fprintf(stdout, "Position %d: %lld [%.0lf, %lld]\n", n, new_time, exp(prod / (double)n), (all_nodes * 1000ull) / total_time);
 #endif
-			goto new_position;
+						   goto new_position;
 		}
 		for (int d = 4; d < MAX_HEIGHT; d += 2)
 		{
@@ -10130,7 +9685,7 @@ void uci()
 	const char* mdy = __DATE__;
 	const char now[10] = { mdy[7], mdy[8], mdy[9], mdy[10], mdy[0], mdy[1], mdy[2], mdy[4] == ' ' ? '0' : mdy[4], mdy[5], 0 };
 	char* ptr = nullptr;
-	char * strtok_context = nullptr;
+	char* strtok_context = nullptr;
 	int i;
 
 	(void)fgets(mstring, 65536, stdin);
@@ -10138,7 +9693,7 @@ void uci()
 		exit(0);
 	ptr = strchr(mstring, '\n');
 	if (ptr != nullptr)
-		*ptr = 0;
+		* ptr = 0;
 	if (!strcmp(mstring, "uci"))
 	{
 		fprintf(stdout, "id name Roc ");
@@ -10385,6 +9940,383 @@ HANDLE CreateChildProcess(int child_id)
 		fprintf(stdout, "Error %d\n", GetLastError());
 		return nullptr;
 	}
+}
+
+void check_time(const int* time, int searching)
+{
+#ifdef CPU_TIMING
+	if (!time && CpuTiming && UciMaxKNodes && nodes > UciMaxKNodes * 1024)
+		Stop = 1;
+#endif
+#ifdef TUNER
+#ifndef TIMING
+	return;
+#endif
+#else
+	while (!Stop && input()) uci();
+#endif
+	if (!Stop)
+	{
+		CurrTime = get_time();
+		int Time = static_cast<int>(CurrTime - StartTime);
+		if (T(Print) && Time > InfoLag && CurrTime - InfoTime > InfoDelay)
+		{
+			InfoTime = CurrTime;
+			if (info_string[0])
+			{
+				fprintf(stdout, "%s", info_string);
+				info_string[0] = 0;
+				fflush(stdout);
+			}
+		}
+		if (F(time_to_stop(CurrentSI, time ? *time : Time, searching)))
+			return;
+	}
+
+	Stop = 1;
+	longjmp(Jump, 1);
+}
+
+
+void send_pv(int depth, int alpha, int beta, int score)
+{
+	int i, pos, move, mate = 0, mate_score, sel_depth;
+	sint64 nps, snodes, tbhits = 0;
+	if (F(Print))
+		return;
+	for (sel_depth = 1; sel_depth < 127 && T((Data + sel_depth)->att[0]); ++sel_depth)
+		;
+	--sel_depth;
+	pv_length = 64;
+	if (F(move = best_move))
+		move = RootList[0];
+	if (F(move))
+		return;
+	PV[0] = move;
+	if (Current->turn)
+		do_move<1>(move);
+	else
+		do_move<0>(move);
+	pvp = 1;
+	pick_pv();
+	if (Current->turn ^ 1)
+		undo_move<1>(move);
+	else
+		undo_move<0>(move);
+	pos = 0;
+	for (i = 0; i < 64 && T(PV[i]); ++i)
+	{
+		if (pos > 0)
+		{
+			pv_string[pos] = ' ';
+			++pos;
+		}
+		move = PV[i];
+		pv_string[pos++] = ((move >> 6) & 7) + 'a';
+		pv_string[pos++] = ((move >> 9) & 7) + '1';
+		pv_string[pos++] = (move & 7) + 'a';
+		pv_string[pos++] = ((move >> 3) & 7) + '1';
+		if (IsPromotion(move))
+		{
+			if ((move & 0xF000) == FlagPQueen)
+				pv_string[pos++] = 'q';
+			else if ((move & 0xF000) == FlagPRook)
+				pv_string[pos++] = 'r';
+			else if ((move & 0xF000) == FlagPBishop)
+				pv_string[pos++] = 'b';
+			else if ((move & 0xF000) == FlagPKnight)
+				pv_string[pos++] = 'n';
+		}
+		pv_string[pos] = 0;
+	}
+	score_string[0] = 'c';
+	score_string[1] = 'p';
+	if (score > EvalValue)
+	{
+		mate = 1;
+		strcpy_s(score_string, "mate ");
+		mate_score = (MateValue - score + 1) / 2;
+		score_string[6] = 0;
+	}
+	else if (score < -EvalValue)
+	{
+		mate = 1;
+		strcpy_s(score_string, "mate ");
+		mate_score = -(score + MateValue + 1) / 2;
+		score_string[6] = 0;
+	}
+	else
+	{
+		score_string[0] = 'c';
+		score_string[1] = 'p';
+		score_string[2] = ' ';
+		score_string[3] = 0;
+	}
+	sint64 elapsed = get_time() - StartTime;
+#ifdef MP_NPS
+	snodes = Smpi->nodes;
+#ifdef TB
+	tbhits = Smpi->tb_hits;
+#endif
+#else
+	snodes = nodes;
+#endif
+	nps = elapsed ? (snodes * 1000) / elapsed : 12345;
+	if (score < beta)
+	{
+		if (score <= alpha)
+			fprintf(stdout, "info depth %d seldepth %d score %s%d upperbound time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
+					(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
+		else
+			fprintf(stdout, "info depth %d seldepth %d score %s%d time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string, 
+					(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
+	}
+	else
+		fprintf(stdout, "info depth %d seldepth %d score %s%d lowerbound time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
+				(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
+	fflush(stdout);
+}
+
+void send_multipv(int depth, int curr_number)
+{
+	int i, j, pos, move, score;
+	sint64 nps, snodes, tbhits = 0;
+	if (F(Print))
+		return;
+	for (j = 0; j < PVN && T(MultiPV[j]); ++j)
+	{
+		pv_length = 63;
+		pvp = 0;
+		move = MultiPV[j] & 0xFFFF;
+		score = MultiPV[j] >> 16;
+		memset(PV, 0, 64 * sizeof(uint16));
+		if (Current->turn)
+			do_move<1>(move);
+		else
+			do_move<0>(move);
+		pick_pv();
+		if (Current->turn ^ 1)
+			undo_move<1>(move);
+		else
+			undo_move<0>(move);
+		for (i = 63; i > 0; --i) PV[i] = PV[i - 1];
+		PV[0] = move;
+		pos = 0;
+		for (i = 0; i < 64 && T(PV[i]); ++i)
+		{
+			if (pos > 0)
+			{
+				pv_string[pos] = ' ';
+				++pos;
+			}
+			move = PV[i];
+			pv_string[pos++] = ((move >> 6) & 7) + 'a';
+			pv_string[pos++] = ((move >> 9) & 7) + '1';
+			pv_string[pos++] = (move & 7) + 'a';
+			pv_string[pos++] = ((move >> 3) & 7) + '1';
+			if (IsPromotion(move))
+			{
+				if ((move & 0xF000) == FlagPQueen)
+					pv_string[pos++] = 'q';
+				else if ((move & 0xF000) == FlagPRook)
+					pv_string[pos++] = 'r';
+				else if ((move & 0xF000) == FlagPBishop)
+					pv_string[pos++] = 'b';
+				else if ((move & 0xF000) == FlagPKnight)
+					pv_string[pos++] = 'n';
+			}
+			pv_string[pos] = 0;
+		}
+		score_string[0] = 'c';
+		score_string[1] = 'p';
+		if (score > EvalValue)
+		{
+			strcpy_s(score_string, "mate ");
+			score = (MateValue - score + 1) / 2;
+			score_string[6] = 0;
+		}
+		else if (score < -EvalValue)
+		{
+			strcpy_s(score_string, "mate ");
+			score = -(score + MateValue + 1) / 2;
+			score_string[6] = 0;
+		}
+		else
+		{
+			score_string[0] = 'c';
+			score_string[1] = 'p';
+			score_string[2] = ' ';
+			score_string[3] = 0;
+		}
+		nps = get_time() - StartTime;
+#ifdef MP_NPS
+		snodes = Smpi->nodes;
+#ifdef TB
+		tbhits = Smpi->tb_hits;
+#endif
+#else
+		snodes = nodes;
+#endif
+		if (nps)
+			nps = (snodes * 1000) / nps;
+		fprintf(stdout, "info multipv %d depth %d score %s%d nodes %I64d nps %I64d tbhits %I64d pv %s\n", 
+					j + 1, (j <= curr_number ? depth : depth - 1), score_string, score,	snodes, nps, tbhits, pv_string);
+		fflush(stdout);
+	}
+}
+
+void check_state()
+{
+	GSP* Sp, *Spc;
+	int n, nc, score, best, pv, alpha, beta, new_depth, r_depth, ext, move, value;
+	GMove* M;
+
+	if (parent)
+	{
+		for (uint64 u = TEST_RESET(Smpi->fail_high); u; Cut(u))
+		{
+			Sp = &Smpi->Sp[lsb(u)];
+			LOCK(Sp->lock);
+			if (Sp->active && Sp->finished)
+			{
+				UNLOCK(Sp->lock);
+				longjmp(Sp->jump, 1);
+			}
+			UNLOCK(Sp->lock);
+		}
+		return;
+	}
+
+	for (; ; ) // start:
+	{
+		if (TEST_RESET_BIT(Smpi->stop, Id))
+			longjmp(CheckJump, 1);
+		if (HasBit(Smpi->searching, Id))
+			return;
+		if (!(Smpi->searching & 1))
+		{
+			Sleep(1);
+			return;
+		}
+		while ((Smpi->searching & 1) && !Smpi->active_sp) _mm_pause();
+		while ((Smpi->searching & 1) && !HasBit(Smpi->searching, Id - 1)) _mm_pause();
+
+		Sp = nullptr;
+		best = -0x7FFFFFFF;
+		for (uint64 u = Smpi->active_sp; u; Cut(u))
+		{
+			Spc = &Smpi->Sp[lsb(u)];
+			if (!Spc->active || Spc->finished || Spc->lock)
+				continue;
+			for (nc = Spc->current + 1; nc < Spc->move_number; ++nc)
+				if (!(Spc->move[nc].flags & FlagClaimed))
+					break;
+			if (nc < Spc->move_number)
+				score = 1024 * 1024 + 512 * 1024 * (Spc->depth >= 20) + 128 * 1024 * (!(Spc->split)) + ((Spc->depth + 2 * Spc->singular) * 1024) -
+				(((16 * 1024) * (nc - Spc->current)) / nc);
+			else
+				continue;
+			if (score > best)
+			{
+				best = score;
+				Sp = Spc;
+				n = nc;
+			}
+		}
+
+		if (Sp == nullptr)
+			continue;
+		if (!Sp->active || Sp->finished || (Sp->move[n].flags & FlagClaimed) || n <= Sp->current || n >= Sp->move_number)
+			continue;
+		if (Sp->lock)
+			continue;
+
+		LOCK(Sp->lock);
+		if (!Sp->active || Sp->finished || (Sp->move[n].flags & FlagClaimed) || n <= Sp->current || n >= Sp->move_number)
+		{
+			UNLOCK(Sp->lock);
+			continue;
+		}
+		break;
+	}
+
+	M = &Sp->move[n];
+	M->flags |= FlagClaimed;
+	M->id = Id;
+	Sp->split |= Bit(Id);
+	pv = Sp->pv;
+	alpha = Sp->alpha;
+	beta = Sp->beta;
+	new_depth = M->reduced_depth;
+	r_depth = M->research_depth;
+	ext = M->ext;
+	move = M->move;
+
+	Current = Data;
+	retrieve_position(Sp->Pos, 1);
+	evaluate();
+	SET_BIT_64(Smpi->searching, Id);
+	UNLOCK(Sp->lock);
+
+	if (setjmp(CheckJump))
+	{
+		ZERO_BIT_64(Smpi->searching, Id);
+		return;
+	}
+	if (Current->turn == White)
+	{
+		do_move<0>(move);
+		if (pv)
+		{
+			value = -scout<1, 0, 0>(-alpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
+			if (value > alpha)
+				value = -pv_search<1, 0>(-beta, -alpha, r_depth, ExtToFlag(ext));
+		}
+		else
+		{
+			value = -scout<1, 0, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
+			if (value >= beta && new_depth < r_depth)
+				value = -scout<1, 0, 0>(1 - beta, r_depth, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
+		}
+		undo_move<0>(move);
+	}
+	else
+	{
+		do_move<1>(move);
+		if (pv)
+		{
+			value = -scout<0, 0, 0>(-alpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
+			if (value > alpha)
+				value = -pv_search<0, 0>(-beta, -alpha, r_depth, ExtToFlag(ext));
+		}
+		else
+		{
+			value = -scout<0, 0, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
+			if (value >= beta && new_depth < r_depth)
+				value = -scout<0, 0, 0>(1 - beta, r_depth, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
+		}
+		undo_move<1>(move);
+	}
+
+	LOCK(Sp->lock);
+	ZERO_BIT_64(Smpi->searching, Id);
+	if (TEST_RESET_BIT(Smpi->stop, Id))
+	{
+		UNLOCK(Sp->lock);
+		return;
+	}
+	M->flags |= FlagFinished;
+	if (value > Sp->alpha)
+	{
+		Sp->alpha = Min(value, beta);
+		Sp->best_move = move;
+		if (value >= beta)
+		{
+			Sp->finished = 1;
+			SET_BIT_64(Smpi->fail_high, (int)(Sp - Smpi->Sp));
+		}
+	}
+	UNLOCK(Sp->lock);
 }
 
 #ifndef REGRESSION
