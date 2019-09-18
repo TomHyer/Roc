@@ -62,11 +62,15 @@ template<class T> INLINE const T& Min(const T& x, const T& y)
 {
 	return x < y ? x : y;
 }
-template<class T> INLINE const T& Max(const T& x, const T& y)
+template<class T> INLINE constexpr const T& Max(const T& x, const T& y)
 {
 	return x < y ? y : x;
 }
-template<class T> INLINE T Square(const T& x)
+template<class T> INLINE constexpr T Abs(const T& x)
+{
+	return x > 0 ? x : -x;
+}
+template<class T> INLINE constexpr T Square(const T& x)
 {
 	return x * x;
 }
@@ -138,11 +142,11 @@ INLINE uint16 UUnpack2(uint32 x)
 }
 
 
-INLINE int FileOf(int loc)
+INLINE int constexpr FileOf(int loc)
 {
 	return loc & 7;
 }
-INLINE int RankOf(int loc)
+INLINE constexpr int RankOf(int loc)
 {
 	return loc >> 3;
 }
@@ -162,12 +166,12 @@ INLINE int SDiagOf(int loc)
 {
 	return FileOf(loc) + RankOf(loc);
 }
-INLINE int Dist(int x, int y)
+INLINE constexpr int Dist(int x, int y)
 {
-	return Max(abs(RankOf(x) - RankOf(y)), abs(FileOf(x) - FileOf(y)));
+	return Max(Abs(RankOf(x) - RankOf(y)), Abs(FileOf(x) - FileOf(y)));
 }
 
-INLINE uint64 Bit(int loc)
+INLINE constexpr uint64 Bit(int loc)
 {
 	return 1ull << loc;
 }
@@ -409,6 +413,128 @@ constexpr int MatBP = 9 * MatWP;
 constexpr int TotalMat = 2 * (MatWQ + MatBQ) + MatWL + MatBL + MatWD + MatBD + 2 * (MatWR + MatBR + MatWN + MatBN) + 8 * (MatWP + MatBP) + 1;
 constexpr int FlagUnusualMaterial = 1 << 30;
 
+constexpr array<int, 16> MatCode = { 0, 0, MatWP, MatBP, MatWN, MatBN, MatWL, MatBL, MatWD, MatBD, MatWR, MatBR, MatWQ, MatBQ, 0, 0 };
+
+template<class Function, std::size_t... Indices>
+constexpr auto make_array_helper(Function f, std::index_sequence<Indices...>)
+->std::array<typename std::result_of<Function(std::size_t)>::type, sizeof...(Indices)>
+{
+	return { { f(Indices)... } };
+}
+
+template<int N, class Function>
+constexpr auto make_array(Function f)
+->std::array<typename std::result_of<Function(std::size_t)>::type, N>
+{
+	return make_array_helper(f, std::make_index_sequence<N>{});
+}
+
+
+namespace Calc
+{
+	constexpr uint64 FileA = 0x0101010101010101;
+	constexpr uint64 Line0 = 0x00000000000000FF;
+	constexpr uint64 NDiagMain = 0x8040201008040201;
+	constexpr uint64 SDiagMain = 0x0102040810204080;
+}
+constexpr array<uint64, 8> File = { Calc::FileA, Calc::FileA << 1, Calc::FileA << 2, Calc::FileA << 3, Calc::FileA << 4, Calc::FileA << 5, Calc::FileA << 6, Calc::FileA << 7 };
+constexpr array<uint64, 8> Line = { Calc::Line0, (Calc::Line0 << 8), (Calc::Line0 << 16), (Calc::Line0 << 24), (Calc::Line0 << 32), (Calc::Line0 << 40), (Calc::Line0 << 48), (Calc::Line0 << 56) };
+
+namespace Calc
+{
+	template<typename PRED_> constexpr uint64 BuildBB(PRED_ pred, int sq, int n = 64)
+	{
+		return n > 0 ? BuildBB<PRED_>(pred, sq, n - 1) | (pred(sq, n - 1) ? Bit(n - 1) : 0ull) : 0ull;
+	}
+
+	constexpr uint64 HLine(int sq)
+	{
+		return Line[RankOf(sq)] ^ Bit(sq);
+	}
+	constexpr uint64 VLine(int sq)
+	{
+		return File[FileOf(sq)] ^ Bit(sq);
+	}
+	constexpr uint64 Diag2(uint64 main, int which)
+	{
+		return which < 0 ? main >> (-8 * which) : main << (8 * which);
+	}
+	constexpr uint64 NDiag(int sq)
+	{
+		return Diag2(NDiagMain, RankOf(sq) - FileOf(sq)) ^ Bit(sq);
+	}
+	constexpr uint64 SDiag(int sq)
+	{
+		return Diag2(SDiagMain, RankOf(sq) + FileOf(sq) - 7) ^ Bit(sq);
+	}
+
+	constexpr bool IsNAtt(int from, int to)
+	{
+		return Square(RankOf(from) - RankOf(to)) + Square(FileOf(from) - FileOf(to)) == 5;
+	}
+	constexpr uint64 NAtt(int sq)
+	{
+		return BuildBB(IsNAtt, sq);
+	}
+	constexpr bool IsKAtt(int from, int to)
+	{
+		return Dist(from, to) == 1;
+	}
+	constexpr uint64 KAtt(int sq)
+	{
+		return BuildBB(IsKAtt, sq);
+	}
+}
+constexpr array<uint64, 64> HLine = make_array<64>(Calc::HLine);
+constexpr array<uint64, 64> VLine = make_array<64>(Calc::VLine);
+constexpr array<uint64, 64> NDiag = make_array<64>(Calc::NDiag);
+constexpr array<uint64, 64> SDiag = make_array<64>(Calc::SDiag);
+constexpr array<uint64, 64> NAtt = make_array<64>(Calc::NAtt);
+constexpr array<uint64, 64> KAtt = make_array<64>(Calc::KAtt);
+
+namespace Calc
+{
+	constexpr uint64 RMask(int sq)
+	{
+		return ::HLine[sq] | ::VLine[sq];
+	}
+	constexpr uint64 BMask(int sq)
+	{
+		return ::NDiag[sq] | ::SDiag[sq];
+	}
+
+	constexpr bool IsNAttAtt(int from, int to)
+	{
+		return !!(::NAtt[from] & ::NAtt[to]);
+	}
+	constexpr uint64 NAttAtt(int sq)
+	{
+		return BuildBB(IsNAttAtt, sq, 64);
+	}
+
+	constexpr bool IsKAttAtt(int from, int to)
+	{
+		return !!(::KAtt[from] & ::KAtt[to]);
+	}
+	constexpr uint64 KAttAtt(int sq)
+	{
+		return BuildBB(IsKAttAtt, sq, 64);
+	}
+}
+constexpr array<uint64, 64> RMask = make_array<64>(Calc::RMask);
+constexpr array<uint64, 64> BMask = make_array<64>(Calc::BMask);
+constexpr array<uint64, 64> NAttAtt = make_array<64>(Calc::NAttAtt);
+constexpr array<uint64, 64> KAttAtt = make_array<64>(Calc::KAttAtt);
+
+namespace Calc
+{
+	constexpr uint64 QMask(int sq)
+	{
+		return ::RMask[sq] | ::BMask[sq];
+	}
+}
+constexpr array<uint64, 64> QMask = make_array<64>(Calc::QMask);
+
 struct GMaterial;
 struct GPawnEntry;
 struct GEvalInfo
@@ -453,7 +579,7 @@ struct CommonData_
 	array<int, 256> SpanWidth, SpanGap;
 	array<array<uint64, 64>, 2> BishopForward, PAtt, PMove, PWay, PCone, PSupport;
 	array<uint64, 64> BMagic, BMagicMask, RMagic, RMagicMask;
-	array<uint64, 64> VLine, RMask, BMask, QMask, NAtt, KAtt, KAttAtt, NAttAtt, OneIn;
+	array<uint64, 64> OneIn;
 	array<uint64, 64> KingFrontal, KingFlank;
 	array<array<packed_t, 28>, 2> MobQueen;
 	array<uint8, 256> PieceFromChar;
@@ -464,11 +590,9 @@ struct CommonData_
 	array<uint64, 16> CastleKey;
 	array<array<uint64, 8>, 2> Forward;
 	array<uint64, 8> EPKey;
-	array<uint64, 8> File, Line;
 	array<uint64, 8> West, East, PIsolated;
 	array<packed_t, 8> PasserGeneral, PasserBlocked, PasserFree, PasserSupported, PasserProtected, PasserConnected, PasserOutside, PasserCandidate, PasserClear;
 	array<uint8, 64> UpdateCastling;
-	array<int, 16> MatCode;
 	array<array<sint16, 8>, 3> Shelter;
 	array<uint16, 16> KingAttackScale;
 	array<int, 8> KingCenterScale;
@@ -485,19 +609,19 @@ const CommonData_* RO = nullptr;	// generally we access DATA through RO
 
 INLINE uint64 ShiftNW(const uint64& target)
 {
-	return (target & (~(RO->File[0] | RO->Line[7]))) << 7;
+	return (target & (~(File[0] | Line[7]))) << 7;
 }
 INLINE uint64 ShiftNE(const uint64& target)
 {
-	return (target & (~(RO->File[7] | RO->Line[7]))) << 9;
+	return (target & (~(File[7] | Line[7]))) << 9;
 }
 INLINE uint64 ShiftSE(const uint64& target)
 {
-	return (target & (~(RO->File[7] | RO->Line[0]))) >> 7;
+	return (target & (~(File[7] | Line[0]))) >> 7;
 }
 INLINE uint64 ShiftSW(const uint64& target)
 {
-	return (target & (~(RO->File[0] | RO->Line[0]))) >> 9;
+	return (target & (~(File[0] | Line[0]))) >> 9;
 }
 template<bool me> INLINE uint64 ShiftW(const uint64& target)
 {
@@ -515,7 +639,7 @@ template<bool me> INLINE uint64 Shift(const uint64& target)
 // THIS IS A NON-TEMPLATE FUNCTION BECAUSE MY COMPILER (Visual C++ 2015, Community Edition) CANNOT INLINE THE TEMPLATE VERSION CORRECTLY
 INLINE const uint64& OwnLine(bool me, int n)
 {
-	return RO->Line[me ? 7 - n : n];
+	return Line[me ? 7 - n : n];
 }
 
 // Constants controlling play
@@ -2263,7 +2387,7 @@ INLINE int FileSpan(const uint64& occ)
 bool IsIllegal(bool me, int move)
 {
 	return ((HasBit(Current->xray[opp], From(move)) && F(Bit(To(move)) & RO->FullLine[lsb(King(me))][From(move)])) ||
-		(IsEP(move) && T(RO->Line[RankOf(From(move))] & King(me)) && T(RO->Line[RankOf(From(move))] & Major(opp)) &&
+		(IsEP(move) && T(Line[RankOf(From(move))] & King(me)) && T(Line[RankOf(From(move))] & Major(opp)) &&
 			T(RookAttacks(lsb(King(me)), PieceAll() ^ Bit(From(move)) ^ Bit(Current->ep_square - Push[me])) & Major(opp))));
 };
 INLINE bool IsCheck(bool me)
@@ -2282,7 +2406,7 @@ INLINE bool IsRepetition(int margin, int move)
 inline uint64 XBMagicAttacks(const CommonData_* data, int i, uint64 occ)
 {
 	uint64 att = 0;
-	for (uint64 u = data->BMask[i]; T(u); Cut(u))
+	for (uint64 u = BMask[i]; T(u); Cut(u))
 		if (F(data->Between[i][lsb(u)] & occ))
 			att |= data->Between[i][lsb(u)] | Bit(lsb(u));
 	return att;
@@ -2295,7 +2419,7 @@ INLINE uint64 BMagicAttacks(int i, uint64 occ)
 uint64 XRMagicAttacks(const CommonData_* data, int i, uint64 occ)
 {
 	uint64 att = 0;
-	for (uint64 u = data->RMask[i]; T(u); Cut(u))
+	for (uint64 u = RMask[i]; T(u); Cut(u))
 		if (F(data->Between[i][lsb(u)] & occ))
 			att |= data->Between[i][lsb(u)] | Bit(lsb(u));
 	return att;
@@ -2376,20 +2500,9 @@ void UpdateDebug(int line)
 
 void init_misc(CommonData_* data)
 {
-	constexpr uint64 FileA = 0x0101010101010101;
-	constexpr uint64 Line0 = 0x00000000000000FF;
-	array<uint64, 64> HLine;
-	array<uint64, 64> NDiag;
-	array<uint64, 64> SDiag;
-
-	data->MatCode = { 0, 0, MatWP, MatBP, MatWN, MatBN, MatWL, MatBL, MatWD, MatBD, MatWR, MatBR, MatWQ, MatBQ, 0, 0 };
-	data->File = { FileA, FileA << 1, FileA << 2, FileA << 3, FileA << 4, FileA << 5, FileA << 6, FileA << 7 };
-	data->Line = { Line0, (Line0 << 8), (Line0 << 16), (Line0 << 24), (Line0 << 32), (Line0 << 40), (Line0 << 48), (Line0 << 56) };
-
 	for (int i = 0; i < 64; ++i)
 	{
-		HLine[i] = data->VLine[i] = NDiag[i] = SDiag[i] = data->RMask[i] = data->BMask[i] = data->QMask[i] = 0;
-		data->BMagicMask[i] = data->RMagicMask[i] = data->NAtt[i] = data->KAtt[i] = data->KAttAtt[i] = data->NAttAtt[i] = data->OneIn[i] = 0;
+		data->BMagicMask[i] = data->RMagicMask[i] = data->OneIn[i] = 0;
 		data->PAtt[0][i] = data->PAtt[1][i] = data->PMove[0][i] = data->PMove[1][i] = data->PWay[0][i] = data->PWay[1][i] = data->PCone[0][i] = data->PCone[1][i]
 			= data->PSupport[0][i] = data->PSupport[1][i] = data->BishopForward[0][i] = data->BishopForward[1][i] = 0;
 		for (int j = 0; j < 64; ++j)
@@ -2403,22 +2516,6 @@ void init_misc(CommonData_* data)
 			if (i == j)
 				continue;
 			uint64 u = Bit(j);
-			if (FileOf(i) == FileOf(j))
-				data->VLine[i] |= u;
-			if (RankOf(i) == RankOf(j))
-				HLine[i] |= u;  // thus HLine[i] = Rank[RankOf(i)] ^ Bit(i)
-			if (NDiagOf(i) == NDiagOf(j))
-				NDiag[i] |= u;
-			if (SDiagOf(i) == SDiagOf(j))
-				SDiag[i] |= u;
-			if (Dist(i, j) <= 2)
-			{
-				data->KAttAtt[i] |= u;
-				if (Dist(i, j) <= 1)
-					data->KAtt[i] |= u;
-				if (abs(RankOf(i) - RankOf(j)) + abs(FileOf(i) - FileOf(j)) == 3)
-					data->NAtt[i] |= u;
-			}
 			if (j == i + 8)
 				data->PMove[0][i] |= u;
 			if (j == i - 8)
@@ -2448,41 +2545,34 @@ void init_misc(CommonData_* data)
 		}
 
 		if (FileOf(i) == 0)
-			data->OneIn[i] |= data->File[1];
+			data->OneIn[i] |= File[1];
 		if (FileOf(i) == 7)
-			data->OneIn[i] |= data->File[6];
+			data->OneIn[i] |= File[6];
 		if (RankOf(i) == 0)
-			data->OneIn[i] |= data->Line[1];
+			data->OneIn[i] |= Line[1];
 		if (RankOf(i) == 7)
-			data->OneIn[i] |= data->Line[6];
-		data->RMask[i] = HLine[i] | data->VLine[i];
-		data->BMask[i] = NDiag[i] | SDiag[i];
-		data->QMask[i] = data->RMask[i] | data->BMask[i];
-		data->BMagicMask[i] = data->BMask[i] & Interior;
-		data->RMagicMask[i] = data->RMask[i];
+			data->OneIn[i] |= Line[6];
+		data->BMagicMask[i] = BMask[i] & Interior;
+		data->RMagicMask[i] = RMask[i];
 		data->PCone[0][i] = data->PWay[0][i];
 		data->PCone[1][i] = data->PWay[1][i];
 		if (FileOf(i) > 0)
 		{
-			data->RMagicMask[i] &= ~data->File[0];
+			data->RMagicMask[i] &= ~File[0];
 			data->PCone[0][i] |= data->PWay[0][i - 1];
 			data->PCone[1][i] |= data->PWay[1][i - 1];
 		}
 		if (RankOf(i) > 0)
-			data->RMagicMask[i] &= ~data->Line[0];
+			data->RMagicMask[i] &= ~Line[0];
 		if (FileOf(i) < 7)
 		{
-			data->RMagicMask[i] &= ~data->File[7];
+			data->RMagicMask[i] &= ~File[7];
 			data->PCone[0][i] |= data->PWay[0][i + 1];
 			data->PCone[1][i] |= data->PWay[1][i + 1];
 		}
 		if (RankOf(i) < 7)
-			data->RMagicMask[i] &= ~data->Line[7];
+			data->RMagicMask[i] &= ~Line[7];
 	}
-	for (int i = 0; i < 64; ++i)
-		for (int j = 0; j < 64; ++j)
-			if (data->NAtt[i] & data->NAtt[j])
-				data->NAttAtt[i] |= Bit(j);
 
 	for (int i = 0; i < 8; ++i)
 	{
@@ -2493,22 +2583,22 @@ void init_misc(CommonData_* data)
 		for (int j = 0; j < 8; ++j)
 		{
 			if (i < j)
-				data->Forward[0][i] |= data->Line[j];
+				data->Forward[0][i] |= Line[j];
 			else if (i > j)
-				data->Forward[1][i] |= data->Line[j];
+				data->Forward[1][i] |= Line[j];
 			if (i < j)
-				data->East[i] |= data->File[j];
+				data->East[i] |= File[j];
 			else if (i > j)
-				data->West[i] |= data->File[j];
+				data->West[i] |= File[j];
 		}
 		if (i > 0)
-			data->PIsolated[i] |= data->File[i - 1];
+			data->PIsolated[i] |= File[i - 1];
 		if (i < 7)
-			data->PIsolated[i] |= data->File[i + 1];
+			data->PIsolated[i] |= File[i + 1];
 	}
 	for (int i = 0; i < 64; ++i)
 	{
-		for (uint64 u = data->QMask[i]; T(u); Cut(u))
+		for (uint64 u = QMask[i]; T(u); Cut(u))
 		{
 			int j = lsb(u);
 			int k = Sgn(RankOf(j) - RankOf(i));
@@ -2516,23 +2606,23 @@ void init_misc(CommonData_* data)
 			for (int n = i + 8 * k + l; n != j; n += (8 * k + l))
 				data->Between[i][j] |= Bit(n);
 		}
-		for (uint64 u = data->BMask[i]; T(u); Cut(u))
+		for (uint64 u = BMask[i]; T(u); Cut(u))
 		{
 			int j = lsb(u);
-			data->FullLine[i][j] = data->BMask[i] & data->BMask[j];
+			data->FullLine[i][j] = BMask[i] & BMask[j];
 		}
-		for (uint64 u = data->RMask[i]; T(u); Cut(u))
+		for (uint64 u = RMask[i]; T(u); Cut(u))
 		{
 			int j = lsb(u);
-			data->FullLine[i][j] = data->RMask[i] & data->RMask[j];
+			data->FullLine[i][j] = RMask[i] & RMask[j];
 		}
 		data->BishopForward[0][i] |= data->PWay[0][i];
 		data->BishopForward[1][i] |= data->PWay[1][i];
 		for (int j = 0; j < 64; j++)
 		{
-			if ((data->PWay[1][j] | Bit(j)) & data->BMask[i] & data->Forward[0][RankOf(i)])
+			if ((data->PWay[1][j] | Bit(j)) & BMask[i] & data->Forward[0][RankOf(i)])
 				data->BishopForward[0][i] |= Bit(j);
-			if ((data->PWay[0][j] | Bit(j)) & data->BMask[i] & data->Forward[1][RankOf(i)])
+			if ((data->PWay[0][j] | Bit(j)) & BMask[i] & data->Forward[1][RankOf(i)])
 				data->BishopForward[1][i] |= Bit(j);
 		}
 	}
@@ -2721,13 +2811,13 @@ start:
 					{
 						if (turn == White)
 							goto set_draw;
-						else if (F(data->KAtt[wk] & bwp))
+						else if (F(KAtt[wk] & bwp))
 							goto set_draw;
 					}
 					un = 0;
 					if (turn == Black)
 					{
-						u = data->KAtt[bk] & (~(data->KAtt[wk] | data->PAtt[White][wp]));
+						u = KAtt[bk] & (~(KAtt[wk] | data->PAtt[White][wp]));
 						if (F(u))
 							goto set_draw;
 						for (; T(u); Cut(u))
@@ -2743,7 +2833,7 @@ start:
 					}
 					else
 					{
-						for (u = data->KAtt[wk] & (~(data->KAtt[bk] | bwp)); T(u); Cut(u))
+						for (u = KAtt[wk] & (~(KAtt[bk] | bwp)); T(u); Cut(u))
 						{
 							to = lsb(u);
 							if (Kpk_gen[turn ^ 1][wp][to][bk] == 2)
@@ -2756,9 +2846,9 @@ start:
 						{
 							if (to >= 56)
 							{
-								if (F(data->KAtt[to] & bbk))
+								if (F(KAtt[to] & bbk))
 									goto set_win;
-								if (data->KAtt[to] & bwk)
+								if (KAtt[to] & bwk)
 									goto set_win;
 							}
 							else
@@ -3035,22 +3125,22 @@ template<bool me> uint16 kpkx()
 
 template<bool me> uint16 knpkx()
 {
-	if (Pawn(me) & OwnLine(me, 6) & (RO->File[0] | RO->File[7]))
+	if (Pawn(me) & OwnLine(me, 6) & (File[0] | File[7]))
 	{
 		int sq = lsb(Pawn(me));
-		if (RO->KAtt[sq] & King(opp) & (OwnLine(me, 6) | OwnLine(me, 7)))
+		if (KAtt[sq] & King(opp) & (OwnLine(me, 6) | OwnLine(me, 7)))
 			return 0;
-		if (PieceAt(sq + Push[me]) == IKing[me] && (RO->KAtt[lsb(King(me))] & RO->KAtt[lsb(King(opp))] & OwnLine(me, 7)))
+		if (PieceAt(sq + Push[me]) == IKing[me] && (KAtt[lsb(King(me))] & KAtt[lsb(King(opp))] & OwnLine(me, 7)))
 			return 0;
 	}
-	else if (Pawn(me) & OwnLine(me, 5) & (RO->File[0] | RO->File[7]))
+	else if (Pawn(me) & OwnLine(me, 5) & (File[0] | File[7]))
 	{
 		int sq = lsb(Pawn(me)), to = sq + Push[me];
 		if (PieceAt(sq + Push[me]) == IPawn[opp])
 		{
-			if (RO->KAtt[to] & King(opp) & OwnLine(me, 7))
+			if (KAtt[to] & King(opp) & OwnLine(me, 7))
 				return 0;
-			if ((RO->KAtt[to] & RO->KAtt[lsb(King(opp))] & OwnLine(me, 7)) && (!(RO->NAtt[to] & Knight(me)) || Current->turn == opp))
+			if ((KAtt[to] & KAtt[lsb(King(opp))] & OwnLine(me, 7)) && (!(NAtt[to] & Knight(me)) || Current->turn == opp))
 				return 0;
 		}
 	}
@@ -3070,14 +3160,14 @@ template<bool me> uint16 krpkrx()
 
 	if (!clear)
 		return 32;
-	if (!add_mat && !(Pawn(me) & (RO->File[0] | RO->File[7])))
+	if (!add_mat && !(Pawn(me) & (File[0] | File[7])))
 	{
 		int m_rook = lsb(Rook(me));
 		if (OwnRank<me>(o_king) < OwnRank<me>(m_rook) && OwnRank<me>(m_rook) < rrank && OwnRank<me>(m_king) >= rrank - 1 &&
 			OwnRank<me>(m_king) > OwnRank<me>(m_rook) &&
-			((RO->KAtt[m_king] & Pawn(me)) || (MY_TURN && abs(FileOf(sq) - FileOf(m_king)) <= 1 && abs(rrank - OwnRank<me>(m_king)) <= 2)))
+			((KAtt[m_king] & Pawn(me)) || (MY_TURN && abs(FileOf(sq) - FileOf(m_king)) <= 1 && abs(rrank - OwnRank<me>(m_king)) <= 2)))
 			return 127;
-		if (RO->KAtt[m_king] & Pawn(me))
+		if (KAtt[m_king] & Pawn(me))
 		{
 			if (rrank >= 4)
 			{
@@ -3086,7 +3176,7 @@ template<bool me> uint16 krpkrx()
 			}
 			else if (rrank >= 2)
 			{
-				if (!(Pawn(me) & (RO->File[1] | RO->File[6])) && rrank + abs(FileOf(sq) - FileOf(m_rook)) > 4 &&
+				if (!(Pawn(me) & (File[1] | File[6])) && rrank + abs(FileOf(sq) - FileOf(m_rook)) > 4 &&
 					((FileOf(sq) < FileOf(m_rook) && FileOf(m_rook) < FileOf(o_king)) || (FileOf(sq) > FileOf(m_rook) && FileOf(m_rook) > FileOf(o_king))))
 					return 127;
 			}
@@ -3095,21 +3185,21 @@ template<bool me> uint16 krpkrx()
 
 	if (RO->PWay[me][sq] & King(opp))
 	{
-		if (Pawn(me) & (RO->File[0] | RO->File[7]))
+		if (Pawn(me) & (File[0] | File[7]))
 			mul = Min(mul, add_mat << 3);
 		if (rrank <= 3)
 			mul = Min(mul, add_mat << 3);
 		if (rrank == 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5 && T(King(opp) & (OwnLine(me, 6) | OwnLine(me, 7))) &&
-			(!MY_TURN || F(RO->PAtt[me][sq] & RookAttacks(lsb(Rook(me)), PieceAll()) & (~RO->KAtt[o_king]))))
+			(!MY_TURN || F(RO->PAtt[me][sq] & RookAttacks(lsb(Rook(me)), PieceAll()) & (~KAtt[o_king]))))
 			mul = Min(mul, add_mat << 3);
 		if (rrank >= 5 && OwnRank<me>(o_rook) <= 1 && (!MY_TURN || IsCheck(me) || Dist(m_king, sq) >= 2))
 			mul = Min(mul, add_mat << 3);
-		if (T(King(opp) & (RO->File[1] | RO->File[2] | RO->File[6] | RO->File[7])) && T(Rook(opp) & OwnLine(me, 7)) && T(RO->Between[o_king][o_rook] & (RO->File[3] | RO->File[4])) &&
+		if (T(King(opp) & (File[1] | File[2] | File[6] | File[7])) && T(Rook(opp) & OwnLine(me, 7)) && T(RO->Between[o_king][o_rook] & (File[3] | File[4])) &&
 			F(Rook(me) & OwnLine(me, 7)))
 			mul = Min(mul, add_mat << 3);
 		return mul;
 	}
-	else if (rrank == 6 && (Pawn(me) & (RO->File[0] | RO->File[7])) && ((RO->PSupport[me][sq] | RO->PWay[opp][sq]) & Rook(opp)) && OwnRank<me>(o_king) >= 6)
+	else if (rrank == 6 && (Pawn(me) & (File[0] | File[7])) && ((RO->PSupport[me][sq] | RO->PWay[opp][sq]) & Rook(opp)) && OwnRank<me>(o_king) >= 6)
 	{
 		int dist = abs(FileOf(sq) - FileOf(o_king));
 		if (dist <= 3)
@@ -3118,25 +3208,25 @@ template<bool me> uint16 krpkrx()
 			mul = Min(mul, add_mat << 3);
 	}
 
-	if (RO->KAtt[o_king] & RO->PWay[me][sq] & OwnLine(me, 7))
+	if (KAtt[o_king] & RO->PWay[me][sq] & OwnLine(me, 7))
 	{
 		if (rrank <= 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5)
 			mul = Min(mul, add_mat << 3);
-		if (rrank == 5 && OwnRank<me>(o_rook) <= 1 && !MY_TURN || (F(RO->KAtt[m_king] & RO->PAtt[me][sq] & (~RO->KAtt[o_king])) && (IsCheck(me) || Dist(m_king, sq) >= 2)))
+		if (rrank == 5 && OwnRank<me>(o_rook) <= 1 && !MY_TURN || (F(KAtt[m_king] & RO->PAtt[me][sq] & (~KAtt[o_king])) && (IsCheck(me) || Dist(m_king, sq) >= 2)))
 			mul = Min(mul, add_mat << 3);
 	}
 
 	if (T(RO->PWay[me][sq] & Rook(me)) && T(RO->PWay[opp][sq] & Rook(opp)))
 	{
-		if (King(opp) & (RO->File[0] | RO->File[1] | RO->File[6] | RO->File[7]) & OwnLine(me, 6))
+		if (King(opp) & (File[0] | File[1] | File[6] | File[7]) & OwnLine(me, 6))
 			mul = Min(mul, add_mat << 3);
-		else if ((Pawn(me) & (RO->File[0] | RO->File[7])) && (King(opp) & (OwnLine(me, 5) | OwnLine(me, 6))) && abs(FileOf(sq) - FileOf(o_king)) <= 2 &&
+		else if ((Pawn(me) & (File[0] | File[7])) && (King(opp) & (OwnLine(me, 5) | OwnLine(me, 6))) && abs(FileOf(sq) - FileOf(o_king)) <= 2 &&
 			FileOf(sq) != FileOf(o_king))
 			mul = Min(mul, add_mat << 3);
 	}
 
 	if (abs(FileOf(sq) - FileOf(o_king)) <= 1 && abs(FileOf(sq) - FileOf(o_rook)) <= 1 && OwnRank<me>(o_rook) > rrank && OwnRank<me>(o_king) > rrank)
-		mul = Min(mul, (Pawn(me) & (RO->File[3] | RO->File[4])) ? 12 : 16);
+		mul = Min(mul, (Pawn(me) & (File[3] | File[4])) ? 12 : 16);
 
 	return mul;
 }
@@ -3148,11 +3238,11 @@ template<bool me> uint16 krpkbx()
 	int sq = lsb(Pawn(me));
 	if (!(RO->PWay[me][sq] & King(opp)))
 		return 32;
-	int diag_sq = NB<me>(RO->BMask[sq + Push[me]]);
+	int diag_sq = NB<me>(BMask[sq + Push[me]]);
 	if (OwnRank<me>(diag_sq) > 1)
 		return 32;
 	uint64 mdiag = RO->FullLine[sq + Push[me]][diag_sq] | Bit(sq + Push[me]) | Bit(diag_sq);
-	int check_sq = NB<me>(RO->BMask[sq - Push[me]]);
+	int check_sq = NB<me>(BMask[sq - Push[me]]);
 	uint64 cdiag = RO->FullLine[sq - Push[me]][check_sq] | Bit(sq - Push[me]) | Bit(check_sq);
 	if ((mdiag | cdiag) & (Piece(opp) ^ King(opp) ^ Bishop(opp)))
 		return 32;
@@ -3165,11 +3255,11 @@ template<bool me> uint16 krpkbx()
 
 template<bool me> uint16 kqkp()
 {
-	if (F(RO->KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1) & (RO->File[0] | RO->File[2] | RO->File[5] | RO->File[7])))
+	if (F(KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1) & (File[0] | File[2] | File[5] | File[7])))
 		return 32;
 	if (RO->PWay[opp][lsb(Pawn(opp))] & (King(me) | Queen(me)))
 		return 32;
-	if (Pawn(opp) & (RO->File[0] | RO->File[7]))
+	if (Pawn(opp) & (File[0] | File[7]))
 		return 1;
 	else
 		return 4;
@@ -3178,7 +3268,7 @@ template<bool me> uint16 kqkp()
 template<bool me> uint16 kqkrpx()
 {
 	int rsq = lsb(Rook(opp));
-	uint64 pawns = RO->KAtt[lsb(King(opp))] & RO->PAtt[me][rsq] & Pawn(opp) & Interior & OwnLine(me, 6);
+	uint64 pawns = KAtt[lsb(King(opp))] & RO->PAtt[me][rsq] & Pawn(opp) & Interior & OwnLine(me, 6);
 	if (pawns && OwnRank<me>(lsb(King(me))) <= 4)
 		return 0;
 	return 32;
@@ -3186,7 +3276,7 @@ template<bool me> uint16 kqkrpx()
 
 template<bool me> uint16 krkpx()
 {
-	if (T(RO->KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1)) & F(RO->PWay[opp][NB<me>(Pawn(opp))] & King(me)))
+	if (T(KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1)) & F(RO->PWay[opp][NB<me>(Pawn(opp))] & King(me)))
 		return 0;
 	return 32;
 }
@@ -3198,13 +3288,13 @@ template<bool me> uint16 krppkrpx()
 		if (Single(Current->passer & Pawn(me)))
 		{
 			int sq = lsb(Current->passer & Pawn(me));
-			if (RO->PWay[me][sq] & King(opp) & (RO->File[0] | RO->File[1] | RO->File[6] | RO->File[7]))
+			if (RO->PWay[me][sq] & King(opp) & (File[0] | File[1] | File[6] | File[7]))
 			{
 				int opp_king = lsb(King(opp));
-				if (RO->KAtt[opp_king] & Pawn(opp))
+				if (KAtt[opp_king] & Pawn(opp))
 				{
 					int king_file = FileOf(opp_king);
-					if (!((~(RO->File[king_file] | RO->PIsolated[king_file])) & Pawn(me)))
+					if (!((~(File[king_file] | RO->PIsolated[king_file])) & Pawn(me)))
 						return 1;
 				}
 			}
@@ -3218,7 +3308,7 @@ template<bool me> uint16 krppkrpx()
 
 template<bool me> uint16 krpppkrppx()
 {
-	if (T(Current->passer & Pawn(me)) || F((RO->KAtt[lsb(Pawn(opp))] | RO->KAtt[msb(Pawn(opp))]) & Pawn(opp)))
+	if (T(Current->passer & Pawn(me)) || F((KAtt[lsb(Pawn(opp))] | KAtt[msb(Pawn(opp))]) & Pawn(opp)))
 		return 32;
 	if (F((~(RO->PWay[opp][lsb(King(opp))] | RO->PSupport[me][lsb(King(opp))])) & Pawn(me)))
 		return 0;
@@ -3255,7 +3345,7 @@ template<bool me> uint16 kbpknx()
 		return 0;
 	if (Current->turn == opp)
 		for (u = Knight(opp); T(u); Cut(u))
-			if (RO->NAtt[lsb(u)] & Pawn(me))
+			if (NAtt[lsb(u)] & Pawn(me))
 				return 0;
 	return 32;
 }
@@ -3278,8 +3368,8 @@ template<bool me> uint16 kbppkbx()
 	{
 		if (T(King(opp) & LightArea) != T(Bishop(me) & LightArea))
 		{
-			if (HasBit(RO->KAtt[o_king] | King(opp), sq2 + Push[me]) && HasBit(BishopAttacks(o_bishop, PieceAll()), sq2 + Push[me]) &&
-				HasBit(RO->KAtt[o_king] | King(opp), (sq2 & 0xF8) | FileOf(sq1)) && HasBit(BishopAttacks(o_bishop, PieceAll()), (sq2 & 0xFFFFFFF8) | FileOf(sq1)))
+			if (HasBit(KAtt[o_king] | King(opp), sq2 + Push[me]) && HasBit(BishopAttacks(o_bishop, PieceAll()), sq2 + Push[me]) &&
+				HasBit(KAtt[o_king] | King(opp), (sq2 & 0xF8) | FileOf(sq1)) && HasBit(BishopAttacks(o_bishop, PieceAll()), (sq2 & 0xFFFFFFF8) | FileOf(sq1)))
 				return 0;
 		}
 	}
@@ -3298,7 +3388,7 @@ template<bool me> uint16 krppkrx()
 		if (T(RO->PWay[me][sq2] & King(opp)))
 			return 16;
 	}
-	else if (T(RO->PIsolated[FileOf(sq2)] & Pawn(me)) && T((RO->File[0] | RO->File[7]) & Pawn(me)) && T(King(opp) & Shift<me>(Pawn(me))))
+	else if (T(RO->PIsolated[FileOf(sq2)] & Pawn(me)) && T((File[0] | File[7]) & Pawn(me)) && T(King(opp) & Shift<me>(Pawn(me))))
 	{
 		if (OwnRank<me>(sq2) == 5 && OwnRank<me>(sq1) == 4 && T(Rook(opp) & (OwnLine(me, 5) | OwnLine(me, 6))))
 			return 10;
@@ -3315,7 +3405,7 @@ template<bool me> uint16 krppkrx()
 
 template<bool me> bool eval_stalemate(GEvalInfo& EI)
 {
-	bool retval = (F(NonPawnKing(opp)) && Current->turn == opp && F(Current->att[me] & King(opp)) && F(RO->KAtt[EI.king[opp]] & (~(Current->att[me] | Piece(opp)))) &&
+	bool retval = (F(NonPawnKing(opp)) && Current->turn == opp && F(Current->att[me] & King(opp)) && F(KAtt[EI.king[opp]] & (~(Current->att[me] | Piece(opp)))) &&
 		F(Current->patt[opp] & Piece(me)) && F(Shift<opp>(Pawn(opp)) & (~EI.occ)));
 	if (retval)
 		EI.mul = 0;
@@ -3330,9 +3420,9 @@ template<bool me> void eval_pawns_only(GEvalInfo& EI, pop_func_t pop)
 
 	if (F(Pawn(me) & (~RO->PWay[opp][sq])))
 	{
-		if ((RO->KAtt[sq] | Bit(sq)) & King(opp))
+		if ((KAtt[sq] | Bit(sq)) & King(opp))
 			EI.mul = 0;
-		else if ((RO->KAtt[sq] & RO->KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+		else if ((KAtt[sq] & KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
 			EI.mul = 0;
 	}
 	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
@@ -3352,9 +3442,9 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 	int sq = Piece(ILight[me]) ? (me ? 0 : 63) : (me ? 7 : 56);
 	if (F(Pawn(me) & (~RO->PWay[opp][sq])))
 	{
-		if ((RO->KAtt[sq] | Bit(sq)) & King(opp))
+		if ((KAtt[sq] | Bit(sq)) & King(opp))
 			EI.mul = 0;
-		else if ((RO->KAtt[sq] & RO->KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+		else if ((KAtt[sq] & KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
 			EI.mul = 0;
 	}
 	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
@@ -3364,7 +3454,7 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 	if (number == 1)
 	{
 		sq = lsb(Pawn(me));
-		if ((Pawn(me) & (RO->File[1] | RO->File[6]) & OwnLine(me, 5)) && PieceAt(sq + Push[me]) == IPawn[opp] &&
+		if ((Pawn(me) & (File[1] | File[6]) & OwnLine(me, 5)) && PieceAt(sq + Push[me]) == IPawn[opp] &&
 			((RO->PAtt[me][sq + Push[me]] | RO->PWay[me][sq + Push[me]]) & King(opp)))
 			EI.mul = 0;
 	}
@@ -3412,7 +3502,7 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 			else if (fd >= 3)
 				EI.mul = 20;
 		}
-		if ((RO->KAtt[EI.king[opp]] | Current->patt[opp]) & Bishop(opp))
+		if ((KAtt[EI.king[opp]] | Current->patt[opp]) & Bishop(opp))
 		{
 			uint64 push = Shift<me>(Pawn(me));
 			if (!(push & (~(Piece(opp) | Current->att[opp]))) && (King(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea)))
@@ -3420,11 +3510,11 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 				EI.mul = Min<uint16>(EI.mul, 8);
 				int bsq = lsb(Bishop(opp));
 				uint64 att = BishopAttacks(bsq, EI.occ);
-				uint64 prp = (att | RO->KAtt[EI.king[opp]]) & Pawn(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea);
+				uint64 prp = (att | KAtt[EI.king[opp]]) & Pawn(opp) & (Board->bb[ILight[opp]] ? LightArea : DarkArea);
 				uint64 patt = ShiftW<opp>(prp) | ShiftE<opp>(prp);
-				if ((RO->KAtt[EI.king[opp]] | patt) & Bishop(opp))
+				if ((KAtt[EI.king[opp]] | patt) & Bishop(opp))
 				{
-					uint64 double_att = (RO->KAtt[EI.king[opp]] & patt) | (patt & att) | (RO->KAtt[EI.king[opp]] & att);
+					uint64 double_att = (KAtt[EI.king[opp]] & patt) | (patt & att) | (KAtt[EI.king[opp]] & att);
 					if (!(push & (~(King(opp) | Bishop(opp) | prp | double_att))))
 					{
 						EI.mul = 0;
@@ -3453,8 +3543,8 @@ template<bool me> void eval_np(GEvalInfo& EI, pop_func_t)
 template<bool me> void eval_knppkbx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Knight(me) && Single(Knight(me)) && Multiple(Pawn(me)) && Bishop(opp) && Single(Bishop(opp)));
-	static const uint64 AB = RO->File[0] | RO->File[1], ABC = AB | RO->File[2];
-	static const uint64 GH = RO->File[6] | RO->File[7], FGH = GH | RO->File[5];
+	static const uint64 AB = File[0] | File[1], ABC = AB | File[2];
+	static const uint64 GH = File[6] | File[7], FGH = GH | File[5];
 	if (F(Pawn(me) & ~AB) && T(King(opp) & ABC))
 	{
 		uint64 back = RO->Forward[opp][RankOf(lsb(King(opp)))];
@@ -3471,7 +3561,7 @@ template<bool me> void eval_knppkbx(GEvalInfo& EI, pop_func_t)
 
 template<bool me> inline void check_forced_stalemate(uint16* mul, int kloc)
 {
-	if (F(RO->KAtt[kloc] & ~Current->att[me])
+	if (F(KAtt[kloc] & ~Current->att[me])
 		&& F(Shift<opp>(Pawn(opp)) & ~PieceAll()))
 		*mul -= (3 * *mul) / 4;
 }
@@ -4152,7 +4242,7 @@ void setup_board()
 			if (PieceAt(i) < WhiteKnight)
 				Current->pawn_key ^= RO->PieceKey[PieceAt(i)][i];
 			if (PieceAt(i) < WhiteKing)
-				Current->material += RO->MatCode[PieceAt(i)];
+				Current->material += MatCode[PieceAt(i)];
 			else
 				Current->pawn_key ^= RO->PieceKey[PieceAt(i)][i];
 			Current->pst += Pst(PieceAt(i), i);
@@ -4332,7 +4422,7 @@ template<bool me> void do_move(int move)
 		Next->key ^= RO->PieceKey[capture][to];
 		if (capture == IPawn[opp])
 			Next->pawn_key ^= RO->PieceKey[IPawn[opp]][to];
-		Next->material = Current->material - RO->MatCode[capture];
+		Next->material = Current->material - MatCode[capture];
 		if (T(Current->material & FlagUnusualMaterial) && capture >= WhiteKnight)
 		{
 			if (popcnt(Piece(WhiteQueen)) <= 2 && popcnt(Piece(BlackQueen)) <= 2 && popcnt(Piece(WhiteLight)) <= 1 && popcnt(Piece(BlackLight)) <= 1 &&
@@ -4346,7 +4436,7 @@ template<bool me> void do_move(int move)
 			{
 				piece = Promotion<me>(move);
 				PieceAt(to) = piece;
-				Next->material += RO->MatCode[piece] - RO->MatCode[IPawn[me]];
+				Next->material += MatCode[piece] - MatCode[IPawn[me]];
 				if (IsBishop(piece) ? T(Piece(piece)) : Multiple(Piece(piece)))
 					Next->material |= FlagUnusualMaterial;
 				Pawn(me) ^= mask_to;
@@ -4402,13 +4492,13 @@ template<bool me> void do_move(int move)
 				Next->pst -= Pst(IPawn[opp], to ^ 8);
 				Pawn(opp) &= ~u;
 				Piece(opp) &= ~u;
-				Next->material -= RO->MatCode[IPawn[opp]];
+				Next->material -= MatCode[IPawn[opp]];
 			}
 			else if (IsPromotion(move))
 			{
 				piece = Promotion<me>(move);
 				PieceAt(to) = piece;
-				Next->material += RO->MatCode[piece] - RO->MatCode[IPawn[me]];
+				Next->material += MatCode[piece] - MatCode[IPawn[me]];
 				if (IsBishop(piece) ? T(Piece(piece)) : Multiple(Piece(piece)))
 					Next->material |= FlagUnusualMaterial;
 				Pawn(me) ^= mask_to;
@@ -4635,10 +4725,10 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 	uint64 mpawns = Pawn(me) & RO->Forward[me][me ? Min(kr + 1, 7) : Max(kr - 1, 0)];
 	for (int file = start, i = 0; i < 3; file += inc, ++i)
 	{
-		shelter += RO->Shelter[i][OwnRank<me>(NBZ<me>(mpawns & RO->File[file]))];
-		if (Pawn(opp) & RO->File[file])
+		shelter += RO->Shelter[i][OwnRank<me>(NBZ<me>(mpawns & File[file]))];
+		if (Pawn(opp) & File[file])
 		{
-			int oppP = NB<me>(Pawn(opp) & RO->File[file]);
+			int oppP = NB<me>(Pawn(opp) & File[file]);
 			int rank = OwnRank<opp>(oppP);
 			if (rank < 6)
 			{
@@ -4669,9 +4759,9 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 		}
 		else
 		{
-			if (i > 0 || T((RO->File[file] | RO->File[file + inc]) & (Rook(opp) | Queen(opp))) || T(RFileBlockMask[me][inc > 0] & ~(Pawn(opp) | King(opp))))
+			if (i > 0 || T((File[file] | File[file + inc]) & (Rook(opp) | Queen(opp))) || T(RFileBlockMask[me][inc > 0] & ~(Pawn(opp) | King(opp))))
 			{
-				if (F(Pawn(me) & RO->File[file]))
+				if (F(Pawn(me) & File[file]))
 				{
 					shelter += ShelterMod[StormOfValue];
 					sScale += ShelterMod[StormOfScale];
@@ -4699,7 +4789,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 		int next = PieceAt(sq + Push[me]);
 
 		int isolated = !(Pawn(me) & RO->PIsolated[file]);
-		int doubled = T(Pawn(me) & (RO->File[file] ^ b));
+		int doubled = T(Pawn(me) & (File[file] ^ b));
 		int open = !(PawnAll() & way);
 
 		if (isolated)
@@ -4719,7 +4809,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 				else
 					DecV(PEI.score, open ? Values::DoubledOpen : Values::DoubledClosed);
 			}
-			if (rrank >= 3 && (b & (RO->File[2] | RO->File[3] | RO->File[4] | RO->File[5])) && next != IPawn[opp] && (RO->PIsolated[file] & RO->Line[rank] & Pawn(me)))
+			if (rrank >= 3 && (b & (File[2] | File[3] | File[4] | File[5])) && next != IPawn[opp] && (RO->PIsolated[file] & Line[rank] & Pawn(me)))
 				IncV(PEI.score, Values::PawnChainLinear * (rrank - 3) + Values::PawnChain);
 		}
 		int backward = 0;
@@ -4818,7 +4908,7 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 		b = Bit(sq);
 		uint64 att = QueenAttacks(sq, EI.occ);
 		Current->att[me] |= att;
-		if (RO->QMask[sq] & King(opp))
+		if (QMask[sq] & King(opp))
 			if (uint64 v = RO->Between[EI.king[opp]][sq] & EI.occ)
 				if (Single(v))
 				{
@@ -4839,7 +4929,7 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 							katt = 1;
 						}
 					}
-					else if (piece != IPawn[opp] && !(((RO->BMask[sq] & Bishop(opp)) | (RO->RMask[sq] & Rook(opp)) | Queen(opp)) & v))
+					else if (piece != IPawn[opp] && !(((BMask[sq] & Bishop(opp)) | (RMask[sq] & Rook(opp)) | Queen(opp)) & v))
 					{
 						IncV(EI.score, Values::WeakPin);
 						if (!(Current->patt[opp] & v))
@@ -4854,7 +4944,7 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 		if (uint64 a = att & EI.area[opp])
 		{
 			EI.king_att[me] += Single(a) ? KingQAttack1 : KingQAttack;
-			uint64 b = att & ((Rook(me) & RO->RMask[sq]) | (Bishop(me) & RO->BMask[sq]));
+			uint64 b = att & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq]));
 			for (uint64 v = a; T(v); Cut(v))
 				if (RO->FullLine[sq][lsb(v)] & b)
 					EI.king_att[me]++;
@@ -4885,7 +4975,7 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		b = Bit(sq);
 		uint64 att = RookAttacks(sq, EI.occ);
 		Current->att[me] |= att;
-		if (RO->RMask[sq] & King(opp))
+		if (RMask[sq] & King(opp))
 			if (uint64 v = RO->Between[EI.king[opp]][sq] & EI.occ)
 				if (Single(v))
 				{
@@ -4932,13 +5022,13 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		}
 		Current->threat |= att & Queen(opp);
 		uint64 control = EI.free[me];
-		if (uint64 dbl = att & RO->File[FileOf(sq)] & Major(me))
+		if (uint64 dbl = att & File[FileOf(sq)] & Major(me))
 		{	// doubled r/q
 			control &= RookAttacks(sq, EI.occ & ~dbl);
 		}
 		else if (uint64 behind = att & Current->passer & Pawn(me) & RO->PWay[opp][sq])
 		{	// we are in front of a pawn
-			control &= att & RO->File[FileOf(sq)];	// restrict to squares in front of passer
+			control &= att & File[FileOf(sq)];	// restrict to squares in front of passer
 		}
 		else
 			control &= att;
@@ -5000,7 +5090,7 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		b = Bit(sq);
 		uint64 att = BishopAttacks(sq, EI.occ);
 		Current->att[me] |= att;
-		if (RO->BMask[sq] & King(opp))
+		if (BMask[sq] & King(opp))
 			if (uint64 v = RO->Between[EI.king[opp]][sq] & EI.occ)
 				if (Single(v))  // pin or discovery threat
 				{
@@ -5052,7 +5142,7 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		Current->threat |= att & Major(opp);
 		const uint64& myArea = (b & LightArea) ? LightArea : DarkArea;
 		uint64 v = RO->BishopForward[me][sq] & Pawn(me) & myArea;
-		v |= (v & (RO->File[2] | RO->File[3] | RO->File[4] | RO->File[5] | RO->BMask[sq])) >> 8;	// the ">>8" is just a trick to double-count these without two calls to pop()
+		v |= (v & (File[2] | File[3] | File[4] | File[5] | BMask[sq])) >> 8;	// the ">>8" is just a trick to double-count these without two calls to pop()
 		DecV(EI.score, Values::BishopPawnBlock * pop(v));
 		DecV(EI.score, Values::BishopOppPawnOffColor * pop(Pawn(opp) & ~myArea));
 		DecV(EI.score, Values::BishopOppPawnBlock * pop(Pawn(opp) & myArea & ~EI.free[me]));
@@ -5073,7 +5163,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 	{
 		int sq = lsb(u);
 		b = Bit(sq);
-		uint64 att = RO->NAtt[sq];
+		uint64 att = NAtt[sq];
 		Current->att[me] |= att;
 		if (uint64 a = att & EI.area[opp])
 			EI.king_att[me] += Single(a) ? KingNAttack1 : KingNAttack;
@@ -5117,7 +5207,7 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		score += (EI.PawnEntry->shelter[opp] * KingShelterQuad) / 64;
 		if (uint64 u = Current->att[me] & EI.area[opp] & (~Current->att[opp]))
 			score += pop(u) * KingAttackSquare;
-		if (!(RO->KAtt[EI.king[opp]] & (~(Piece(opp) | Current->att[me]))))
+		if (!(KAtt[EI.king[opp]] & (~(Piece(opp) | Current->att[me]))))
 			score += KingNoMoves;
 	}
 	score = score < KingAttackThreshold
@@ -5159,7 +5249,7 @@ template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 	for (uint8 u = EI.PawnEntry->passer[me]; T(u); u &= (u - 1))
 	{
 		int file = lsb(u);
-		int sq = NB<opp>(RO->File[file] & Pawn(me));  // most advanced in this file
+		int sq = NB<opp>(File[file] & Pawn(me));  // most advanced in this file
 		int rank = OwnRank<me>(sq);
 		Current->passer |= Bit(sq);
 		if (rank <= 2)
@@ -5186,7 +5276,7 @@ template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 			for (uint64 v = RO->PAtt[me][sq - Push[me]] & Pawn(me); T(v); Cut(v))
 			{
 				int square = lsb(v);
-				if (F(Pawn(opp) & (RO->VLine[square] | RO->PIsolated[FileOf(square)]) & RO->Forward[me][RankOf(square)]))
+				if (F(Pawn(opp) & (VLine[square] | RO->PIsolated[FileOf(square)]) & RO->Forward[me][RankOf(square)]))
 					++connected;
 			}
 			if (connected)
@@ -5339,8 +5429,8 @@ template<class POP> void evaluation()
 	EI.occ = PieceAll();
 	Current->patt[White] = ShiftW<White>(Pawn(White)) | ShiftE<White>(Pawn(White));
 	Current->patt[Black] = ShiftW<Black>(Pawn(Black)) | ShiftE<Black>(Pawn(Black));
-	EI.area[White] = (RO->KAtt[EI.king[White]] | King(White)) & ((~Current->patt[White]) | Current->patt[Black]);
-	EI.area[Black] = (RO->KAtt[EI.king[Black]] | King(Black)) & ((~Current->patt[Black]) | Current->patt[White]);
+	EI.area[White] = (KAtt[EI.king[White]] | King(White)) & ((~Current->patt[White]) | Current->patt[Black]);
+	EI.area[Black] = (KAtt[EI.king[Black]] | King(Black)) & ((~Current->patt[Black]) | Current->patt[White]);
 	Current->att[White] = Current->patt[White];
 	Current->att[Black] = Current->patt[Black];
 	Current->passer = 0;
@@ -5361,8 +5451,8 @@ template<class POP> void evaluation()
 
 	eval_king<White, POP>(EI);
 	eval_king<Black, POP>(EI);
-	Current->att[White] |= RO->KAtt[EI.king[White]];
-	Current->att[Black] |= RO->KAtt[EI.king[Black]];
+	Current->att[White] |= KAtt[EI.king[White]];
+	Current->att[Black] |= KAtt[EI.king[Black]];
 
 	eval_passer<White, POP>(EI);
 	eval_pieces<White, POP>(EI);
@@ -5467,7 +5557,7 @@ template<bool me> bool is_legal(int move)
 	u = Bit(to);
 	if (piece >= WhiteLight && piece < WhiteKing)
 	{
-		if ((RO->QMask[from] & u) == 0)
+		if ((QMask[from] & u) == 0)
 			return 0;
 		if (RO->Between[from][to] & occ)
 			return 0;
@@ -5567,7 +5657,7 @@ template<bool me> bool is_legal(int move)
 				return 1;
 			}
 		}
-		if (F(RO->KAtt[from] & u))
+		if (F(KAtt[from] & u))
 			return 0;
 		if (Current->att[opp] & u)
 			return 0;
@@ -5576,7 +5666,7 @@ template<bool me> bool is_legal(int move)
 	piece = (piece >> 1) - 2;
 	if (piece == 0)
 	{
-		if (u & RO->NAtt[from])
+		if (u & NAtt[from])
 			return 1;
 		else
 			return 0;
@@ -5585,12 +5675,12 @@ template<bool me> bool is_legal(int move)
 	{
 		if (piece <= 2)
 		{
-			if (RO->BMask[from] & u)
+			if (BMask[from] & u)
 				return 1;
 		}
 		else if (piece == 3)
 		{
-			if (RO->RMask[from] & u)
+			if (RMask[from] & u)
 				return 1;
 		}
 		else
@@ -5624,24 +5714,24 @@ template<bool me> bool is_check(int move)
 	}
 	else if (piece < WhiteLight)
 	{
-		if (RO->NAtt[to] & king)
+		if (NAtt[to] & king)
 			return true;
 	}
 	else if (piece < WhiteRook)
 	{
-		if (RO->BMask[to] & king)
+		if (BMask[to] & king)
 			if (F(RO->Between[king_sq][to] & PieceAll()))
 				return true;
 	}
 	else if (piece < WhiteQueen)
 	{
-		if (RO->RMask[to] & king)
+		if (RMask[to] & king)
 			if (F(RO->Between[king_sq][to] & PieceAll()))
 				return true;
 	}
 	else if (piece < WhiteKing)
 	{
-		if (RO->QMask[to] & king)
+		if (QMask[to] & king)
 			if (F(RO->Between[king_sq][to] & PieceAll()))
 				return true;
 	}
@@ -5894,7 +5984,7 @@ template<bool me> int extension(int pv, int move, int depth, bool* check = nullp
 			if (T(King(me) & 0XFFC300000000C3FF) && depth < (Multiple(om) ? 12 : 8))
 			{
 				int kf = FileOf(lsb(King(me)));
-				if (T((PAtts<me>(Pawn(me) & RO->File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & RO->File[kf]) & Piece(me))))
+				if (T((PAtts<me>(Pawn(me) & File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & File[kf]) & Piece(me))))
 					return 1;
 			}
 
@@ -6111,7 +6201,7 @@ template<bool me> bool see(int move, int margin, const uint16* mat_value)
 	def = RO->PAtt[opp][to] & Pawn(me) & clear;
 	if (T(def) && delta + mat_value[WhitePawn] + margin <= 0)
 		return 1;
-	att |= RO->NAtt[to] & Knight(opp);
+	att |= NAtt[to] & Knight(opp);
 	if (T(att) && delta > mat_value[WhiteDark] - margin)
 		return 0;
 	occ = PieceAll() & clear;
@@ -6121,18 +6211,18 @@ template<bool me> bool see(int move, int margin, const uint16* mat_value)
 		if (b_area & opp_bishop)
 			return 0;
 	my_bishop = Bishop(me);
-	b_slider_att = RO->BMask[to] & (opp_bishop | Queen(opp));
-	r_slider_att = RO->RMask[to] & Major(opp);
-	b_slider_def = RO->BMask[to] & (my_bishop | Queen(me)) & clear;
-	r_slider_def = RO->RMask[to] & Major(me) & clear;
+	b_slider_att = BMask[to] & (opp_bishop | Queen(opp));
+	r_slider_att = RMask[to] & Major(opp);
+	b_slider_def = BMask[to] & (my_bishop | Queen(me)) & clear;
+	r_slider_def = RMask[to] & Major(me) & clear;
 	att |= (b_slider_att & b_area);
-	def |= RO->NAtt[to] & Knight(me) & clear;
+	def |= NAtt[to] & Knight(me) & clear;
 	r_area = RookAttacks(to, occ);
 	att |= (r_slider_att & r_area);
 	def |= (b_slider_def & b_area);
 	def |= (r_slider_def & r_area);
-	att |= RO->KAtt[to] & King(opp);
-	def |= RO->KAtt[to] & King(me) & clear;
+	att |= KAtt[to] & King(opp);
+	def |= KAtt[to] & King(me) & clear;
 	while (true)
 	{
 		if (u = (att & Pawn(opp)))
@@ -6363,11 +6453,11 @@ template<bool me> void gen_root_moves()
 
 template<bool me> INLINE bool forkable(int dst)
 {
-	if (RO->NAttAtt[dst] & King(me))
+	if (NAttAtt[dst] & King(me))
 	{
-		for (uint64 nn = Knight(opp) & RO->NAttAtt[dst]; nn; Cut(nn))
+		for (uint64 nn = Knight(opp) & NAttAtt[dst]; nn; Cut(nn))
 		{
-			if (T(RO->NAtt[dst] & RO->NAtt[lsb(nn)] & RO->NAtt[lsb(King(me))]))
+			if (T(NAtt[dst] & NAtt[lsb(nn)] & NAtt[lsb(King(me))]))
 				return true;
 		}
 	}
@@ -6391,7 +6481,7 @@ template<bool me> int* gen_captures(int* list)
 		if (F(PieceAt(to)))
 		{
 			list = AddMove(list, from, to, FlagPQueen, forkable<me>(to) ? MvvLvaPromotion : MvvLvaPromotionKnight);
-			list = AddMove(list, from, to, FlagPKnight, T(RO->NAtt[to] & King(opp)) ? MvvLvaPromotionKnight : MvvLvaPromotionBad);
+			list = AddMove(list, from, to, FlagPKnight, T(NAtt[to] & King(opp)) ? MvvLvaPromotionKnight : MvvLvaPromotionBad);
 			list = AddMove(list, from, to, FlagPRook, MvvLvaPromotionBad);
 			list = AddMove(list, from, to, FlagPBishop, MvvLvaPromotionBad);
 		}
@@ -6399,13 +6489,13 @@ template<bool me> int* gen_captures(int* list)
 	for (v = ShiftW<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
 	{
 		list = AddMove(list, lsb(v), lsb(v) + PushE[me], FlagPQueen, MvvLvaPromotionCap(PieceAt(lsb(v) + PushE[me])));
-		if (HasBit(RO->NAtt[lsb(King(opp))], lsb(v) + PushE[me]))
+		if (HasBit(NAtt[lsb(King(opp))], lsb(v) + PushE[me]))
 			list = AddMove(list, lsb(v), lsb(v) + PushE[me], FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(lsb(v) + PushE[me])));
 	}
 	for (v = ShiftE<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
 	{
 		list = AddMove(list, lsb(v), lsb(v) + PushW[me], FlagPQueen, MvvLvaPromotionCap(PieceAt(lsb(v) + PushW[me])));
-		if (HasBit(RO->NAtt[lsb(King(opp))], lsb(v) + PushW[me]))
+		if (HasBit(NAtt[lsb(King(opp))], lsb(v) + PushW[me]))
 			list = AddMove(list, lsb(v), lsb(v) + PushW[me], FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(lsb(v) + PushW[me])));
 	}
 	if (T(Current->att[me] & Current->mask))
@@ -6414,10 +6504,10 @@ template<bool me> int* gen_captures(int* list)
 			list = AddCaptureP(list, IPawn[me], lsb(v), lsb(v) + PushE[me], 0);
 		for (v = ShiftE<opp>(Current->mask) & Pawn(me) & (~OwnLine(me, 6)); T(v); Cut(v))
 			list = AddCaptureP(list, IPawn[me], lsb(v), lsb(v) + PushW[me], 0);
-		for (v = RO->KAtt[lsb(King(me))] & Current->mask & (~Current->att[opp]); T(v); Cut(v))
+		for (v = KAtt[lsb(King(me))] & Current->mask & (~Current->att[opp]); T(v); Cut(v))
 			list = AddCaptureP(list, IKing[me], lsb(King(me)), lsb(v), 0);
 		for (u = Knight(me); T(u); Cut(u))
-			for (v = RO->NAtt[lsb(u)] & Current->mask; T(v); Cut(v))
+			for (v = NAtt[lsb(u)] & Current->mask; T(v); Cut(v))
 				list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
 		for (u = Bishop(me); T(u); Cut(u))
 			for (v = BishopAttacks(lsb(u), PieceAll()) & Current->mask; T(v); Cut(v))
@@ -6446,19 +6536,19 @@ template<bool me> int* gen_evasions(int* list)
 	//	pair<uint64, uint64> pJoins = pawn_joins(me, Pawn(me));
 
 	int king = lsb(King(me));
-	uint64 att = (RO->NAtt[king] & Knight(opp)) | (RO->PAtt[me][king] & Pawn(opp));
-	for (u = (RO->BMask[king] & (Bishop(opp) | Queen(opp))) | (RO->RMask[king] & (Rook(opp) | Queen(opp))); T(u); u ^= b)
+	uint64 att = (NAtt[king] & Knight(opp)) | (RO->PAtt[me][king] & Pawn(opp));
+	for (u = (BMask[king] & (Bishop(opp) | Queen(opp))) | (RMask[king] & (Rook(opp) | Queen(opp))); T(u); u ^= b)
 	{
 		b = Bit(lsb(u));
 		if (F(RO->Between[king][lsb(u)] & PieceAll()))
 			att |= b;
 	}
 	int att_sq = lsb(att);  // generally the only attacker
-	uint64 esc = RO->KAtt[king] & (~(Piece(me) | Current->att[opp])) & Current->mask;
+	uint64 esc = KAtt[king] & (~(Piece(me) | Current->att[opp])) & Current->mask;
 	if (PieceAt(att_sq) >= WhiteLight)
 		esc &= ~RO->FullLine[king][att_sq];
 	else if (PieceAt(att_sq) >= WhiteKnight)
-		esc &= ~RO->NAtt[att_sq];
+		esc &= ~NAtt[att_sq];
 
 	Cut(att);
 	if (att)
@@ -6467,7 +6557,7 @@ template<bool me> int* gen_evasions(int* list)
 		if (PieceAt(att_sq) >= WhiteLight)
 			esc &= ~RO->FullLine[king][att_sq];
 		else if (PieceAt(att_sq) >= WhiteKnight)
-			esc &= ~RO->NAtt[att_sq];
+			esc &= ~NAtt[att_sq];
 
 		for (; T(esc); Cut(esc))
 			list = AddCaptureP(list, IKing[me], king, lsb(esc), 0);
@@ -6518,7 +6608,7 @@ template<bool me> int* gen_evasions(int* list)
 	}
 	inter = (inter | Bit(att_sq)) & Current->mask;
 	for (u = Knight(me); T(u); Cut(u))
-		for (esc = RO->NAtt[lsb(u)] & inter; T(esc); Cut(esc))
+		for (esc = NAtt[lsb(u)] & inter; T(esc); Cut(esc))
 			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(esc), 0);
 	for (u = Bishop(me); T(u); Cut(u))
 		for (esc = BishopAttacks(lsb(u), PieceAll()) & inter; T(esc); Cut(esc))
@@ -6612,10 +6702,10 @@ template<bool me> int* gen_quiet_moves(int* list)
 	for (u = Knight(me); T(u); Cut(u))
 	{
 		int from = lsb(u);
-		for (v = free & RO->NAtt[from]; T(v); Cut(v))
+		for (v = free & NAtt[from]; T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = RO->NAtt[to] & Major(opp) ? FlagCastling : 0;
+			int flag = NAtt[to] & Major(opp) ? FlagCastling : 0;
 			list = AddHistoryP(list, IKnight[me], from, to, flag);
 		}
 	}
@@ -6627,7 +6717,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & BishopAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = RO->BMask[to] & (RO->PAtt[opp][to] & Pawn(me) ? Major(opp) : Rook(opp)) ? FlagCastling : 0;
+			int flag = BMask[to] & (RO->PAtt[opp][to] & Pawn(me) ? Major(opp) : Rook(opp)) ? FlagCastling : 0;
 			list = AddHistoryP(list, which, from, to, flag);
 		}
 	}
@@ -6638,7 +6728,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & RookAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = (RO->PAtt[opp][to] & Pawn(me)) && (RO->RMask[to] & Queen(opp)) ? FlagCastling : 0;
+			int flag = (RO->PAtt[opp][to] & Pawn(me)) && (RMask[to] & Queen(opp)) ? FlagCastling : 0;
 			list = AddHistoryP(list, IRook[me], from, to, flag);
 		}
 	}
@@ -6652,7 +6742,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 			list = AddHistoryP(list, IQueen[me], from, to, 0);
 		}
 	}
-	for (v = RO->KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
+	for (v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
 		list = AddHistoryP(list, IKing[me], lsb(King(me)), lsb(v), 0);
 
 	return NullTerminate(list);
@@ -6692,7 +6782,7 @@ template<bool me> int* gen_checks(int* list)
 		else
 		{
 			if (PieceAt(from) < WhiteLight)
-				v = RO->NAtt[from] & target;
+				v = NAtt[from] & target;
 			else if (PieceAt(from) < WhiteRook)
 				v = BishopAttacks(from, PieceAll()) & target;
 			else if (PieceAt(from) < WhiteQueen)
@@ -6700,18 +6790,18 @@ template<bool me> int* gen_checks(int* list)
 			else if (PieceAt(from) < WhiteKing)
 				v = QueenAttacks(from, PieceAll()) & target;
 			else
-				v = RO->KAtt[from] & target & (~Current->att[opp]);
+				v = KAtt[from] & target & (~Current->att[opp]);
 			for (; T(v); Cut(v))
 				list = AddMove(list, from, lsb(v), 0, MvvLvaXrayCap(PieceAt(lsb(v))));
 		}
 	}
 
 	const uint64 nonDiscover = ~(Current->xray[me] & Piece(me));  // exclude pieces already checked
-	for (u = Knight(me) & RO->NAttAtt[king] & nonDiscover; T(u); Cut(u))
-		for (v = RO->NAtt[king] & RO->NAtt[lsb(u)] & clear; T(v); Cut(v))
+	for (u = Knight(me) & NAttAtt[king] & nonDiscover; T(u); Cut(u))
+		for (v = NAtt[king] & NAtt[lsb(u)] & clear; T(v); Cut(v))
 			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
 
-	for (u = RO->KAttAtt[king] & Pawn(me) & (~OwnLine(me, 6)) & nonDiscover; T(u); Cut(u))
+	for (u = KAttAtt[king] & Pawn(me) & (~OwnLine(me, 6)) & nonDiscover; T(u); Cut(u))
 	{
 		int from = lsb(u);
 		for (v = RO->PAtt[me][from] & RO->PAtt[opp][king] & clear & Piece(opp); T(v); Cut(v))
@@ -6730,7 +6820,7 @@ template<bool me> int* gen_checks(int* list)
 			list = AddCaptureP(list, IRook[me], lsb(u), lsb(v), 0);
 	for (u = Queen(me) & nonDiscover; T(u); Cut(u))
 	{
-		uint64 contact = RO->KAtt[king];
+		uint64 contact = KAtt[king];
 		int from = lsb(u);
 		for (v = QueenAttacks(from, PieceAll()) & (b_target | r_target); T(v); Cut(v))
 		{
@@ -6783,7 +6873,7 @@ template<bool me> int* gen_delta_moves(int margin, int* list)
 	for (uint64 u = Knight(me); T(u); Cut(u))
 	{
 		int from = lsb(u);
-		for (uint64 v = free & RO->NAtt[lsb(u)]; T(v); Cut(v))
+		for (uint64 v = free & NAtt[lsb(u)]; T(v); Cut(v))
 			list = AddCDeltaP(list, margin, IKnight[me], from, lsb(v), 0);
 	}
 	for (uint64 u = Piece(WhiteLight | me); T(u); Cut(u))
@@ -6811,7 +6901,7 @@ template<bool me> int* gen_delta_moves(int margin, int* list)
 			list = AddCDeltaP(list, margin, IQueen[me], from, lsb(v), 0);
 	}
 	int from = lsb(King(me));
-	for (uint64 v = RO->KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
+	for (uint64 v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
 		list = AddCDeltaP(list, margin, IKing[me], from, lsb(v), 0);
 	return NullTerminate(list);
 }
