@@ -484,6 +484,32 @@ namespace Calc
 	{
 		return BuildBB(IsKAtt, sq);
 	}
+
+	constexpr uint64 West(int file)
+	{
+		return file > 0 ? File[file - 1] | West(file - 1) : 0ull;
+	}
+	constexpr uint64 East(int file)
+	{
+		return file < 7 ? File[file + 1] | East(file + 1) : 0ull;
+	}
+	constexpr uint64 ForwardW(int rank)
+	{
+		return rank < 7 ? Line[rank + 1] | ForwardW(rank + 1) : 0ull;
+	}
+	constexpr uint64 ForwardB(int rank)
+	{
+		return rank > 0 ? Line[rank - 1] | ForwardB(rank - 1) : 0ull;
+	}
+
+	constexpr bool IsBetween(int from, int sq, int to)
+	{
+		return ((from > sq && sq > to) || (from < sq && sq < to))
+			&& ((RankOf(from) == RankOf(sq) && RankOf(sq) == RankOf(to))
+				|| (FileOf(from) == FileOf(sq) && FileOf(sq) == FileOf(to))
+				|| (NDiagOf(from) == NDiagOf(sq) && NDiagOf(sq) == NDiagOf(to))
+				|| (SDiagOf(from) == SDiagOf(sq) && SDiagOf(sq) == SDiagOf(to)));
+	}
 }
 constexpr array<uint64, 64> HLine = make_array<64>(Calc::HLine);
 constexpr array<uint64, 64> VLine = make_array<64>(Calc::VLine);
@@ -491,6 +517,9 @@ constexpr array<uint64, 64> NDiag = make_array<64>(Calc::NDiag);
 constexpr array<uint64, 64> SDiag = make_array<64>(Calc::SDiag);
 constexpr array<uint64, 64> NAtt = make_array<64>(Calc::NAtt);
 constexpr array<uint64, 64> KAtt = make_array<64>(Calc::KAtt);
+constexpr array<uint64, 8> West = make_array<8>(Calc::West);
+constexpr array<uint64, 8> East = make_array<8>(Calc::East);
+constexpr array<array<uint64, 8>, 2> Forward = { make_array<8>(Calc::ForwardW), make_array<8>(Calc::ForwardB) };
 
 namespace Calc
 {
@@ -534,6 +563,17 @@ namespace Calc
 	}
 }
 constexpr array<uint64, 64> QMask = make_array<64>(Calc::QMask);
+
+constexpr array<uint8, 64> UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
+	0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF ^ CanCastle_ooo, 0xFF, 0xFF, 0xFF,
+	0xFF ^ (CanCastle_oo | CanCastle_ooo), 0xFF, 0xFF, 0xFF ^ CanCastle_oo };
 
 struct GMaterial;
 struct GPawnEntry;
@@ -579,7 +619,6 @@ struct CommonData_
 	array<int, 256> SpanWidth, SpanGap;
 	array<array<uint64, 64>, 2> BishopForward, PAtt, PMove, PWay, PCone, PSupport;
 	array<uint64, 64> BMagic, BMagicMask, RMagic, RMagicMask;
-	array<uint64, 64> OneIn;
 	array<uint64, 64> KingFrontal, KingFlank;
 	array<array<packed_t, 28>, 2> MobQueen;
 	array<uint8, 256> PieceFromChar;
@@ -588,14 +627,10 @@ struct CommonData_
 	array<array<packed_t, 9>, 2> MobKnight;
 	array<short, 64> BShift, BOffset, RShift;
 	array<uint64, 16> CastleKey;
-	array<array<uint64, 8>, 2> Forward;
 	array<uint64, 8> EPKey;
-	array<uint64, 8> West, East, PIsolated;
+	array<uint64, 8> PIsolated;
 	array<packed_t, 8> PasserGeneral, PasserBlocked, PasserFree, PasserSupported, PasserProtected, PasserConnected, PasserOutside, PasserCandidate, PasserClear;
-	array<uint8, 64> UpdateCastling;
 	array<array<sint16, 8>, 3> Shelter;
-	array<uint16, 16> KingAttackScale;
-	array<int, 8> KingCenterScale;
 	array<uint8, 16> LogDist;
 	array<sint16, 8> PasserAtt, PasserDef, PasserAttLog, PasserDefLog;
 	array<sint16, 4> StormBlocked, StormShelterAtt, StormConnected, StormOpen, StormFree;
@@ -2502,7 +2537,7 @@ void init_misc(CommonData_* data)
 {
 	for (int i = 0; i < 64; ++i)
 	{
-		data->BMagicMask[i] = data->RMagicMask[i] = data->OneIn[i] = 0;
+		data->BMagicMask[i] = data->RMagicMask[i] = 0;
 		data->PAtt[0][i] = data->PAtt[1][i] = data->PMove[0][i] = data->PMove[1][i] = data->PWay[0][i] = data->PWay[1][i] = data->PCone[0][i] = data->PCone[1][i]
 			= data->PSupport[0][i] = data->PSupport[1][i] = data->BishopForward[0][i] = data->BishopForward[1][i] = 0;
 		for (int j = 0; j < 64; ++j)
@@ -2544,14 +2579,6 @@ void init_misc(CommonData_* data)
 			}
 		}
 
-		if (FileOf(i) == 0)
-			data->OneIn[i] |= File[1];
-		if (FileOf(i) == 7)
-			data->OneIn[i] |= File[6];
-		if (RankOf(i) == 0)
-			data->OneIn[i] |= Line[1];
-		if (RankOf(i) == 7)
-			data->OneIn[i] |= Line[6];
 		data->BMagicMask[i] = BMask[i] & Interior;
 		data->RMagicMask[i] = RMask[i];
 		data->PCone[0][i] = data->PWay[0][i];
@@ -2576,21 +2603,7 @@ void init_misc(CommonData_* data)
 
 	for (int i = 0; i < 8; ++i)
 	{
-		data->West[i] = 0;
-		data->East[i] = 0;
-		data->Forward[0][i] = data->Forward[1][i] = 0;
 		data->PIsolated[i] = 0;
-		for (int j = 0; j < 8; ++j)
-		{
-			if (i < j)
-				data->Forward[0][i] |= Line[j];
-			else if (i > j)
-				data->Forward[1][i] |= Line[j];
-			if (i < j)
-				data->East[i] |= File[j];
-			else if (i > j)
-				data->West[i] |= File[j];
-		}
 		if (i > 0)
 			data->PIsolated[i] |= File[i - 1];
 		if (i < 7)
@@ -2620,9 +2633,9 @@ void init_misc(CommonData_* data)
 		data->BishopForward[1][i] |= data->PWay[1][i];
 		for (int j = 0; j < 64; j++)
 		{
-			if ((data->PWay[1][j] | Bit(j)) & BMask[i] & data->Forward[0][RankOf(i)])
+			if ((data->PWay[1][j] | Bit(j)) & BMask[i] & Forward[0][RankOf(i)])
 				data->BishopForward[0][i] |= Bit(j);
-			if ((data->PWay[0][j] | Bit(j)) & BMask[i] & data->Forward[1][RankOf(i)])
+			if ((data->PWay[0][j] | Bit(j)) & BMask[i] & Forward[1][RankOf(i)])
 				data->BishopForward[1][i] |= Bit(j);
 		}
 	}
@@ -2681,16 +2694,6 @@ void init_misc(CommonData_* data)
 	}
 	data->SpanWidth[0] = data->SpanGap[0] = 0;
 
-	data->UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
-		0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF ^ CanCastle_ooo, 0xFF, 0xFF, 0xFF,
-		0xFF ^ (CanCastle_oo | CanCastle_ooo), 0xFF, 0xFF, 0xFF ^ CanCastle_oo };
 }
 
 void init_magic(CommonData_* data)
@@ -3103,8 +3106,6 @@ void init_eval(CommonData_* data)
 		data->PasserDefLog[i] = attdef(3);
 	}
 
-	data->KingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
-	data->KingCenterScale = { 64, 65, 74, 70, 68, 70, 61, 62 };	// would be better if this were symmetric, but I want to keep king off queenside
 }
 
 // all these special-purpose endgame evaluators
@@ -3156,7 +3157,7 @@ template<bool me> uint16 krpkrx()
 	int o_rook = lsb(Rook(opp));
 	int m_king = lsb(King(me));
 	int add_mat = T(Piece(opp) ^ King(opp) ^ Rook(opp));
-	int clear = F(add_mat) || F((RO->PWay[opp][sq] | RO->PIsolated[FileOf(sq)]) & RO->Forward[opp][RankOf(sq + Push[me])] & (Piece(opp) ^ King(opp) ^ Rook(opp)));
+	int clear = F(add_mat) || F((RO->PWay[opp][sq] | RO->PIsolated[FileOf(sq)]) & Forward[opp][RankOf(sq + Push[me])] & (Piece(opp) ^ King(opp) ^ Rook(opp)));
 
 	if (!clear)
 		return 32;
@@ -3381,7 +3382,7 @@ template<bool me> uint16 krppkrx()
 	int sq1 = NB<me>(Pawn(me));	// trailing pawn
 	int sq2 = NB<opp>(Pawn(me));	// leading pawn
 
-	if ((Piece(opp) ^ King(opp) ^ Rook(opp)) & RO->Forward[me][RankOf(sq1 - Push[me])])
+	if ((Piece(opp) ^ King(opp) ^ Rook(opp)) & Forward[me][RankOf(sq1 - Push[me])])
 		return 32;
 	if (FileOf(sq1) == FileOf(sq2))
 	{
@@ -3396,7 +3397,7 @@ template<bool me> uint16 krppkrx()
 			return 16;
 	}
 	int r2 = lsb(Rook(opp)), rf = FileOf(r2);
-	const uint64 mask = RO->West[rf] & King(me) ? RO->West[rf] : RO->East[rf];
+	const uint64 mask = West[rf] & King(me) ? West[rf] : East[rf];
 	if (mask & (Rook(me) | Pawn(me)))
 		return 32;
 	return 16;
@@ -3547,13 +3548,13 @@ template<bool me> void eval_knppkbx(GEvalInfo& EI, pop_func_t)
 	static const uint64 GH = File[6] | File[7], FGH = GH | File[5];
 	if (F(Pawn(me) & ~AB) && T(King(opp) & ABC))
 	{
-		uint64 back = RO->Forward[opp][RankOf(lsb(King(opp)))];
+		uint64 back = Forward[opp][RankOf(lsb(King(opp)))];
 		if (T(back & Pawn(me)))
 			EI.mul = Min<uint16>(EI.mul, T(King(me) & AB & ~back) ? 24 : 8);
 	}
 	if (F(Pawn(me) & ~GH) && T(King(opp) & FGH))
 	{
-		uint64 back = RO->Forward[opp][RankOf(lsb(King(opp)))];
+		uint64 back = Forward[opp][RankOf(lsb(King(opp)))];
 		if (T(back & Pawn(me)))
 			EI.mul = Min<uint16>(EI.mul, T(King(me) & GH & ~back) ? 24 : 8);
 	}
@@ -3580,8 +3581,6 @@ template<bool me> void eval_krkpx(GEvalInfo& EI, pop_func_t)
 {
 	assert(Rook(me) && Single(Rook(me)) && F(Pawn(me)) && Pawn(opp));
 	EI.mul = Min(EI.mul, krkpx<me>());
-	//	if (T(Minor(opp)))
-	//		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Rook(me) ? 6 : 0);
 }
 template<bool me> void eval_krpkrx(GEvalInfo& EI, pop_func_t pop)
 {
@@ -3619,8 +3618,6 @@ template<bool me> void eval_kqkpx(GEvalInfo& EI, pop_func_t pop)
 template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 {
 	EI.mul = Min(EI.mul, kqkrpx<me>());
-	//	if (T(Minor(opp)))
-	//		EI.mul = Min(EI.mul, RO->OneIn[lsb(King(opp))] & Queen(me) ? 4 : 0);
 	check_forced_stalemate<me>(&EI.mul);
 }
 
@@ -4465,7 +4462,7 @@ template<bool me> void do_move(int move)
 
 		if (Current->castle_flags && (piece >= WhiteRook || capture >= WhiteRook))
 		{
-			Next->castle_flags &= RO->UpdateCastling[to] & RO->UpdateCastling[from];
+			Next->castle_flags &= UpdateCastling[to] & UpdateCastling[from];
 			Next->key ^= RO->CastleKey[Current->castle_flags] ^ RO->CastleKey[Next->castle_flags];
 			Next->pawn_key ^= RO->CastleKey[Current->castle_flags] ^ RO->CastleKey[Next->castle_flags];
 		}
@@ -4524,7 +4521,7 @@ template<bool me> void do_move(int move)
 			{
 				if (Current->castle_flags)
 				{
-					Next->castle_flags &= RO->UpdateCastling[to] & RO->UpdateCastling[from];
+					Next->castle_flags &= UpdateCastling[to] & UpdateCastling[from];
 					Next->key ^= RO->CastleKey[Current->castle_flags] ^ RO->CastleKey[Next->castle_flags];
 					Next->pawn_key ^= RO->CastleKey[Current->castle_flags] ^ RO->CastleKey[Next->castle_flags];
 				}
@@ -4722,7 +4719,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 		inc = -1;
 	}
 	int shelter = 0, sScale = 0;
-	uint64 mpawns = Pawn(me) & RO->Forward[me][me ? Min(kr + 1, 7) : Max(kr - 1, 0)];
+	uint64 mpawns = Pawn(me) & Forward[me][me ? Min(kr + 1, 7) : Max(kr - 1, 0)];
 	for (int file = start, i = 0; i < 3; file += inc, ++i)
 	{
 		shelter += RO->Shelter[i][OwnRank<me>(NBZ<me>(mpawns & File[file]))];
@@ -4734,14 +4731,14 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 			{
 				if (rank >= 3)
 					shelter += RO->StormBlocked[rank - 3];
-				if (uint64 u = (RO->PIsolated[FileOf(oppP)] & RO->Forward[opp][RankOf(oppP)] & Pawn(me)))
+				if (uint64 u = (RO->PIsolated[FileOf(oppP)] & Forward[opp][RankOf(oppP)] & Pawn(me)))
 				{
 					int meP = NB<opp>(u);
 					uint64 att_sq = RO->PAtt[me][meP] & RO->PWay[opp][oppP];  // may be zero
 					if (abs(kf - FileOf(meP)) <= 1
 						&& (!(PEI.double_att[me] & att_sq) || (Current->patt[opp] & att_sq))
 						&& F(RO->PWay[opp][meP] & Pawn(me))
-						&& (!(PawnAll() & RO->PWay[opp][oppP] & RO->Forward[me][RankOf(meP)])))
+						&& (!(PawnAll() & RO->PWay[opp][oppP] & Forward[me][RankOf(meP)])))
 					{
 						if (rank >= 3)
 						{
@@ -4849,7 +4846,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 				}
 			}
 		}
-		if (open && F(RO->PIsolated[file] & RO->Forward[me][rank] & Pawn(opp)))
+		if (open && F(RO->PIsolated[file] & Forward[me][rank] & Pawn(opp)))
 		{
 			PawnEntry->passer[me] |= (uint8)(1 << file);
 			if (rrank <= 2)
@@ -4864,7 +4861,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 			IncV(PEI.score, Pack2(0, value / 256));
 			if (PEI.patt[me] & b)
 				IncV(PEI.score, RO->PasserProtected[rrank]);
-			if (F(Pawn(opp) & RO->West[file]) || F(Pawn(opp) & RO->East[file]))
+			if (F(Pawn(opp) & West[file]) || F(Pawn(opp) & East[file]))
 				IncV(PEI.score, RO->PasserOutside[rrank]);
 		}
 	}
@@ -5149,7 +5146,7 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		if (T(b & Outpost[me])
 			&& F(Knight(opp))
 			&& T(Current->patt[me] & b)
-			&& F(Pawn(opp) & RO->PIsolated[FileOf(sq)] & RO->Forward[me][RankOf(sq)])
+			&& F(Pawn(opp) & RO->PIsolated[FileOf(sq)] & Forward[me][RankOf(sq)])
 			&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
 			IncV(EI.score, Values::BishopOutpostNoMinor);
 	}
@@ -5177,7 +5174,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 			IncV(EI.score, Values::TacticalMinorMinor);
 		if (att & EI.area[me])
 			IncV(EI.score, Values::KingDefKnight);
-		if ((b & Outpost[me]) && !(Pawn(opp) & RO->PIsolated[FileOf(sq)] & RO->Forward[me][RankOf(sq)]))
+		if ((b & Outpost[me]) && !(Pawn(opp) & RO->PIsolated[FileOf(sq)] & Forward[me][RankOf(sq)]))
 		{
 			IncV(EI.score, Values::KnightOutpost);
 			if (Current->patt[me] & b)
@@ -5197,6 +5194,10 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 	}
 }
 
+// weight constants
+constexpr array<uint16, 16> KingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
+constexpr array<int, 8> KingCenterScale = { 64, 65, 74, 70, 68, 70, 61, 62 };	// would be better if this were symmetric, but I want to keep king off queenside
+
 template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	POP pop;
@@ -5213,9 +5214,9 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	score = score < KingAttackThreshold
 			? Square(score) / (2 * KingAttackThreshold)
 			: score - KingAttackThreshold / 2;
-	int adjusted = ((score * RO->KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
+	int adjusted = ((score * KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
 	int kf = FileOf(EI.king[opp]);
-	adjusted = (adjusted * RO->KingCenterScale[kf]) / 64;
+	adjusted = (adjusted * KingCenterScale[kf]) / 64;
 	if (!Queen(me))
 		adjusted = (adjusted * KingSafetyNoQueen) / 16;
 	// add a correction for defense-in-depth
@@ -5276,7 +5277,7 @@ template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 			for (uint64 v = RO->PAtt[me][sq - Push[me]] & Pawn(me); T(v); Cut(v))
 			{
 				int square = lsb(v);
-				if (F(Pawn(opp) & (VLine[square] | RO->PIsolated[FileOf(square)]) & RO->Forward[me][RankOf(square)]))
+				if (F(Pawn(opp) & (VLine[square] | RO->PIsolated[FileOf(square)]) & Forward[me][RankOf(square)]))
 					++connected;
 			}
 			if (connected)
@@ -5962,33 +5963,25 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 	best->ply = Current->ply;
 }
 
-template<bool me> int extension(int pv, int move, int depth, bool* check = nullptr)
+template<bool me, bool pv> INLINE int extension(int move, int depth)
 {
-	if (is_check<me>(move))
-	{
-		constexpr array<array<int, 2>, 2> DepthCut = { { { { 16, 16 } },{ { 50, 50 } } } };
-		if (check) *check = true;
-		const bool isQ = (PieceAt(From(move)) & ~Black) == WhiteQueen;
-		return see<me>(move, -SeeThreshold, SeeValue) + T(depth < DepthCut[pv][T(isQ)]);
-	}
-	if (check) *check = false;
 	int from = From(move);
-	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
+	if (HasBit(Current->passer, from))
 	{
-		if (depth < 16)
-			return 1 + pv;
+		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][from] & Pawn(Current->turn))))
+			return pv ? 2 : 1;
+		//int rank = OwnRank(me, from);
+		//if (rank >= 5 && depth < 16)
+			//return pv ? 2 : 1;
 	}
-
-	if (depth > 2)
-		if (uint64 om = Major(opp))
-			if (T(King(me) & 0XFFC300000000C3FF) && depth < (Multiple(om) ? 12 : 8))
-			{
-				int kf = FileOf(lsb(King(me)));
-				if (T((PAtts<me>(Pawn(me) & File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & File[kf]) & Piece(me))))
-					return 1;
-			}
-
+	//if (HasBit(Piece(opp), To(move)) && (pv || Current->score > 120 + 30 * depth))
+	//	return 1;
 	return 0;
+}
+
+template<bool me, bool pv> INLINE int check_extension(int move, int depth)
+{
+	return pv ? 2 : T(depth < 12) + T(depth < 24);
 }
 
 void sort(int* start, int* finish)
@@ -6906,19 +6899,19 @@ template<bool me> int* gen_delta_moves(int margin, int* list)
 	return NullTerminate(list);
 }
 
-template<bool me> int SingularExtension(int ext, int prev_ext, int margin_one, int margin_two, int depth, int killer)
+template<bool me> int singular_extension(int ext, int prev_ext, int margin_one, int margin_two, int depth, int killer)
 {
 	int value = -MateValue;
 	int singular = 0;
 	if (ext < (prev_ext ? 1 : 2))
 	{
-		value = IsCheck(me) ? scout_evasion<me, 1>(margin_one, depth, killer) : scout<me, 1>(margin_one, depth, killer);
+		value = (IsCheck(me) ? scout<me, 1, 1> : scout<me, 1, 0>)(margin_one, depth, killer);
 		if (value < margin_one)
 			singular = 1;
 	}
 	if (value < margin_one && ext < (prev_ext ? (prev_ext >= 2 ? 1 : 2) : 3))
 	{
-		value = IsCheck(me) ? scout_evasion<me, 1>(margin_two, depth, killer) : scout<me, 1>(margin_two, depth, killer);
+		value = (IsCheck(me) ? scout<me, 1, 1> : scout<me, 1, 0>)(margin_two, depth, killer);
 		if (value < margin_two)
 			singular = 2;
 	}
@@ -7261,32 +7254,35 @@ template<bool me, bool pv> int q_evasion(int alpha, int beta, int depth, int fla
 	return score;
 }
 
-template<bool exclusion> int cut_search(int move, int hash_move, int score, int beta, int depth, int flags)
+template<bool exclusion, bool evasion> int cut_search(int move, int hash_move, int score, int beta, int depth, int flags, int sp_init)
 {
 	if (exclusion)
 		return score;
 	Current->best = move;
-	if (depth >= 10)
+	if (!evasion && depth >= 10)
 		score = Min(beta, score);
-	hash_low(move, score, depth);
 	if (F(PieceAt(To(move))) && F(move & 0xE000))
 	{
-		if (Current->killer[1] != move && F(flags & FlagNoKillerUpdate))
-		{
-			for (int jk = N_KILLER; jk > 1; --jk)
-				Current->killer[jk] = Current->killer[jk - 1];
-			Current->killer[1] = move;
-		}
-		if (Current->stage == s_quiet && (move & 0xFFFF) == (*(Current->current - 1) & 0xFFFF))
-			HistoryGood(*(Current->current - 1), depth);	// restore history information
+		if (evasion)
+			UpdateCheckRef(move);
 		else
-			HistoryGood(move, depth);
-		if (move != hash_move && Current->stage == s_quiet)
-			for (auto p = Current->start; p < (Current->current - 1); ++p)
-				HistoryBad(*p, depth);
-		UpdateRef(move);
+		{
+			if (Current->killer[1] != move && F(flags & FlagNoKillerUpdate))
+			{
+				for (int jk = N_KILLER; jk > 1; --jk) Current->killer[jk] = Current->killer[jk - 1];
+				Current->killer[1] = move;
+			}
+			if (Current->stage == s_quiet && (move & 0xFFFF) == (*(Current->current - 1) & 0xFFFF))
+				HistoryGood(*(Current->current - 1), depth);	// restore history information
+			else
+				HistoryGood(move, depth);
+			if (move != hash_move && Current->stage == s_quiet && !sp_init)
+				for (auto p = Current->start; p < (Current->current - 1); ++p)
+					HistoryBad(*p, depth);
+			UpdateRef(move);
+		}
 	}
-	return score;
+	return hash_low(move, score, depth);
 };
 
 INLINE int RazoringThreshold(int score, int depth, int height)
@@ -7300,75 +7296,85 @@ INLINE int reduction_n(int depth, int n)
 	return msb(Square(Square(Square(uint64(n))))) / (6 + depth / 10);
 }
 
-template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
+struct LMR_
 {
-	int value, cnt, flag, moves_to_play, score, move, ext, hash_move, singular, played, high_depth, high_value, hash_value,
-		new_depth, move_back, hash_depth;
+	double scale_;
+	LMR_(int depth) : scale_(depth < 6 ? 0.0 : 0.11 + 0.12 / sqrt(double(depth)))
+	{
+		/*		if (F(Current->material & FlagUnusualMaterial))
+				{
+					int phase = Material[Current->material].phase;
+					if (phase < MIDDLE_PHASE)
+						scale_ *= double(phase + MAX_PHASE) / (MIDDLE_PHASE + MAX_PHASE);
+				}
+		*/
+	}
+	INLINE int operator()(int cnt) const
+	{
+		return scale_ > 0 && cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt - 1)))))) : 0;
+	}
+};
+
+
+struct HashResult_
+{
+	bool done_;
+	int score_;
+	int hashMove_;
+	int played_;
+	int singular_;
+};
+
+template<bool me, bool evasion> HashResult_ try_hash(int beta, int depth, int flags)
+{
+	auto abort = [](int score) {return HashResult_({ true, score, 0, 0, }); };
 	int height = (int)(Current - Data);
+	if (flags & FlagCallEvaluation)
+		evaluate();
+	if (!evasion && IsCheck(me))
+		return abort(scout<me, 0, 1>(beta, depth, flags & (~(FlagHaltCheck | FlagCallEvaluation))));
 
-	if (depth <= 1)
-		return q_search<me, 0>(beta - 1, beta, 1, flags);
-	if (flags & FlagHaltCheck)
+	if (!evasion)
 	{
-		if (height - MateValue >= beta)
-			return beta;
-		if (MateValue - height < beta)
-			return beta - 1;
-		HALT_CHECK;
-	}
-
-	if (exclusion)
-	{
-		cnt = high_depth = singular = played = 0;
-		flag = 1;
-		score = beta - 1;
-		high_value = MateValue;
-		hash_value = -MateValue;
-		hash_depth = -1;
-		hash_move = flags & 0xFFFF;
-	}
-	else
-	{
-		if (flags & FlagCallEvaluation)
-			evaluate();
-		if (IsCheck(me))
-			return scout_evasion<me, 0>(beta, depth, flags & (~(FlagHaltCheck | FlagCallEvaluation)));
-
-		value = Current->score - (90 + depth * 8 + Max(depth - 5, 0) * 32) * CP_SEARCH;
+		int value = Current->score - (90 + depth * 8 + Max(depth - 5, 0) * 32) * CP_SEARCH;
 		if (value >= beta && depth <= 13 && T(NonPawnKing(me)) && F(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())) && F(flags & (FlagReturnBestMove | FlagDisableNull)))
-			return value;
+			return abort(value);
 
 		value = Current->score + FutilityThreshold;
 		if (value < beta && depth <= 3)
-			return Max(value, q_search<me, 0>(beta - 1, beta, 1, FlagHashCheck | (flags & 0xFFFF)));
+			return abort(Max(value, q_search<me, 0>(beta - 1, beta, 1, FlagHashCheck | (flags & 0xFFFF))));
+	}
 
-		high_depth = 0;
-		high_value = MateValue;
-		hash_value = -MateValue;
-		hash_depth = -1;
-		Current->best = hash_move = flags & 0xFFFF;
-		if (GEntry* Entry = probe_hash())
+	int hash_move = Current->best = flags & 0xFFFF;
+	Current->best = hash_move;
+	int high_depth = 0, hash_depth = -1;
+	int high_value = MateValue, hash_value = -MateValue;
+	if (GEntry * Entry = probe_hash())
+	{
+		if (Entry->high < beta && Entry->high_depth >= depth)
+			return abort(Entry->high);
+		if (!evasion && Entry->high_depth > high_depth)
 		{
-			if (Entry->high < beta && Entry->high_depth >= depth)
-				return Entry->high;
-			if (Entry->high_depth > high_depth)
+			high_depth = Entry->high_depth;
+			high_value = Entry->high;
+		}
+		if (T(Entry->move) && Entry->low_depth > hash_depth)
+		{
+			Current->best = hash_move = Entry->move;
+			hash_depth = Entry->low_depth;
+			if (!evasion && Entry->low_depth)
+				hash_value = Entry->low;
+		}
+		if (Entry->low >= beta && Entry->low_depth >= depth)
+		{
+			if (Entry->move)
 			{
-				high_depth = Entry->high_depth;
-				high_value = Entry->high;
-			}
-			if (T(Entry->move) && Entry->low_depth > hash_depth)
-			{
-				Current->best = hash_move = Entry->move;
-				hash_depth = Entry->low_depth;
-				if (Entry->low_depth)
-					hash_value = Entry->low;
-			}
-			if (Entry->low >= beta && Entry->low_depth >= depth)
-			{
-				if (Entry->move)
+				Current->best = Entry->move;
+				if (F(PieceAt(To(Entry->move))) && F(Entry->move & 0xE000))
 				{
-					Current->best = Entry->move;
-					if (F(PieceAt(To(Entry->move))) && F(Entry->move & 0xE000))
+					if (evasion)
+						UpdateCheckRef(Entry->move);
+					else
 					{
 						if (Current->killer[1] != Entry->move && F(flags & FlagNoKillerUpdate))
 						{
@@ -7378,220 +7384,319 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 						}
 						UpdateRef(Entry->move);
 					}
-					return Entry->low;
 				}
-				if (F(flags & FlagReturnBestMove))
-					return Entry->low;
+				return abort(Entry->low);
 			}
+			if (evasion || F(flags & FlagReturnBestMove))
+				return abort(Entry->low);
 		}
+		if (evasion && Entry->low_depth >= depth - 8 && Entry->low > hash_value)
+			hash_value = Entry->low;
+	}
 
 #if TB
-		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
-			auto res = TBProbe(tb_probe_wdl, me);
-			if (res != TB_RESULT_FAILED) {
-				++INFO->tbHits;
-				hash_high(TbValues[res], TbDepth(depth));
-				hash_low(0, TbValues[res], TbDepth(depth));
-				return TbValues[res];
-			}
+	if (hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
+		auto res = TBProbe(tb_probe_wdl, me);
+		if (res != TB_RESULT_FAILED) {
+			INFO->tbHits++;
+			hash_high(TbValues[res], TbDepth(depth));
+			hash_low(0, TbValues[res], TbDepth(depth));
+			return abort(TbValues[res]);
 		}
+	}
 #endif
 
-		if (GPVEntry* PVEntry = (depth < 20 ? nullptr : probe_pv_hash()))
+	if (GPVEntry * PVEntry = (depth < 20 ? nullptr : probe_pv_hash()))
+	{
+		hash_low(PVEntry->move, PVEntry->value, PVEntry->depth);
+		hash_high(PVEntry->value, PVEntry->depth);
+		if (PVEntry->depth >= depth)
 		{
-			hash_low(PVEntry->move, PVEntry->value, PVEntry->depth);
-			hash_high(PVEntry->value, PVEntry->depth);
-			if (PVEntry->depth >= depth)
-			{
-				if (PVEntry->move)
-					Current->best = PVEntry->move;
-				if (F(flags & FlagReturnBestMove) && ((Current->ply <= PliesToEvalCut && PVEntry->ply <= PliesToEvalCut) || (Current->ply >= PliesToEvalCut && PVEntry->ply >= PliesToEvalCut)))
-					return PVEntry->value;
-			}
-			if (T(PVEntry->move) && PVEntry->depth > hash_depth)
-			{
-				Current->best = hash_move = PVEntry->move;
-				hash_depth = PVEntry->depth;
-				hash_value = PVEntry->value;
-			}
+			if (PVEntry->move)
+				Current->best = PVEntry->move;
+			if (F(flags & FlagReturnBestMove) && (Current->ply <= PliesToEvalCut) == (PVEntry->ply <= PliesToEvalCut))
+				return abort(PVEntry->value);
 		}
-		score = depth < 10 ? height - MateValue : beta - 1;
-		if (depth >= 12 && (F(hash_move) || hash_value < beta || hash_depth < depth - 12) && (high_value >= beta || high_depth < depth - 12) &&
-			F(flags & FlagDisableNull))
+		if (T(PVEntry->move) && PVEntry->depth > hash_depth)
 		{
-			new_depth = depth - 8;
-			value = scout<me, 0>(beta, new_depth, FlagHashCheck | FlagNoKillerUpdate | FlagDisableNull | FlagReturnBestMove | hash_move);
-			if (value >= beta)
-			{
-				if (Current->best)
-					hash_move = Current->best;
-				hash_depth = new_depth;
-				hash_value = beta;
-			}
+			Current->best = hash_move = PVEntry->move;
+			hash_depth = PVEntry->depth;
+			hash_value = PVEntry->value;
 		}
-		if (depth >= 4 && Current->score + 3 * CP_SEARCH >= beta && F(flags & (FlagDisableNull | FlagReturnBestMove)) && (high_value >= beta || high_depth < depth - 10) &&
-			(depth < 12 || (hash_value >= beta && hash_depth >= depth - 12)) && beta > -EvalValue && T(NonPawnKing(me)))
-		{
-			new_depth = depth - 8;
-			do_null();
-			value = -scout<opp, 0>(1 - beta, new_depth, FlagHashCheck);
-			undo_null();
-			if (value >= beta)
-			{
-				if (depth < 12)
-					hash_low(0, value, depth);
-				return value;
-			}
-		}
+	}
 
-		cnt = flag = singular = played = 0;
-		if (T(hash_move))
+	int score = depth < 10 ? height - MateValue : beta - 1;
+	if (evasion && hash_depth >= depth && hash_value > -EvalValue)
+		score = Min(beta - 1, Max(score, hash_value));
+	if (evasion && T(flags & FlagCallEvaluation))
+		evaluate();
+
+	if (!evasion && depth >= 12 && (F(hash_move) || hash_value < beta || hash_depth < depth - 12) && (high_value >= beta || high_depth < depth - 12) &&
+		F(flags & FlagDisableNull))
+	{
+		int new_depth = depth - 8;
+		int value = scout<me, 0, 0>(beta, new_depth, FlagHashCheck | FlagNoKillerUpdate | FlagDisableNull | FlagReturnBestMove | hash_move);
+		if (value >= beta)
 		{
-			move = hash_move;
-			if (is_legal<me>(move) && !IsIllegal(me, move))
+			if (Current->best)
+				hash_move = Current->best;
+			hash_depth = new_depth;
+			hash_value = beta;
+		}
+	}
+	if (!evasion && depth >= 4 && Current->score + 3 * CP_SEARCH >= beta && F(flags & (FlagDisableNull | FlagReturnBestMove)) && (high_value >= beta || high_depth < depth - 10) &&
+		(depth < 12 || (hash_value >= beta && hash_depth >= depth - 12)) && beta > -EvalValue && T(NonPawnKing(me)))
+	{
+		int new_depth = depth - 8;
+		do_null();
+		int value = -scout<opp, 0, 0>(1 - beta, new_depth, FlagHashCheck);
+		undo_null();
+		if (value >= beta)
+		{
+			if (depth < 12)
+				hash_low(0, value, depth);
+			return abort(value);
+		}
+	}
+
+	if (evasion)
+	{
+		Current->mask = Filled;
+		if (depth < 4 && Current->score - 10 * CP_SEARCH < beta)
+		{
+			score = Current->score - 10 * CP_SEARCH;
+			Current->mask = capture_margin_mask<me>(beta - 1, &score);
+		}
+		(void)gen_evasions<me>(Current->moves);
+		if (F(Current->moves[0]))
+			return abort(score);
+	}
+
+	if (T(hash_move))
+	{
+		int singular = 0;
+		auto succeed = [&](int score) {return HashResult_({ true, score, hash_move, 1, singular }); };
+		int move = hash_move;
+		if (is_legal<me>(move) && !IsIllegal(me, move))
+		{
+			int ext = evasion && F(Current->moves[1])
+				? 2
+				: (is_check<me>(move) ? check_extension<me, 0> : extension<me, 0>)(move, depth);
+			if (ext < 2 && depth >= 16 && hash_value >= beta)
 			{
-				++cnt;
-				ext = extension<me>(0, move, depth);
-				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
+				int test_depth = depth - Min(12, depth / 2);
+				if (hash_depth >= test_depth)
 				{
 					int margin_one = beta - ExclSingle(depth);
 					int margin_two = beta - ExclDouble(depth);
 					int prev_ext = ExtFromFlag(flags);
-					singular = SingularExtension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
-					if (singular)
+					if (singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, test_depth, hash_move))
 						ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
 				}
-				int to = To(move);
-				if (depth < 16 && to == To(Current->move) && T(PieceAt(to)))	// recapture extension
-					ext = Max(ext, 2);
-				new_depth = depth - 2 + ext;
-				do_move<me>(move);
-				value = -scout<opp, 0>(1 - beta, new_depth,
-					FlagNeatSearch | ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0) | ExtToFlag(ext));
-				undo_move<me>(move);
-				++played;
-				if (value > score)
-				{
-					score = value;
-					if (value >= beta)
-						return cut_search<exclusion>(move, hash_move, score, beta, depth, flags);
-				}
 			}
+			int to = To(move);
+			if (depth < 16 && to == To(Current->move) && T(PieceAt(to)))	// recapture extension
+				ext = Max(ext, 2);
+			int new_depth = depth - 2 + ext;
+			do_move<me>(move);
+			if (evasion)
+				evaluate();
+			if (evasion && T(Current->att[opp] & King(me)))
+			{
+				undo_move<me>(move);
+				return HashResult_({ false, score, hash_move, 0 });
+			}
+			int new_flags = (evasion ? FlagNeatSearch ^ FlagCallEvaluation : FlagNeatSearch)
+				| ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0)
+				| ExtToFlag(ext);
+
+			int value = -scout<opp, 0, 0>(1 - beta, new_depth, new_flags);
+			undo_move<me>(move);
+			if (value > score)
+				score = value;
+			return HashResult_({ false, score, hash_move, 1, singular });
+		}
+	}
+	return HashResult_({ false, score, hash_move, 0, 0 });
+}
+
+template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, int flags)
+{
+	int height = (int)(Current - Data);
+	if (height > 100)
+		++beta;
+
+	if (depth <= 1)
+		return (evasion ? q_evasion<me, 0> : q_search<me, 0>)(beta - 1, beta, 1, flags);
+	int score = height - MateValue;
+	if (flags & FlagHaltCheck)
+	{
+		if (score >= beta)
+			return beta;
+		if (MateValue - height < beta)
+			return beta - 1;
+		if (!evasion)
+		{
+			HALT_CHECK;
 		}
 	}
 
-	// done with hash move
-	Current->killer[0] = 0;
-	Current->stage = stage_search;
-	Current->gen_flags = 0;
-	Current->ref[0] = RefM(Current->move).ref[0];
-	Current->ref[1] = RefM(Current->move).ref[1];
-	move_back = 0;
+	int hash_move = flags & 0xFFFF, cnt = 0, played = 0;
+	int do_split = 0, sp_init = 0;
+	int singular = 0;
+	if (exclusion)
+	{
+		score = beta - 1;
+		if (evasion)
+		{
+			(void)gen_evasions<me>(Current->moves);
+			if (F(Current->moves[0]))
+				return score;
+		}
+	}
+	else
+	{
+		HashResult_ hash_info = try_hash<me, evasion>(beta, depth, flags);
+		score = hash_info.score_;
+		if (hash_info.done_)
+			return score;
+		hash_move = hash_info.hashMove_;
+		if (score >= beta)
+			return cut_search<exclusion, evasion>(hash_move, hash_move, score, beta, depth, flags, 0);
+		cnt = played = hash_info.played_;
+		singular = hash_info.singular_;
+	}
+
+	// done with hash 
+	bool can_hash_d0 = !exclusion && !evasion;
+	int margin = 0;
+	if (evasion)
+	{
+		Current->ref[0] = RefM(Current->move).check_ref[0];
+		Current->ref[1] = RefM(Current->move).check_ref[1];
+		mark_evasions(Current->moves);
+	}
+	else
+	{
+		Current->killer[0] = 0;
+		Current->stage = stage_search;
+		Current->gen_flags = 0;
+		Current->ref[0] = RefM(Current->move).ref[0];
+		Current->ref[1] = RefM(Current->move).ref[1];
+		margin = RazoringThreshold(Current->score, depth, height);
+		if (margin < beta)
+		{
+			can_hash_d0 = false;
+			score = Max(margin, score);
+			Current->stage = stage_razoring;
+			Current->mask = Piece(opp);
+			int value = margin + 200 * CP_SEARCH;
+			if (value < beta)
+			{
+				score = Max(value, score);
+				Current->mask ^= Pawn(opp);
+			}
+		}
+		Current->moves[0] = 0;
+		if (depth <= 5)
+			Current->gen_flags |= FlagNoBcSort;
+	}
+	int moves_to_play = 3 + Square(depth) / 6;
+	Current->current = Current->moves;
+
+	bool forced = evasion && F(Current->moves[1]);
+	int move_back = 0;
 	if (beta > 0 && Current->ply >= 2 && F((Current - 1)->move & 0xF000))
 	{
 		move_back = (To((Current - 1)->move) << 6) | From((Current - 1)->move);
 		if (PieceAt(To(move_back)))
 			move_back = 0;
 	}
-	moves_to_play = 3 + Square(depth) / 6;
-	int margin = RazoringThreshold(Current->score, depth, height);
-	if (margin < beta)
-	{
-		flag = 1;
-		score = Max(margin, score);
-		Current->stage = stage_razoring;
-		Current->mask = Piece(opp);
-		value = margin + (200 + 6 * depth) * CP_SEARCH;
-		if (value < beta)
-		{
-			score = Max(value, score);
-			Current->mask ^= Pawn(opp);
-		}
-	}
-	Current->current = Current->moves;
-	Current->moves[0] = 0;
-	if (depth <= 5)
-		Current->gen_flags |= FlagNoBcSort;
 
-	while (move = get_move<me, 0>(depth))
+	LMR_ reduction_n(depth);
+	while (int move = evasion ? pick_move() : get_move<me, 0>(depth))
 	{
 		if (move == hash_move)
 			continue;
 		if (IsIllegal(me, move))
 			continue;
 		++cnt;
-		if (move == move_back)
+		if ((move & 0xFFFF) == move_back && IsRepetition(beta, move))
 		{
 			score = Max(0, score);
 			continue;
 		}
-		bool check;
-		ext = extension<me>(0, move, depth, &check);
-		new_depth = depth - 2 + ext;
+		bool check = (!evasion && Current->stage == r_checks) || is_check<me>(move);
+		int ext;
+		if (evasion && forced)
+			ext = 2;
+		else if (check && see<me>(move, 0, SeeValue))
+			ext = check_extension<me, 0>(move, depth);
+		else
+			ext = extension<me, 0>(move, depth);
+		int new_depth = depth - 2 + ext;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
-			if (!is_killer(move))
+			if (evasion || !is_killer(move))
 			{
 				if (!check && cnt > moves_to_play)
 				{
 					Current->gen_flags &= ~FlagSort;
 					continue;
 				}
-				if (depth >= 6)
+				if (!evasion)
 				{
-					int reduction = reduction_n(depth, cnt);
-					if (move == Current->ref[0] || move == Current->ref[1])
+					int reduction = reduction_n(cnt);
+					if (!evasion && move == Current->ref[0] || move == Current->ref[1])
 						reduction = Max(0, reduction - 1);
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 						reduction += reduction / 2;
-					if (new_depth - reduction > 3 && !see<me>(move, -SeeThreshold, SeeValue))
+					if (!evasion && new_depth - reduction > 3 && !see<me>(move, -SeeThreshold, SeeValue))
 						reduction += 2;
-					if (reduction == 1 && new_depth > 4)
+					if (!evasion && reduction == 1 && new_depth > 4)
 						reduction = cnt > 3 ? 2 : 0;
-					new_depth = Max(3, new_depth - reduction);
+					new_depth = max(new_depth - reduction, min(depth - 3, 3));
 				}
 			}
 			if (!check)
 			{
-				if ((value = Current->score + DeltaM(move) + 10 * CP_SEARCH) < beta && depth <= 3)
+				int value = Current->score + DeltaM(move) + 10 * CP_SEARCH;
+				if (value < beta && depth <= 3)
 				{
 					score = Max(value, score);
 					continue;
 				}
-				if (cnt > 7 && (value = margin + DeltaM(move) - 25 * CP_SEARCH * msb(cnt)) < beta && depth <= 19)
+				if (!evasion && cnt > 7 && (value = margin + DeltaM(move) - 25 * CP_SEARCH * msb(cnt)) < beta && depth <= 19)
 				{
 					score = Max(value, score);
 					continue;
 				}
 			}
-			if (depth <= 9 && T(NonPawnKing(me)) && !see<me>(move, -SeeThreshold, SeeValue))
+			if (!evasion && depth <= 9 && T(NonPawnKing(me)) && !see<me>(move, -SeeThreshold, SeeValue))
 				continue;
 		}
-		else
+		else if (!evasion && !check && depth <= 9)
 		{
-			if (Current->stage == r_cap)
-			{
-				if (!check && depth <= 9 && !see<me>(move, -SeeThreshold, SeeValue))
-					continue;
-			}
-			else if (Current->stage == s_bad_cap && !check && depth <= 5)
+			if ((Current->stage == s_bad_cap && depth <= 5)
+				|| (Current->stage == r_cap && !see<me>(move, -SeeThreshold, SeeValue)))
 				continue;
 		}
 
 		do_move<me>(move);
-		value = -scout<opp, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
+		int value = -scout<opp, 0, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));	// POSTPONED -- call scout_evasion here if check?
 		if (value >= beta && new_depth < depth - 2 + ext)
-			value = -scout<opp, 0>(1 - beta, depth - 2 + ext, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
+			value = -scout<opp, 0, 0>(1 - beta, depth - 2 + ext, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
 		undo_move<me>(move);
 		++played;
 		if (value > score)
 		{
 			score = value;
 			if (value >= beta)
-				return cut_search<exclusion>(move, hash_move, score, beta, depth, flags);
+				return cut_search<exclusion, evasion>(move, hash_move, score, beta, depth, flags, sp_init);
 		}
 	}
-	if (F(cnt) && F(flag))
+
+	if (can_hash_d0 && F(cnt))
 	{
 		hash_high(0, 127);
 		hash_low(0, 0, 127);
@@ -7602,219 +7707,6 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 	return score;
 }
 
-template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int flags)
-{
-	int value, score, pext, move, cnt, hash_value = -MateValue, hash_depth, hash_move, new_depth, ext, moves_to_play;
-	int height = (int)(Current - Data);
-
-	if (depth <= 1)
-		return q_evasion<me, 0>(beta - 1, beta, 1, flags);
-	score = height - MateValue;
-	if (flags & FlagHaltCheck)
-	{
-		if (score >= beta)
-			return beta;
-		if (MateValue - height < beta)
-			return beta - 1;
-		HALT_CHECK;
-	}
-
-	auto cut = [&](int move, int score)
-	{
-		if (exclusion)
-			return score;
-		Current->best = move;
-		if (F(PieceAt(To(move))) && F(move & 0xE000))
-		{
-			UpdateCheckRef(move);
-		}
-		return hash_low(move, score, depth);
-	};
-
-	hash_depth = -1;
-	hash_move = flags & 0xFFFF;
-	if (exclusion)
-	{
-		cnt = pext = 0;
-		score = beta - 1;
-		(void)gen_evasions<me>(Current->moves);
-		if (F(Current->moves[0]))
-			return score;
-	}
-	else
-	{
-		Current->best = hash_move;
-		if (GEntry* Entry = probe_hash())
-		{
-			if (Entry->high < beta && Entry->high_depth >= depth)
-				return Entry->high;
-			if (T(Entry->move) && Entry->low_depth > hash_depth)
-			{
-				Current->best = hash_move = Entry->move;
-				hash_depth = Entry->low_depth;
-			}
-			if (Entry->low >= beta && Entry->low_depth >= depth)
-			{
-				if (Entry->move)
-				{
-					Current->best = Entry->move;
-					if (F(PieceAt(To(Entry->move))) && F(Entry->move & 0xE000))
-					{
-						UpdateCheckRef(Entry->move);
-					}
-				}
-				return Entry->low;
-			}
-			if (Entry->low_depth >= depth - 8 && Entry->low > hash_value)
-				hash_value = Entry->low;
-		}
-
-		if (depth >= 20)
-			if (GPVEntry* PVEntry = probe_pv_hash())
-			{
-				hash_low(PVEntry->move, PVEntry->value, PVEntry->depth);
-				hash_high(PVEntry->value, PVEntry->depth);
-				if (PVEntry->depth >= depth)
-				{
-					if (PVEntry->move)
-						Current->best = PVEntry->move;
-					return PVEntry->value;
-				}
-				if (T(PVEntry->move) && PVEntry->depth > hash_depth)
-				{
-					Current->best = hash_move = PVEntry->move;
-					hash_depth = PVEntry->depth;
-					hash_value = PVEntry->value;
-				}
-			}
-#if TB
-		if (hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
-			auto res = TBProbe(tb_probe_wdl, me);
-			if (res != TB_RESULT_FAILED) {
-				++INFO->tbHits;
-				hash_high(TbValues[res], TbDepth(depth));
-				hash_low(0, TbValues[res], TbDepth(depth));
-				return TbValues[res];
-			}
-		}
-#endif
-
-		if (hash_depth >= depth && hash_value > -EvalValue)
-			score = Min(beta - 1, Max(score, hash_value));
-		if (flags & FlagCallEvaluation)
-			evaluate();
-
-		Current->mask = Filled;
-		if (Current->score - 10 * CP_SEARCH < beta && depth <= 3)
-		{
-			score = Current->score - 10 * CP_SEARCH;
-			Current->mask = capture_margin_mask<me>(beta - 1, &score);
-		}
-		cnt = 0;
-		(void)gen_evasions<me>(Current->moves);
-		if (F(Current->moves[0]))
-			return score;
-		pext = 0;
-		if (F(Current->moves[1]))
-			pext = 2;
-
-		if (T(hash_move))
-		{
-			move = hash_move;
-			if (is_legal<me>(move) && !IsIllegal(me, move))
-			{
-				++cnt;
-				ext = Max(pext, extension<me>(0, move, depth));
-				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
-				{
-					int margin_one = beta - ExclSingle(depth);
-					int margin_two = beta - ExclDouble(depth);
-					int prev_ext = ExtFromFlag(flags);
-					int singular = SingularExtension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
-					if (singular)
-						ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
-				}
-				new_depth = depth - 2 + ext;
-				do_move<me>(move);
-				evaluate();
-				if (Current->att[opp] & King(me))
-				{
-					undo_move<me>(move);
-					--cnt;
-				}
-				else
-				{
-					value = -scout<opp, 0>(1 - beta, new_depth,
-						FlagHaltCheck | FlagHashCheck | ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0) | ExtToFlag(ext));
-					undo_move<me>(move);
-					if (value > score)
-					{
-						score = value;
-						if (value >= beta)
-							return cut(move, score);
-					}
-				}
-			}
-		}
-	}
-
-	// done with hash move
-	moves_to_play = 3 + ((depth * depth) / 6);
-	Current->ref[0] = RefM(Current->move).check_ref[0];
-	Current->ref[1] = RefM(Current->move).check_ref[1];
-	mark_evasions(Current->moves);
-	Current->current = Current->moves;
-	while (move = pick_move())
-	{
-		if (move == hash_move)
-			continue;
-		if (IsIllegal(me, move))
-			continue;
-		++cnt;
-		if (IsRepetition(beta, move))
-		{
-			score = Max(0, score);
-			continue;
-		}
-		bool check;
-		ext = Max(pext, extension<me>(0, move, depth, &check));
-		new_depth = depth - 2 + ext;
-		if (F(PieceAt(To(move))) && F(move & 0xE000))
-		{
-			if (!check)
-			{
-				if (cnt > moves_to_play)
-					continue;
-				if ((value = Current->score + DeltaM(move) + 10 * CP_SEARCH) < beta && depth <= 3)
-				{
-					score = Max(value, score);
-					continue;
-				}
-			}
-			if (depth >= 6 && cnt > 3)
-			{
-				int reduction = reduction_n(depth, cnt);
-				if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
-					reduction += reduction / 2;
-				new_depth = Max(3, new_depth - reduction);
-			}
-		}
-		do_move<me>(move);
-		value = -scout<opp, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
-		if (value >= beta && new_depth < depth - 2 + ext)
-			value = -scout<opp, 0>(1 - beta, depth - 2 + ext, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
-		undo_move<me>(move);
-		if (value > score)
-		{
-			score = value;
-			if (value >= beta)
-				return cut(move, score);
-		}
-	}
-	if (F(exclusion))
-		hash_high(score, depth);
-	return score;
-}
 
 template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int flags)
 {
@@ -7914,7 +7806,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				margin = alpha - (CP_SEARCH << (i + 3));
 				if (T(hash_move) && hash_depth >= new_depth && hash_value >= margin)
 					break;
-				value = scout<me, 0>(margin, new_depth, FlagHashCheck | FlagNoKillerUpdate | FlagDisableNull | FlagReturnBestMove | hash_move);
+				value = scout<me, 0, 0>(margin, new_depth, FlagHashCheck | FlagNoKillerUpdate | FlagDisableNull | FlagReturnBestMove | hash_move);
 				accept = value >= margin;
 			}
 		}
@@ -7947,13 +7839,13 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			if (INFO->id == 0)
 				send_curr_move(move, cnt);
 		}
-		ext = Max(pext, extension<me>(1, move, depth));
+		ext = Max(pext, extension<me, 1>(move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
 			int margin_one = hash_value - ExclSingle(depth);
 			int margin_two = hash_value - ExclDouble(depth);
 			int prev_ext = ExtFromFlag(flags);
-			singular = SingularExtension<me>(root ? 0 : ext, root ? 0 : prev_ext, margin_one, margin_two, new_depth, hash_move);
+			singular = singular_extension<me>(root ? 0 : ext, root ? 0 : prev_ext, margin_one, margin_two, new_depth, hash_move);
 			if (singular)
 			{
 				ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
@@ -8040,7 +7932,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		}
 		if (IsRepetition(alpha + 1, move))
 			continue;
-		ext = Max(pext, extension<me>(1, move, depth));
+		ext = Max(pext, extension<me, 1>(move, depth));
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
@@ -8056,7 +7948,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		if (new_depth <= 1)
 			value = -pv_search<opp, 0>(-beta, -alpha, new_depth, ExtToFlag(ext));
 		else
-			value = -scout<opp, 0>(-alpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
+			value = -scout<opp, 0, 0>(-alpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value > alpha && new_depth > 1)
 		{
 			if (root)
@@ -8351,7 +8243,7 @@ template<bool me> int multipv(int depth)
 	{
 		MultiPV[cnt] = move;
 		send_curr_move(move, cnt);
-		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
+		new_depth = depth - 2 + (ext = extension<me, 1>(move, depth));
 		do_move<me>(move);
 		value = -pv_search<opp, 0>(-MateValue, MateValue, new_depth, ExtToFlag(ext));
 		MultiPV[cnt] |= value << 16;
@@ -8374,9 +8266,9 @@ template<bool me> int multipv(int depth)
 	{
 		MultiPV[cnt] = move;
 		send_curr_move(move, cnt);
-		new_depth = depth - 2 + (ext = extension<me>(1, move, depth));
+		new_depth = depth - 2 + (ext = extension<me, 1>(move, depth));
 		do_move<me>(move);
-		value = -scout<opp, 0>(-low, new_depth, FlagNeatSearch | ExtToFlag(ext));
+		value = -scout<opp, 0, 0>(-low, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value > low)
 			value = -pv_search<opp, 0>(-MateValue, -low, new_depth, ExtToFlag(ext));
 		MultiPV[cnt] |= value << 16;
