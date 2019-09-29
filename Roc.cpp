@@ -6570,8 +6570,8 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 	int from = From(move);
 	if (HasBit(Current->passer, from))
 	{
-		if (T(Current->passer & Pawn(opp)) && (pv || depth < 10))
-			return 2;
+		//if (T(Current->passer & Pawn(opp)) && (pv || depth < 10))
+		//	return 2;
 		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][RankOf(from)] & Pawn(Current->turn))))
 			return pv ? 2 : 1;
 		//int rank = OwnRank(me, from);
@@ -8097,19 +8097,11 @@ template<bool me> bool IsThreat(int move)
 
 struct LMR_
 {
-	double scale_;
-	LMR_(int depth) : scale_(depth < 4 ? 0.0 : 0.05 + 0.53 / sqrt(double(depth)) - 2.99 / Square(double(depth)))
-	{
-/*		if (F(Current->material & FlagUnusualMaterial))
-		{
-			int phase = Material[Current->material].phase;
-			if (phase < MIDDLE_PHASE)
-				scale_ *= double(phase + MAX_PHASE) / (MIDDLE_PHASE + MAX_PHASE);
-		}
-*/	}
+	bool use_;
+	LMR_(int depth) : use_(depth >= 6) {}
 	INLINE int operator()(int cnt) const
 	{
-		return scale_ > 0 && cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt - 1)))))) : 0;
+		return use_ && cnt > 2 ? msb(cnt) : 0;
 	}
 };
 
