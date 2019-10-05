@@ -6141,8 +6141,17 @@ template<class POP> void evaluation()
 			EI.mul = EI.material->mul[White];
 			if (EI.material->eval[White] && !eval_stalemate<White>(EI))
 				EI.material->eval[White](EI, pop.Imp());
-			//else if (EI.mul <= 32)
-			//	EI.mul = Min(EI.mul, 37 - clx / 8);
+			else if (EI.mul <= 32)
+			{
+				EI.mul = Min(EI.mul, 37 - clx / 8);
+				if (T(Current->passer & Pawn(White)) && T(Current->passer & Pawn(Black)))
+				{
+					int rb = OwnRank<Black>(lsb(Current->passer & Pawn(Black))), rw = OwnRank<White>(msb(Current->passer & Pawn(White)));
+					if (rb > rw)
+						EI.mul = Min(EI.mul, 43 - Square(rb) / 2);
+				}
+			}
+
 			Current->score -= (Min<int>(Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64;
 		}
 		else if (Current->score < 0)
@@ -6150,8 +6159,16 @@ template<class POP> void evaluation()
 			EI.mul = EI.material->mul[Black];
 			if (EI.material->eval[Black] && !eval_stalemate<Black>(EI))
 				EI.material->eval[Black](EI, pop.Imp());
-			//else if (EI.mul <= 32)
-			//	EI.mul = Min(EI.mul, 37 - clx / 8);
+			else if (EI.mul <= 32)
+			{
+				EI.mul = Min(EI.mul, 37 - clx / 8);
+				if (T(Current->passer & Pawn(White)) && T(Current->passer & Pawn(Black)))
+				{
+					int rb = OwnRank<Black>(lsb(Current->passer & Pawn(Black))), rw = OwnRank<White>(msb(Current->passer & Pawn(White)));
+					if (rw > rb)
+						EI.mul = Min(EI.mul, 43 - Square(rw) / 2);
+				}
+			}
 			Current->score += (Min<int>(-Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64;
 		}
 		else
@@ -7280,14 +7297,15 @@ template<bool me> int* gen_quiet_moves(int* list)
 	}
 
 	uint64 free = ~occ;
-	auto pTarget = PawnJoins<me>();
-	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
+	auto pTarget = PawnJoins<me>(), pOpp = Pawn(opp);
+	auto pFlag = [&](int to) {return HasBit(pTarget, to) || F(PCone[me][to] & pOpp) ? FlagCastling : 0; };
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
+		auto passerFlag = HasBit(Current->passer, to - Push[me]) ? FlagCastling : 0;
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], pFlag(to + Push[me]));
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, pFlag(to));
+			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passerFlag | pFlag(to + Push[me]));
+		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passerFlag | pFlag(to));
 	}
 
 	for (u = Knight(me); T(u); Cut(u))
@@ -7342,7 +7360,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 template <bool me> int* gen_checks(int* list)
 {
 	int king, from;
-	uint64 u, v, target, b_target, r_target, clear;
+	uint64 u, v, target, clear;
 
 	clear = ~(Piece(me) | Current->mask);
 	king = lsb(King(opp));
@@ -7386,9 +7404,57 @@ template <bool me> int* gen_checks(int* list)
 	}
 
 	const uint64 nonDiscover = ~(Current->xray[me] & Piece(me));  // exclude pieces already checked
+	const uint64 b_target = BishopAttacks(king, PieceAll()) & clear;
+	const uint64 r_target = RookAttacks(king, PieceAll()) & clear;
+	uint64 hanging = (Piece(opp) ^ King(opp)) & ~Current->att[opp];
+
+	for (u = Queen(me) & nonDiscover; T(u); Cut(u))
+	{
+		int from = lsb(u);
+		uint64 att0 = QueenAttacks(from, PieceAll());
+		for (v = att0 & (b_target | r_target); T(v); Cut(v))
+		{
+			int to = lsb(v);
+			int flags = T(QueenAttacks(to, PieceAll()) & hanging & ~att0) ? MvvLva[IQueen[me]][IPawn[opp]] : 0;
+			list = AddCaptureP(list, IQueen[me], from, to, flags);
+		}
+	}
+
+	hanging |= Queen(opp);
+	for (u = Rook(me) & nonDiscover; T(u); Cut(u))
+	{
+		int from = lsb(u);
+		uint64 att0 = RookAttacks(from, PieceAll());
+		for (v = att0 & r_target; T(v); Cut(v))
+		{
+			int to = lsb(v);
+			int flags = T(RookAttacks(to, PieceAll()) & hanging & ~att0) ? MvvLva[IRook[me]][IPawn[opp]] : 0;
+			list = AddCaptureP(list, IRook[me], from, to, flags);
+		}
+	}
+
+	hanging |= Rook(opp);
+	for (u = Board->bb[(T(King(opp) & LightArea) ? WhiteLight : WhiteDark) | me] & nonDiscover; T(u); Cut(u))
+	{
+		int from = lsb(u);
+		uint64 att0 = BishopAttacks(from, PieceAll());
+		for (v = att0 & b_target; T(v); Cut(v))
+		{
+			int to = lsb(v);
+			int flags = T(BishopAttacks(to, PieceAll()) & hanging & ~att0) ? MvvLva[ILight[me]][IPawn[opp]] : 0;
+			list = AddCapture(list, from, to, flags);
+		}
+	}
 	for (u = Knight(me) & NAttAtt[king] & nonDiscover; T(u); Cut(u))
-		for (v = NAtt[king] & NAtt[lsb(u)] & clear; T(v); Cut(v))
-			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
+	{
+		int from = lsb(u);
+		for (v = NAtt[king] & NAtt[from] & clear; T(v); Cut(v))
+		{
+			int to = lsb(v);
+			int flags = T(NAtt[to] & hanging) ? MvvLva[IKnight[me]][IPawn[opp]] : 0;
+			list = AddCaptureP(list, IKnight[me], from, to, flags);
+		}
+	}
 
 	for (u = KAttAtt[king] & Pawn(me) & (~OwnLine(me, 6)) & nonDiscover; T(u); Cut(u))
 	{
@@ -7397,28 +7463,6 @@ template <bool me> int* gen_checks(int* list)
 			list = AddCaptureP(list, IPawn[me], from, lsb(v), 0);
 		if (F(PieceAt(from + Push[me])) && HasBit(PAtt[opp][king], from + Push[me]))
 			list = AddMove(list, from, from + Push[me], 0, 0);
-	}
-
-	b_target = BishopAttacks(king, PieceAll()) & clear;
-	r_target = RookAttacks(king, PieceAll()) & clear;
-	for (u = Board->bb[(T(King(opp) & LightArea) ? WhiteLight : WhiteDark) | me] & nonDiscover; T(u); Cut(u))
-		for (v = BishopAttacks(lsb(u), PieceAll()) & b_target; T(v); Cut(v))
-			list = AddCapture(list, lsb(u), lsb(v), 0);
-	for (u = Rook(me) & nonDiscover; T(u); Cut(u))
-		for (v = RookAttacks(lsb(u), PieceAll()) & r_target; T(v); Cut(v))
-			list = AddCaptureP(list, IRook[me], lsb(u), lsb(v), 0);
-	for (u = Queen(me) & nonDiscover; T(u); Cut(u))
-	{
-		//uint64 contact = KAtt[king];
-		int from = lsb(u);
-		for (v = QueenAttacks(from, PieceAll()) & (b_target | r_target); T(v); Cut(v))
-		{
-			int to = lsb(v);
-			//if (HasBit(contact, to))
-			//	list = AddCaptureP(list, IQueen[me], from, to, 0, T(Boundary & King(opp)) || OwnRank<me>(to) == 7 ? IPawn[opp] : IRook[opp]);
-			//else
-			list = AddCaptureP(list, IQueen[me], from, to, 0);
-		}
 	}
 
 	if (OwnRank<me>(king) == 4)
