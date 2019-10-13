@@ -5556,42 +5556,21 @@ template <class POP> INLINE void eval_pawn_structure(const GEvalInfo& EI, GPawnE
 	PawnEntry->score = PEI.score;
 }
 
-template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
+template<bool me> INLINE void eval_queens_xray(GEvalInfo& EI)
 {
-	POP pop;
-	for (uint64 b, u = Queen(me); T(u); u ^= b)
+	for (uint64 u = Queen(me); T(u); Cut(u))
 	{
 		int sq = lsb(u);
-		b = Bit(sq);
-		uint64 att = QueenAttacks(sq, EI.occ);
-		Current->att[me] |= att;
-
-		uint64 control = att & EI.free[me];
-		IncV(EI.score, MobQueen[0][pop(control)]);
-		IncV(EI.score, MobQueen[1][pop(control & KingLocus[EI.king[opp]])]);
-		if (control & Pawn(opp))
-			IncV(EI.score, Ca4(Tactical, TacticalMajorPawn));
-		if (control & Minor(opp))
-			IncV(EI.score, Ca4(Tactical, TacticalMajorMinor));
-		if (att & EI.area[me])
-			IncV(EI.score, Ca4(KingDefence, KingDefQueen));
-		uint64 att_opp = att & EI.area[opp];
-		if (att_opp)
-		{
-			int eff = F(Single(att_opp)) + T(EI.free[me] & KingLocus[EI.king[opp]] & b) + T(Current->patt[me] & att_opp);
-			EI.king_att[me] += eff ? KingQAttack + (eff - 1) * KingAttack : KingQAttack1;
-			for (uint64 v = att_opp; T(v); Cut(v))
-				if (FullLine[sq][lsb(v)] & att & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq])))
-					EI.king_att[me]++;
-		}
-
-		uint64 in_ray;
-		if (T(QMask[sq] & King(opp)) && T(in_ray = Between[EI.king[opp]][sq] & EI.occ))
+		if (F(QMask[sq] & King(opp)))
+			continue;
+		if (uint64 in_ray = Between[EI.king[opp]][sq] & EI.occ)
 		{
 			if (Single(in_ray))
 			{
 				Current->xray[me] |= in_ray;
-				int square = lsb(in_ray), katt = F(att_opp);
+				uint64 att = QueenAttacks(sq, EI.occ);
+				int katt = F(att & EI.area[opp]);	// otherwise, we already counted king attack
+				int square = lsb(in_ray);
 				int piece = PieceAt(square);
 				if ((piece & 1) == me)
 				{
@@ -5624,40 +5603,55 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 	}
 }
 
-template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
+template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 {
 	POP pop;
-	for (uint64 b, u = Rook(me); T(u); u ^= b)
+	for (uint64 b, u = Queen(me); T(u); u ^= b)
 	{
 		int sq = lsb(u);
 		b = Bit(sq);
-		uint64 att = RookAttacks(sq, EI.occ);
+		uint64 att = QueenAttacks(sq, EI.occ);
 		Current->att[me] |= att;
-		Current->threat |= att & Queen(opp);
+
 		uint64 control = att & EI.free[me];
-		IncV(EI.score, MobRook[0][pop(control)]);
-		IncV(EI.score, MobRook[1][pop(control & KingLocus[EI.king[opp]])]);
+		if (Current->xray[opp] & b)
+			control &= FullLine[sq][EI.king[me]];
+		IncV(EI.score, MobQueen[0][pop(control)]);
+		IncV(EI.score, MobQueen[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Ca4(Tactical, TacticalMajorPawn));
 		if (control & Minor(opp))
 			IncV(EI.score, Ca4(Tactical, TacticalMajorMinor));
+		if (att & EI.area[me])
+			IncV(EI.score, Ca4(KingDefence, KingDefQueen));
 		uint64 att_opp = att & EI.area[opp];
 		if (att_opp)
 		{
-			int eff = F(Single(att_opp)) + T(EI.free[me] & KingLocus[EI.king[opp]] & b);
-			EI.king_att[me] += eff ? KingRAttack + (eff - 1) * KingAttack : KingRAttack1;
+			int eff = F(Single(att_opp)) + T(EI.free[me] & KingLocus[EI.king[opp]] & b) + T(Current->patt[me] & att_opp);
+			EI.king_att[me] += eff ? KingQAttack + (eff - 1) * KingAttack : KingQAttack1;
 			for (uint64 v = att_opp; T(v); Cut(v))
-				if (FullLine[sq][lsb(v)] & att & Major(me))
+				if (FullLine[sq][lsb(v)] & att & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq])))
 					EI.king_att[me]++;
 		}
+	}
+}
 
-		uint64 in_ray;
-		if (T(RMask[sq] & King(opp)) && T(in_ray = Between[EI.king[opp]][sq] & EI.occ))
+template <bool me> INLINE void eval_rooks_xray(GEvalInfo& EI)
+{
+	for (uint64 u = Rook(me); T(u); Cut(u))
+	{
+		int sq = lsb(u);
+		if (F(RMask[sq] & King(opp)))
+			continue;
+		
+		if (uint64 in_ray = Between[EI.king[opp]][sq] & EI.occ)
 		{
 			if (Single(in_ray))
 			{
 				Current->xray[me] |= in_ray;
-				int square = lsb(in_ray), katt = F(att_opp);
+				uint64 att = RookAttacks(sq, EI.occ);
+				int katt = F(att & EI.area[opp]);	// else we have already contributed to king attacks
+				int square = lsb(in_ray);
 				int piece = PieceAt(square);
 				if ((piece & 1) == me)
 				{
@@ -5690,6 +5684,37 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 			}
 			else if (F(in_ray & ~Minor(opp) & ~Queen(opp)))
 				IncV(EI.score, Ca4(KingRay, RKingRay));
+		}
+	}
+}
+
+template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
+{
+	POP pop;
+	for (uint64 b, u = Rook(me); T(u); u ^= b)
+	{
+		int sq = lsb(u);
+		b = Bit(sq);
+		uint64 att = RookAttacks(sq, EI.occ);
+		Current->att[me] |= att;
+		Current->threat |= att & Queen(opp);
+		uint64 control = att & EI.free[me];
+		if (Current->xray[opp] & b)
+			control &= FullLine[sq][EI.king[me]];
+		IncV(EI.score, MobRook[0][pop(control)]);
+		IncV(EI.score, MobRook[1][pop(control & KingLocus[EI.king[opp]])]);
+		if (control & Pawn(opp))
+			IncV(EI.score, Ca4(Tactical, TacticalMajorPawn));
+		if (control & Minor(opp))
+			IncV(EI.score, Ca4(Tactical, TacticalMajorMinor));
+		uint64 att_opp = att & EI.area[opp];
+		if (att_opp)
+		{
+			int eff = F(Single(att_opp)) + T(EI.free[me] & KingLocus[EI.king[opp]] & b);
+			EI.king_att[me] += eff ? KingRAttack + (eff - 1) * KingAttack : KingRAttack1;
+			for (uint64 v = att_opp; T(v); Cut(v))
+				if (FullLine[sq][lsb(v)] & att & Major(me))
+					EI.king_att[me]++;
 		}
 
 		if (F(PWay[me][sq] & Pawn(me)))
@@ -5734,56 +5759,21 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 	}
 }
 
-template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
+template <bool me> INLINE void eval_bishops_xray(GEvalInfo& EI)
 {
-	POP pop;
-	uint64 b;
-	for (uint64 u = Bishop(me); T(u); u ^= b)
+	for (uint64 u = Bishop(me); T(u); Cut(u))
 	{
 		int sq = lsb(u);
-		b = Bit(sq);
-		uint64 att = BishopAttacks(sq, EI.occ);
-		Current->att[me] |= att;
-		uint64 att_opp = att & EI.area[opp];
-		if (att_opp)
-		{
-			int eff = F(Single(att_opp)) + T((EI.free[me] | Current->att[me]) & KingLocus[EI.king[opp]] & b);
-			EI.king_att[me] += eff ? KingBAttack + (eff - 1) * KingAttack : KingBAttack1;
-		}
-		uint64 control = att & EI.free[me];
-		IncV(EI.score, MobBishop[0][pop(control)]);
-		IncV(EI.score, MobBishop[1][pop(control & KingLocus[EI.king[opp]])]);
-		if (control & Pawn(opp))
-			IncV(EI.score, Ca4(Tactical, TacticalMinorPawn));
-		if (control & Knight(opp))
-			IncV(EI.score, Ca4(Tactical, TacticalMinorMinor));
-		if (att & EI.area[me])
-			IncV(EI.score, Ca4(KingDefence, KingDefBishop));
-		Current->threat |= att & Major(opp);
-		const uint64& myArea = (b & LightArea) ? LightArea : DarkArea;
-		uint64 v = BishopForward[me][sq] & Pawn(me) & myArea;
-		v |= (v & (File[2] | File[3] | File[4] | File[5] | BMask[sq])) >> 8;
-		DecV(EI.score, Ca4(BishopSpecial, BishopPawnBlock) * pop(v));
-		v = Pawn(opp) & Shift<opp>(Pawn(me)) & myArea & ~KingLocus[EI.king[opp]];
-		IncV(EI.score, Ca4(BishopSpecial, BishopPawnHeld) * pop(v));
-		if (T(b & BOutpost[me] & Current->patt[me]))
-		{
-			IncV(EI.score, Ca4(BishopSpecial, BishopOutpost));
-			if (F(Knight(opp))
-					&& F(Pawn(opp) & PIsolated[FileOf(sq)] & Forward[me][RankOf(sq)])
-					&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
-				IncV(EI.score, Ca4(BishopSpecial, BishopOutpostNoMinor));
-			if (T((ShiftW<opp>(b) | ShiftE<opp>(me)) & Current->passer & Pawn(me)))
-				IncV(EI.score, Ca4(BishopSpecial, BishopOutpostPasser));
-		}
-
-		uint64 in_ray;
-		if (BMask[sq] & King(opp) && T(in_ray = Between[EI.king[opp]][sq] & EI.occ))
+		if (F(BMask[sq] & King(opp)))
+			continue;
+		if (uint64 in_ray = Between[EI.king[opp]][sq] & EI.occ)
 		{
 			if (Single(in_ray))  // pin or discovery threat
 			{
 				Current->xray[me] |= in_ray;
-				int square = lsb(in_ray), katt = F(att_opp);
+				uint64 att = BishopAttacks(sq, EI.occ);
+				int katt = F(att & EI.area[opp]);	// else we have already contributed to king attack
+				int square = lsb(in_ray);
 				int piece = PieceAt(square);
 				if ((piece & 1) == me)
 				{
@@ -5820,6 +5810,53 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 	}
 }
 
+template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
+{
+	POP pop;
+	uint64 b;
+	for (uint64 u = Bishop(me); T(u); u ^= b)
+	{
+		int sq = lsb(u);
+		b = Bit(sq);
+		uint64 att = BishopAttacks(sq, EI.occ);
+		Current->att[me] |= att;
+		uint64 att_opp = att & EI.area[opp];
+		if (att_opp)
+		{
+			int eff = F(Single(att_opp)) + T((EI.free[me] | Current->att[me]) & KingLocus[EI.king[opp]] & b);
+			EI.king_att[me] += eff ? KingBAttack + (eff - 1) * KingAttack : KingBAttack1;
+		}
+		uint64 control = att & EI.free[me];
+		if (Current->xray[opp] & b)
+			control &= FullLine[sq][EI.king[me]];
+		IncV(EI.score, MobBishop[0][pop(control)]);
+		IncV(EI.score, MobBishop[1][pop(control & KingLocus[EI.king[opp]])]);
+		if (control & Pawn(opp))
+			IncV(EI.score, Ca4(Tactical, TacticalMinorPawn));
+		if (control & Knight(opp))
+			IncV(EI.score, Ca4(Tactical, TacticalMinorMinor));
+		if (att & EI.area[me])
+			IncV(EI.score, Ca4(KingDefence, KingDefBishop));
+		Current->threat |= att & Major(opp);
+		const uint64& myArea = (b & LightArea) ? LightArea : DarkArea;
+		uint64 v = BishopForward[me][sq] & Pawn(me) & myArea;
+		v |= (v & (File[2] | File[3] | File[4] | File[5] | BMask[sq])) >> 8;
+		DecV(EI.score, Ca4(BishopSpecial, BishopPawnBlock) * pop(v));
+		v = Pawn(opp) & Shift<opp>(Pawn(me)) & myArea & ~KingLocus[EI.king[opp]];
+		IncV(EI.score, Ca4(BishopSpecial, BishopPawnHeld) * pop(v));
+		if (T(b & BOutpost[me] & Current->patt[me]))
+		{
+			IncV(EI.score, Ca4(BishopSpecial, BishopOutpost));
+			if (F(Knight(opp))
+				&& F(Pawn(opp) & PIsolated[FileOf(sq)] & Forward[me][RankOf(sq)])
+				&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
+				IncV(EI.score, Ca4(BishopSpecial, BishopOutpostNoMinor));
+			if (T((ShiftW<opp>(b) | ShiftE<opp>(me)) & Current->passer & Pawn(me)))
+				IncV(EI.score, Ca4(BishopSpecial, BishopOutpostPasser));
+		}
+	}
+}
+
 template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 {
 	POP pop;
@@ -5835,7 +5872,7 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 			EI.king_att[me] += eff ? KingNAttack + (eff - 1) * KingAttack : KingNAttack1;
 		}
 		Current->threat |= att & Major(opp);
-		uint64 control = att & EI.free[me];
+		uint64 control = F(Current->xray[opp] & b) ? att & EI.free[me] : 0ull;
 		IncV(EI.score, MobKnight[0][pop(control)]);
 		IncV(EI.score, MobKnight[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
@@ -6028,10 +6065,17 @@ template<class POP> int closure()
 	return 4 * (closure_x<POP, 0>() + closure_x<POP, 1>());
 }
 
+template<bool me> void eval_sequential_xray(GEvalInfo& EI)
+{
+	Current->xray[me] = 0;
+	eval_queens_xray<me>(EI);
+	eval_rooks_xray<me>(EI);
+	eval_bishops_xray<me>(EI);
+}
+
 template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 {
 	POP pop;
-	Current->xray[me] = 0;
 	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
 	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
 	EI.king_att[me] = 0;
@@ -6042,6 +6086,7 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 		eff += T(src & Current->patt[me]);
 		EI.king_att[me] = KingAttack + eff * KingPAttackInc;
 	}
+
 	eval_queens<me, POP>(EI);
 	EI.free[me] |= Rook(opp);
 	eval_rooks<me, POP>(EI);
@@ -6076,8 +6121,10 @@ template<class POP> void evaluation()
 	else
 		EI.material = 0;
 
-	eval_sequential<White, POP>(EI);
+	eval_sequential_xray<White>(EI);
+	eval_sequential_xray<Black>(EI);
 	eval_sequential<Black, POP>(EI);
+	eval_sequential<White, POP>(EI);
 
 	EI.PawnEntry = &PawnHash[Current->pawn_key & pawn_hash_mask];
 	if (Current->pawn_key != EI.PawnEntry->key)
