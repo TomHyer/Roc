@@ -1209,7 +1209,7 @@ enum
 	IKingAttackWeight = IKingRay + 6
 };
 
-constexpr array<int, 6> MatLinear = { 31, -5, -14, 88, -19, -3 };
+constexpr array<int, 6> MatLinear = { 29, -5, -12, 88, -19, -3 };
 // pawn, knight, bishop, rook, queen, pair
 constexpr array<int, 14> MatQuadMe = { // tuner: type=array, var=1000, active=0
 	-33, 17, -23, -155, -247,
@@ -1561,13 +1561,10 @@ constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
 	0, 0, 0, 0
 };
 
-enum { BishopPawnHeld, BishopPawnBlock, BishopOutpost, BishopOutpostNoMinor, BishopOutpostPasser };
-constexpr array<int, 20> BishopSpecial = { // tuner: type=array, var=20, active=0
-	0, 10, 14, -10,
+enum { BishopPawnBlock, BishopOutpostNoMinor};
+constexpr array<int, 8> BishopSpecial = { // tuner: type=array, var=20, active=0
 	0, 6, 12, 0,
-	20, 20, 12, 0,
-	40, 40, 30, 10,
-	60, 70, 50, 0
+	60, 60, 45, 0
 };
 
 constexpr array<uint64, 2> NOutpost = { 0x00187E7E3C000000ull, 0x0000003C7E7E1800ull };
@@ -5595,8 +5592,8 @@ template<bool me> INLINE void eval_queens_xray(GEvalInfo& EI)
 			}
 			else
 			{
-				uint64 pinnable = (RMask[sq] & Bishop(opp)) | (BMask[sq] & Rook(opp)) | Knight(opp);
-				if (F(in_ray & ~pinnable))
+				uint64 nonPin = (RMask[sq] & Rook(opp)) | (BMask[sq] & Bishop(opp));
+				if (F(in_ray & ~nonPin))
 					IncV(EI.score, Ca4(KingRay, QKingRay));
 			}
 		}
@@ -5670,7 +5667,7 @@ template <bool me> INLINE void eval_rooks_xray(GEvalInfo& EI)
 					if (piece < WhiteRook)
 					{
 						IncV(EI.score, Ca4(Pin, WeakPin));
-						katt *= F(Current->patt[opp] & in_ray);
+						katt *= F(Current->patt[opp] & ~Current->patt[me] & in_ray);
 					}
 					else if (piece >= WhiteQueen)
 					{
@@ -5682,8 +5679,14 @@ template <bool me> INLINE void eval_rooks_xray(GEvalInfo& EI)
 					katt = 0;
 				EI.king_att[me] += katt * KingAttack;
 			}
-			else if (F(in_ray & ~Minor(opp) & ~Queen(opp)))
-				IncV(EI.score, Ca4(KingRay, RKingRay));
+			else
+			{
+				uint64 nonPin = Rook(opp);
+				if (HasBit(Current->patt[me], sq))
+					nonPin |= Queen(opp);
+				if (F(in_ray & nonPin))
+					IncV(EI.score, Ca4(KingRay, RKingRay));
+			}
 		}
 	}
 }
@@ -5842,17 +5845,12 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		uint64 v = BishopForward[me][sq] & Pawn(me) & myArea;
 		v |= (v & (File[2] | File[3] | File[4] | File[5] | BMask[sq])) >> 8;
 		DecV(EI.score, Ca4(BishopSpecial, BishopPawnBlock) * pop(v));
-		v = Pawn(opp) & Shift<opp>(Pawn(me)) & myArea & ~KingLocus[EI.king[opp]];
-		IncV(EI.score, Ca4(BishopSpecial, BishopPawnHeld) * pop(v));
 		if (T(b & BOutpost[me] & Current->patt[me]))
 		{
-			IncV(EI.score, Ca4(BishopSpecial, BishopOutpost));
 			if (F(Knight(opp))
 				&& F(Pawn(opp) & PIsolated[FileOf(sq)] & Forward[me][RankOf(sq)])
 				&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
 				IncV(EI.score, Ca4(BishopSpecial, BishopOutpostNoMinor));
-			if (T((ShiftW<opp>(b) | ShiftE<opp>(me)) & Current->passer & Pawn(me)))
-				IncV(EI.score, Ca4(BishopSpecial, BishopOutpostPasser));
 		}
 	}
 }
@@ -5930,7 +5928,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 13, 10, 2, 0 };
+	static constexpr array<int, 4> PHASE = { 13, 10, 1, 0 };
 	int op = (PHASE[0] * adjusted) / 16;
 	int md = (PHASE[1] * adjusted) / 16;
 	int eg = (PHASE[2] * adjusted) / 16;
@@ -6649,7 +6647,7 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 
 template<bool me, bool pv> INLINE int check_extension(int move, int depth)
 {
-	return pv ? 2 : T(depth < 12) + T(depth < 24);
+	return pv ? 2 : T(depth < 14) + T(depth < 28);
 }
 
 void sort(int* start, int* finish)
@@ -8188,11 +8186,11 @@ template<bool me> bool IsThreat(int move)
 
 struct LMR_
 {
-	bool use_;
-	LMR_(int depth) : use_(depth >= 6) {}
+	double scale_;
+	LMR_(int depth) : scale_(depth < 6 ? 0.0 : 0.11 + 0.12 / sqrt(double(depth))) {}
 	INLINE int operator()(int cnt) const
 	{
-		return use_ && cnt > 2 ? msb(cnt) : 0;
+		return scale_ > 0 && cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt - 1)))))) : 0;
 	}
 };
 
@@ -8649,19 +8647,19 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 					Current->gen_flags &= ~FlagSort;
 					continue;
 				}
+				int reduction = reduction_n(cnt);
+				if (!(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
+					reduction += reduction / 2;
 				if (!evasion)
 				{
-					int reduction = reduction_n(cnt);
-					if (!evasion && move == Current->ref[0] || move == Current->ref[1])
+					if (move == Current->ref[0] || move == Current->ref[1])
 						reduction = Max(0, reduction - 1);
-					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
-						reduction += reduction / 2;
-					if (!evasion && new_depth - reduction > 3 && !see<me>(move, -SeeThreshold, SeeValue))
+					if (new_depth - reduction > 3 && !see<me>(move, -SeeThreshold, SeeValue))
 						reduction += 2;
-					if (!evasion && reduction == 1 && new_depth > 4)
+					if (reduction == 1 && new_depth > 4)
 						reduction = cnt > 3 ? 2 : 0;
-					new_depth = max(new_depth - reduction, min(depth - 3, 3));
 				}
+				new_depth = max(new_depth - reduction, min(depth - 3, 3));
 			}
 			if (!check)
 			{
@@ -9000,12 +8998,13 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		new_depth = depth - 2 + ext;
 		if (F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))))
 		{
-			int reduction = max(0, reduction_n(cnt) - 1);
+			int reduction = reduction_n(cnt);
 			if (move == Current->ref[0] || move == Current->ref[1])
-				reduction = Max(0, reduction - 1);
-			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
+				--reduction;
+			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)	// POSTPONED -- smooth this out
 				reduction += reduction / 2;
-			new_depth = max(new_depth - reduction, min(depth - 3, 3));
+			if (reduction > 0)
+				new_depth = max(new_depth - reduction, min(depth - 3, 3));
 		}
 		if (do_split && played >= 1)
 		{
