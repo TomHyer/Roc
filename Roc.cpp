@@ -994,6 +994,10 @@ INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags)
 {
 	return AddMove(list, from, to, flags, HistoryP(JoinFlag(flags), piece, from, to));
 }
+INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags, uint8 p_min)
+{
+	return AddMove(list, from, to, flags, max(int(p_min) << 16, HistoryP(JoinFlag(flags), piece, from, to)));
+}
 
 #ifndef TUNER
 sint16 DeltaVals[16 * 4096];
@@ -1631,7 +1635,7 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 3, 4, 5, 6, 9, 14, 17, 21, 25, 31, 39, 47, 55};
+constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 3, 4, 5, 6, 9, 14, 17, 21, 25, 31, 39, 47, 55 };
 constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 
 // tuner: stop
@@ -5621,13 +5625,12 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 			IncV(EI.score, Ca4(Tactical, TacticalMajorMinor));
 		if (att & EI.area[me])
 			IncV(EI.score, Ca4(KingDefence, KingDefQueen));
-		uint64 att_opp = att & EI.area[opp];
-		if (att_opp)
+		if (uint64 att_opp = att & EI.area[opp])
 		{
 			int eff = F(Single(att_opp)) + T(EI.free[me] & KingLocus[EI.king[opp]] & b) + T(Current->patt[me] & att_opp);
 			EI.king_att[me] += eff ? KingQAttack + (eff - 1) * KingAttack : KingQAttack1;
 			for (uint64 v = att_opp; T(v); Cut(v))
-				if (FullLine[sq][lsb(v)] & att & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq])))
+				if (att & FullLine[sq][lsb(v)] & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq])))
 					EI.king_att[me]++;
 		}
 	}
@@ -5716,7 +5719,7 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 			int eff = F(Single(att_opp)) + T(EI.free[me] & KingLocus[EI.king[opp]] & b);
 			EI.king_att[me] += eff ? KingRAttack + (eff - 1) * KingAttack : KingRAttack1;
 			for (uint64 v = att_opp; T(v); Cut(v))
-				if (FullLine[sq][lsb(v)] & att & Major(me))
+				if (att & FullLine[sq][lsb(v)] & Major(me))
 					EI.king_att[me]++;
 		}
 
@@ -6632,15 +6635,10 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 	int from = From(move);
 	if (HasBit(Current->passer, from))
 	{
-		//if (T(Current->passer & Pawn(opp)) && (pv || depth < 10))
-		//	return 2;
 		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][RankOf(from)] & Pawn(Current->turn))))
 			return pv ? 2 : 1;
-		//int rank = OwnRank(me, from);
-		//if (rank >= 5 && depth < 16)
-			//return pv ? 2 : 1;
 	}
-	//if (HasBit(Piece(opp), To(move)) && (pv || Current->score > 120 + 30 * depth))
+	//if (HasBit(Piece(opp), To(move)) && depth < (pv ? 12 : 8) && pop0(PieceAll()) < 10)
 	//	return 1;
 	return 0;
 }
@@ -7347,10 +7345,10 @@ template<bool me> int* gen_quiet_moves(int* list)
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
-		auto passerFlag = HasBit(Current->passer, to - Push[me]) ? FlagCastling : 0;
+		int passer = T(HasBit(Current->passer, to - Push[me]));
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passerFlag | pFlag(to + Push[me]));
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passerFlag | pFlag(to));
+			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passer ? FlagCastling : pFlag(to + Push[me]));
+		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to), Square(OwnRank<me>(to) + 4 * passer - 2));
 	}
 
 	for (u = Knight(me); T(u); Cut(u))
@@ -8648,8 +8646,11 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 					continue;
 				}
 				int reduction = reduction_n(cnt);
-				if (!(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
-					reduction += reduction / 2;
+				if (reduction > 1 && !(Queen(White) | Queen(Black)))
+				{
+					int np = popcnt(NonPawnKingAll());
+					reduction += (reduction * max(0, 22 - 3 * np)) / (1 + np * (5 + np));
+				}
 				if (!evasion)
 				{
 					if (move == Current->ref[0] || move == Current->ref[1])
@@ -9001,8 +9002,11 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 			int reduction = reduction_n(cnt);
 			if (move == Current->ref[0] || move == Current->ref[1])
 				--reduction;
-			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)	// POSTPONED -- smooth this out
-				reduction += reduction / 2;
+			if (reduction > 1 && !(Queen(White) | Queen(Black)))
+			{
+				int np = popcnt(NonPawnKingAll());
+				reduction += (reduction * max(0, 22 - 3 * np)) / (1 + np * (5 + np));
+			}
 			if (reduction > 0)
 				new_depth = max(new_depth - reduction, min(depth - 3, 3));
 		}
