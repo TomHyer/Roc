@@ -5987,11 +5987,11 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 13, 10, 1, 0 };
-	int op = (PHASE[0] * adjusted) / 16;
-	int md = (PHASE[1] * adjusted) / 16;
-	int eg = (PHASE[2] * adjusted) / 16;
-	int cl = (PHASE[3] * adjusted) / 16;
+	static constexpr array<int, 4> PHASE = { 24, 20, 3, 0 };
+	int op = ((PHASE[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 32;
+	int md = (PHASE[1] * adjusted) / 32;
+	int eg = (PHASE[2] * adjusted) / 32;
+	int cl = (PHASE[3] * adjusted) / 32;
 	IncV(EI.score, Pack4(op, md, eg, cl));
 }
 
