@@ -995,6 +995,10 @@ INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags)
 {
 	return AddMove(list, from, to, flags, HistoryP(JoinFlag(flags), piece, from, to));
 }
+INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags, uint8 p_min)
+{
+	return AddMove(list, from, to, flags, max(int(p_min) << 16, HistoryP(JoinFlag(flags), piece, from, to)));
+}
 
 #ifndef TUNER
 sint16 DeltaVals[16 * 4096];
@@ -7325,9 +7329,10 @@ template<bool me> int* gen_quiet_moves(int* list)
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
+		int passer = T(HasBit(Current->passer, to - Push[me]));
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], pFlag(to + Push[me]));
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, pFlag(to));
+			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passer ? FlagCastling : pFlag(to + Push[me]));
+		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to), Square(OwnRank<me>(to) + 4 * passer - 2));
 	}
 
 	for (u = Knight(me); T(u); Cut(u))
@@ -8185,6 +8190,8 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 			return scout_evasion<me, 0>(beta, depth, flags & (~(FlagHaltCheck | FlagCallEvaluation)));
 
 		value = Current->score - (90 + depth * 8 + Max(depth - 5, 0) * 32) * CP_SEARCH;
+		if (beta < -200 * CP_SEARCH)
+			value -= ((beta + 100 * CP_SEARCH) * height) / 128;
 		if (value >= beta && depth <= 13 && T(NonPawnKing(me)) && F(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())) && F(flags & (FlagReturnBestMove | FlagDisableNull)))
 			return value;
 
