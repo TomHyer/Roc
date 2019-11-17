@@ -1,4 +1,4 @@
-//#define REGRESSION
+#define REGRESSION
 //#define W32_BUILD
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
@@ -7357,8 +7357,13 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & NAtt[from]; T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = NAtt[to] & Major(opp) ? FlagCastling : 0;
-			list = AddHistoryP(list, IKnight[me], from, to, flag);
+			uint64 threat = NAtt[to] & Major(opp);
+			if (F(threat))
+				list = AddHistoryP(list, IKnight[me], from, to, 0);
+			else if (Single(threat))
+				list = AddHistoryP(list, IKnight[me], from, to, FlagCastling);
+			else
+				list = AddHistoryP(list, IKnight[me], from, to, FlagCastling, 64);
 		}
 	}
 
@@ -10647,6 +10652,7 @@ void main(int argc, char *argv[])
 	Console = true;
 
 	//Test1("kr6/p7/8/8/8/8/8/BBK5 w - - 0 1", 24, "g4-g5");
+	//Test1("8/8/8/4K1p1/3p4/6k1/6p1/5rR1 1 - - 0 1", 44, "g1-g2");	// Roc seems to have evaluated with wrong sign, Nov 2019, can't reproduce
 
 	//Test1("4kbnr/2pr1ppp/p1Q5/4p3/4P3/2Pq1b1P/PP1P1PP1/RNB2RK1 w - - 0 1", 20, "f1-e1");	// why didn't Roc keep the rook pinned?
 
@@ -10654,26 +10660,25 @@ void main(int argc, char *argv[])
 	//Test1("4r1k1/4ppbp/r5p1/3Np3/2PnP3/3P2Pq/1R3P2/2BQ1RK1 w - - 0 1", 20, "b2-b1");
 	//Test1("R7/6k1/8/8/6P1/6K1/8/7r w - - 0 1", 24, "g4-g5");
 
-	//Test1("rnb1k2r/pp2qppp/3p1n2/2pp2B1/1bP5/2N1P3/PP2NPPP/R2QKB1R w KQkq - 0 1", 20, "a2-a3");	// Roc fails until depth 9
 	//Test1("r4rk1/pb3p2/1pp4p/2qn2p1/2B5/6BP/PPQ2PP1/3RR1K1 w - - 0 1", 15, "e1-e6");	// Roc fails until depth 19
-	Test1("3B4/8/2B5/1K6/8/8/3p4/3k4 w - - 0 1", 15, "b5-a6");						// Roc fails until depth 18
-	//Test1("2krr3/1p4pp/p1bRpp1n/2p5/P1B1PP2/8/1PP3PP/R1K3B1 w - - 0 1", 15, "d6-c6");	// Roc fails until depth 17
-	//Test1("r5k1/pp2p1bp/6p1/n1p1P3/2qP1NP1/2PQB3/P5PP/R4K2 b - - 0 1", 18, "g6-g5");	// Roc fails until depth 20
+	//Test1("3B4/8/2B5/1K6/8/8/3p4/3k4 w - - 0 1", 15, "b5-a6");						// Roc fails until depth 18
+	//Test1("r5k1/pp2p1bp/6p1/n1p1P3/2qP1NP1/2PQB3/P5PP/R4K2 b - - 0 1", 18, "g6-g5");	// Roc fails until depth 23
 	//Test1("1br3k1/p4p2/2p1r3/3p1b2/3Bn1p1/1P2P1Pq/P3Q1BP/2R1NRK1 b - - 0 1", 20, "h3-h2");	// Roc fails until depth 21
 	//Test1("8/4p3/8/3P3p/P2pK3/6P1/7b/3k4 w - - 0 1", 24, "d5-d6");					// Roc fails until depth 25
 	//Test1("6k1/2b2p1p/ppP3p1/4p3/PP1B4/5PP1/7P/7K w - - 0 1", 31, "d4-b6");			// Roc fails until depth 37
-	//Test1("R7/3p3p/8/3P2P1/3k4/1p5p/1P1NKP1P/7q w - - 0 1", 31, "g5-g6");				// Roc fails until depth 32
-	//Test1("5r1k/1P4pp/3P1p2/4p3/1P5P/3q2P1/Q2b2K1/B3R3 w - - 0 1", 36, "a2-f7");		// Roc fails until depth 37
-	//Test1("3r2k1/p2r2p1/1p1B2Pp/4PQ1P/2b1p3/P3P3/7K/8 w - - 0 1", 43, "d6-b4");			// Roc fails until depth 47
-	//Test1("3r2k1/pp4B1/6pp/PP1Np2n/2Pp1p2/3P2Pq/3QPPbP/R4RK1 b - - 0 1", 42, "g3-f3");	// Slizzard fails to find f3
-	//Test1("8/8/3k1p2/p2BnP2/4PN2/1P2K1p1/8/5b2 b - - 0 1", 57, "f4-d3");	// Slizzard fails to find Nd3 (finds at 58 in about 1800 seconds)
+	//Test1("3r2k1/pp4B1/6pp/PP1Np2n/2Pp1p2/3P2Pq/3QPPbP/R4RK1 b - - 0 1", 42, "g3-f3");	// Roc fails to find f3
+	//Test1("3r2k1/p2r2p1/1p1B2Pp/4PQ1P/2b1p3/P3P3/7K/8 w - - 0 1", 43, "d6-b4");			// Roc fails to find Bb4
+	Test1("8/8/3k1p2/p2BnP2/4PN2/1P2K1p1/8/5b2 b - - 0 1", 57, "f4-d3");	// Slizzard fails to find Nd3 (finds at 58 in about 1800 seconds)
 	//Test1("rq2r1k1/5pp1/p7/4bNP1/1p2P2P/5Q2/PP4K1/5R1R w - - 0 1", 4, "f5-g7");
 	//Test1("b2r1rk1/2q2ppp/p1nbpn2/1p6/1P6/P1N1PN2/1B2QPPP/1BR2RK1 w - - 0 1", 4, "c3-e4");
 	//Test1("8/pp3k2/2p1qp2/2P5/5P2/1R2p1rp/PP2R3/4K2Q b - - 0 1", 11, "e6-e4");
+	//Test1("2krr3/1p4pp/p1bRpp1n/2p5/P1B1PP2/8/1PP3PP/R1K3B1 w - - 0 1", 15, "d6-c6");
 	//Test1("r1b4Q/p4k1p/1pp1ppqn/8/1nP5/8/PP1KBPPP/3R2NR w - - 0 1", 4, "d2-e1");
 	//Test1("r1b2rk1/pp1p1pBp/6p1/8/2PQ4/8/PP1KBP1P/q7 w - - 0 1", 30, "d4-f6");
 	//Test1("r1b3k1/ppp3pp/2qpp3/2r3N1/2R5/8/P1Q2PPP/2B3K1 b - - 0 1", 4, "g7-g6");
 	//Test1("4r1k1/p1qr1p2/2pb1Bp1/1p5p/3P1n1R/3B1P2/PP3PK1/2Q4R w - - 0 1", 20, "c1-f4");
+	//Test1("5r1k/1P4pp/3P1p2/4p3/1P5P/3q2P1/Q2b2K1/B3R3 w - - 0 1", 36, "a2-f7");		
+	//Test1("rnb1k2r/pp2qppp/3p1n2/2pp2B1/1bP5/2N1P3/PP2NPPP/R2QKB1R w KQkq - 0 1", 5, "a2-a3");	// Roc finds at depth 4
 	//Test1("4k1rr/ppp5/3b1p1p/4pP1P/3pP2N/3P3P/PPP5/2KR2R1 w kq - 0 1", 16, "g1-g6");	// Roc finds at depth 9
 	//Test1("6k1/p3q2p/1nr3pB/8/3Q1P2/6P1/PP5P/3R2K1 b - - 0 1", 12, "c6-d6");			// Roc finds at depth 11
 	//Test1("3b2k1/1pp2rpp/r2n1p1B/p2N1q2/3Q4/6R1/PPP2PPP/4R1K1 w - - 0 1", 15, "d5-b4");	// Roc finds at depth 14
@@ -10684,6 +10689,7 @@ void main(int argc, char *argv[])
 	//Test1("3r1rk1/1p3pnp/p3pBp1/1qPpP3/1P1P2R1/P2Q3R/6PP/6K1 w - - 0 1", 24, "h3-h7");	// Roc finds at depth 23
 	//Test1("2r3k1/pbr1q2p/1p2pnp1/3p4/3P1P2/1P1BR3/PB1Q2PP/5RK1 w - - 0 1", 31, "f4-f5");	// Roc finds at depth 23
 	//Test1("5r1k/p1q2pp1/1pb4p/n3R1NQ/7P/3B1P2/2P3P1/7K w - - 0 1", 26, "e5-e6");		// Roc finds at depth 25
+	//Test1("R7/3p3p/8/3P2P1/3k4/1p5p/1P1NKP1P/7q w - - 0 1", 31, "g5-g6");				// Roc finds at depth 30
 
 	cout << "Done\n";
 	cin.ignore();
