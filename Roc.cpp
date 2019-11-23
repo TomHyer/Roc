@@ -1,4 +1,4 @@
-#define REGRESSION
+//#define REGRESSION
 //#define W32_BUILD
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
@@ -1554,15 +1554,13 @@ enum
 	PawnChainLinear,
 	PawnChain,
 	PawnBlocked,
-	PawnFileSpan,
-	PawnRestrictsK
+	PawnFileSpan
 };
-constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
+constexpr array<int, 16> PawnSpecial = {  // tuner: type=array, var=26, active=0
 	44, 40, 36, 0, 
 	36, 26, 16, 0, 
 	0, 18, 36, 0, 
-	4, 4, 4, 0, 
-	0, 0, 0, 0
+	4, 4, 4, 0
 };
 
 enum { BishopPawnBlock, BishopOutpostNoMinor};
@@ -1635,7 +1633,7 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 3, 4, 5, 6, 9, 14, 17, 21, 25, 31, 39, 47, 55 };
+constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 6, 9, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
 constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 
 // tuner: stop
@@ -5511,22 +5509,6 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 				IncV(PEI.score, PasserOutside[rrank]);
 		}
 	}
-	if (!((kf * kr) % 7))
-	{
-		const uint64 kAdj = KAtt[PEI.king[me]];
-		// look for opp pawns restricting K mobility
-		if (PEI.patt[opp] & kAdj)
-		{
-			// find out which one it is
-			for (uint64 u = Pawn(opp); T(u); u ^= b)
-			{
-				int sq = lsb(u);
-				b = Bit(sq);
-				if ((PAtt[opp][sq] & kAdj) && HasBit(Pawn(me), sq + Push[opp]))
-					DecV(PEI.score, Ca4(PawnSpecial, PawnRestrictsK));
-			}
-		}
-	}
 
 	uint64 files = Pawn(me) | (Pawn(me) >> 32);
 	files |= files >> 16;
@@ -5627,8 +5609,7 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 			IncV(EI.score, Ca4(KingDefence, KingDefQueen));
 		if (uint64 att_opp = att & EI.area[opp])
 		{
-			int eff = F(Single(att_opp)) + T(EI.free[me] & KingLocus[EI.king[opp]] & b) + T(Current->patt[me] & att_opp);
-			EI.king_att[me] += eff ? KingQAttack + (eff - 1) * KingAttack : KingQAttack1;
+			EI.king_att[me] += Single(att_opp) ? KingQAttack1 : KingQAttack;
 			for (uint64 v = att_opp; T(v); Cut(v))
 				if (att & FullLine[sq][lsb(v)] & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq])))
 					EI.king_att[me]++;
@@ -5716,8 +5697,7 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		uint64 att_opp = att & EI.area[opp];
 		if (att_opp)
 		{
-			int eff = F(Single(att_opp)) + T(EI.free[me] & KingLocus[EI.king[opp]] & b);
-			EI.king_att[me] += eff ? KingRAttack + (eff - 1) * KingAttack : KingRAttack1;
+			EI.king_att[me] += Single(att_opp) ? KingRAttack1 : KingRAttack;
 			for (uint64 v = att_opp; T(v); Cut(v))
 				if (att & FullLine[sq][lsb(v)] & Major(me))
 					EI.king_att[me]++;
@@ -5828,10 +5808,7 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		Current->att[me] |= att;
 		uint64 att_opp = att & EI.area[opp];
 		if (att_opp)
-		{
-			int eff = F(Single(att_opp)) + T((EI.free[me] | Current->att[me]) & KingLocus[EI.king[opp]] & b);
-			EI.king_att[me] += eff ? KingBAttack + (eff - 1) * KingAttack : KingBAttack1;
-		}
+			EI.king_att[me] += Single(att_opp) ? KingBAttack1 : KingBAttack;
 		uint64 control = att & EI.free[me];
 		if (Current->xray[opp] & b)
 			control &= FullLine[sq][EI.king[me]];
@@ -5868,10 +5845,7 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		uint64 att = NAtt[sq];
 		Current->att[me] |= att;
 		if (uint64 att_opp = att & EI.area[opp])
-		{
-			int eff = F(Single(att_opp)) + T((EI.free[me] | Current->att[me]) & KingLocus[EI.king[opp]] & b);
-			EI.king_att[me] += eff ? KingNAttack + (eff - 1) * KingAttack : KingNAttack1;
-		}
+			EI.king_att[me] += Single(att_opp) ? KingNAttack1 : KingNAttack;
 		Current->threat |= att & Major(opp);
 		uint64 control = F(Current->xray[opp] & b) ? att & EI.free[me] : 0ull;
 		IncV(EI.score, MobKnight[0][pop(control)]);
@@ -6078,7 +6052,6 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 {
 	POP pop;
 	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
-	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
 	EI.king_att[me] = 0;
 	if (uint64 patt = Current->patt[me] & EI.area[opp])
 	{
@@ -6094,6 +6067,8 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 	EI.free[me] |= Minor(opp);
 	eval_bishops<me, POP>(EI);
 	eval_knights<me, POP>(EI);
+
+	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
 }
 
 template<class POP> void evaluation()
@@ -6632,15 +6607,27 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 
 template<bool me, bool pv> INLINE int extension(int move, int depth)
 {
-	int from = From(move);
+	int from = From(move), to = To(move);
 	if (HasBit(Current->passer, from))
 	{
 		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][RankOf(from)] & Pawn(Current->turn))))
 			return pv ? 2 : 1;
 	}
-	//if (HasBit(Piece(opp), To(move)) && depth < (pv ? 12 : 8) && pop0(PieceAll()) < 10)
-	//	return 1;
-	return 0;
+/*	if (HasBit(Piece(opp), to))	// capture extensions
+	{
+		int kLoc = lsb(King(opp));
+		uint64 kArea = KAtt[kLoc] | Bit(kLoc);
+		switch (PieceAt(from) | Black)
+		{
+		case BlackQueen:
+			if (T(QueenAttacks(to, PieceAll()) & kArea) && depth < (pv ? 12 : 8))
+				return 1;
+			break;
+		}
+		//if (pop0(PieceAll()) < 10 && depth < (pv ? 12 : 8))
+		//	return 1;
+	}
+*/	return 0;
 }
 
 template<bool me, bool pv> INLINE int check_extension(int move, int depth)
@@ -7320,8 +7307,10 @@ INLINE bool can_castle(const uint64& occ, bool me, bool kingside)
 }
 template<bool me> int* gen_quiet_moves(int* list)
 {
+//	if (!endgame && F(Current->material & FlagUnusualMaterial) && Material[Current->material].phase < MIDDLE_PHASE / 2)
+//		return gen_quiet_moves<me, true>(list);
+
 	uint64 u, v;
-	auto safe3 = [&](int loc) { return HasBit(Current->att[opp] & ~Current->att[me], loc) ? 0 : FlagCastling; };
 
 	uint64 occ = PieceAll();
 	if (me == White)
@@ -7357,13 +7346,8 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & NAtt[from]; T(v); Cut(v))
 		{
 			int to = lsb(v);
-			uint64 threat = NAtt[to] & Major(opp);
-			if (F(threat))
-				list = AddHistoryP(list, IKnight[me], from, to, 0);
-			else if (Single(threat))
-				list = AddHistoryP(list, IKnight[me], from, to, FlagCastling);
-			else
-				list = AddHistoryP(list, IKnight[me], from, to, FlagCastling, 64);
+			int flag = NAtt[to] & Major(opp) ? FlagCastling : 0;
+			list = AddHistoryP(list, IKnight[me], from, to, flag);
 		}
 	}
 
