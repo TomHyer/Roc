@@ -1080,6 +1080,10 @@ INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags)
 {
 	return AddMove(list, from, to, flags, HistoryP(JoinFlag(flags), piece, from, to));
 }
+INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags, uint8 p_min)
+{
+	return AddMove(list, from, to, flags, max(int(p_min) << 16, HistoryP(JoinFlag(flags), piece, from, to)));
+}
 
 sint16 DeltaVals[16 * 4096];
 INLINE sint16& DeltaScore(int piece, int from, int to)
@@ -1683,14 +1687,10 @@ namespace Params
 	enum
 	{
 		BishopPawnBlock,
-		BishopOppPawnOffColor,
-		BishopOppPawnBlock,
 		BishopOutpostNoMinor
 	};
 	constexpr array<int, 16> BishopSpecial = { // tuner: type=array, var=20, active=0
 		0, 6, 14, 6,
-		12, 4, 12, 0,
-		8, 10, 8, 2,
 		60, 60, 45, 0
 	};
 }
@@ -1698,8 +1698,6 @@ namespace Values
 {
 #define VALUE(name) constexpr packed_t name = Ca4(Params::BishopSpecial, Params::name)
 	VALUE(BishopPawnBlock);
-	VALUE(BishopOppPawnOffColor);
-	VALUE(BishopOppPawnBlock);
 	VALUE(BishopOutpostNoMinor);
 #undef VALUE
 }
@@ -5138,8 +5136,6 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		uint64 v = RO->BishopForward[me][sq] & Pawn(me) & myArea;
 		v |= (v & (File[2] | File[3] | File[4] | File[5] | BMask[sq])) >> 8;	// the ">>8" is just a trick to double-count these without two calls to pop()
 		DecV(EI.score, Values::BishopPawnBlock * pop(v));
-		DecV(EI.score, Values::BishopOppPawnOffColor * pop(Pawn(opp) & ~myArea));
-		DecV(EI.score, Values::BishopOppPawnBlock * pop(Pawn(opp) & myArea & ~EI.free[me]));
 		if (T(b & Outpost[me])
 			&& F(Knight(opp))
 			&& T(Current->patt[me] & b)
@@ -5495,14 +5491,23 @@ template<class POP> void evaluation()
 
 		if (Current->ply >= PliesToEvalCut)
 			Current->score /= 2;
-		const int drawCap = DrawCapConstant + (DrawCapLinear * abs(Current->score)) / 64;  // drawishness of positions can cancel this much of the score
+		const int drawCap = DrawCapConstant + (DrawCapLinear * abs(Current->score)) / 64;  // drawishness of pawns can cancel this much of the score
 		if (Current->score > 0)
 		{
 			EI.mul = mat.mul[White];
 			if (mat.eval[White] && !eval_stalemate<White>(EI))
 				mat.eval[White](EI, pop.Imp());
 			else if (EI.mul <= 32)
-				EI.mul = Min<uint16>(EI.mul, 36 - value.clx_ / 6);
+			{
+				EI.mul = Min<uint16>(EI.mul, 37 - value.clx_ / 8);
+				if (T(Current->passer & Pawn(White)) && T(Current->passer & Pawn(Black)))
+				{
+					int rb = OwnRank<Black>(lsb(Current->passer & Pawn(Black))), rw = OwnRank<White>(msb(Current->passer & Pawn(White)));
+					if (rb > rw)
+						EI.mul = Min<uint16>(EI.mul, 43 - Square(rb) / 2);
+				}
+			}
+
 			Current->score -= (Min<int>(Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64;
 		}
 		else if (Current->score < 0)
@@ -5511,11 +5516,19 @@ template<class POP> void evaluation()
 			if (mat.eval[Black] && !eval_stalemate<Black>(EI))
 				mat.eval[Black](EI, pop.Imp());
 			else if (EI.mul <= 32)
-				EI.mul = Min<uint16>(EI.mul, 36 - value.clx_ / 6);
+			{
+				EI.mul = Min<uint16>(EI.mul, 37 - value.clx_ / 8);
+				if (T(Current->passer & Pawn(White)) && T(Current->passer & Pawn(Black)))
+				{
+					int rb = OwnRank<Black>(lsb(Current->passer & Pawn(Black))), rw = OwnRank<White>(msb(Current->passer & Pawn(White)));
+					if (rw > rb)
+						EI.mul = Min<uint16>(EI.mul, 43 - Square(rw) / 2);
+				}
+			}
 			Current->score += (Min<int>(-Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64;
 		}
 		else
-			EI.mul = Min(mat.mul[White], mat.mul[Black]);
+			EI.mul = Min(EI.material->mul[White], EI.material->mul[Black]);
 		Current->score = (Current->score * EI.mul * CP_SEARCH) / (32 * CP_EVAL);
 	}
 	if (Current->turn)
@@ -5987,7 +6000,7 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 
 template<bool me, bool pv> INLINE int check_extension(int move, int depth)
 {
-	return pv ? 2 : T(depth < 12) + T(depth < 24);
+	return pv ? 2 : T(depth < 14) + T(depth < 28);
 }
 
 void sort(int* start, int* finish)
@@ -6666,10 +6679,13 @@ INLINE bool can_castle(const uint64& occ, bool me, bool kingside)
 			: T(Current->castle_flags & CanCastle_ooo) && F(occ & 0x0E00000000000000) && F(Current->att[White] & 0x1C00000000000000);
 	}
 }
+
 template<bool me> int* gen_quiet_moves(int* list)
 {
+	//	if (!endgame && F(Current->material & FlagUnusualMaterial) && Material[Current->material].phase < MIDDLE_PHASE / 2)
+	//		return gen_quiet_moves<me, true>(list);
+
 	uint64 u, v;
-	auto safe3 = [&](int loc) { return HasBit(Current->att[opp] & ~Current->att[me], loc) ? 0 : FlagCastling; };
 
 	uint64 occ = PieceAll();
 	if (me == White)
@@ -6688,14 +6704,15 @@ template<bool me> int* gen_quiet_moves(int* list)
 	}
 
 	uint64 free = ~occ;
-	auto pTarget = PawnJoins<me>();
-	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
+	auto pTarget = PawnJoins<me>(), pOpp = Pawn(opp);
+	auto pFlag = [&](int to) {return HasBit(pTarget, to) || F(RO->PCone[me][to] & pOpp) ? FlagCastling : 0; };
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
+		int passer = T(HasBit(Current->passer, to - Push[me]));
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], pFlag(to + Push[me]));
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, pFlag(to));
+			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passer ? FlagCastling : pFlag(to + Push[me]));
+		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to), Square(OwnRank<me>(to) + 4 * passer - 2));
 	}
 
 	for (u = Knight(me); T(u); Cut(u))
@@ -6733,12 +6750,12 @@ template<bool me> int* gen_quiet_moves(int* list)
 	}
 	for (u = Queen(me); T(u); Cut(u))
 	{
+		//uint64 qTarget = NAtt[lsb(King(opp))];	// try to get next to this
 		int from = lsb(u);
 		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			//int flag = Pst(IQueen[me], to) > Pst(IQueen[me], from) ? FlagCastling : 0;
-			list = AddHistoryP(list, IQueen[me], from, to, 0);
+			list = AddHistoryP(list, IQueen[me], from, to, 0);	// KAtt[to] & qTarget ? FlagCastling : 0);
 		}
 	}
 	for (v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
@@ -7305,16 +7322,7 @@ INLINE int reduction_n(int depth, int n)
 struct LMR_
 {
 	double scale_;
-	LMR_(int depth) : scale_(depth < 6 ? 0.0 : 0.11 + 0.12 / sqrt(double(depth)))
-	{
-		/*		if (F(Current->material & FlagUnusualMaterial))
-				{
-					int phase = Material[Current->material].phase;
-					if (phase < MIDDLE_PHASE)
-						scale_ *= double(phase + MAX_PHASE) / (MIDDLE_PHASE + MAX_PHASE);
-				}
-		*/
-	}
+	LMR_(int depth) : scale_(depth < 6 ? 0.0 : 0.11 + 0.12 / sqrt(double(depth))) {}
 	INLINE int operator()(int cnt) const
 	{
 		return scale_ > 0 && cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt - 1)))))) : 0;
@@ -9119,6 +9127,9 @@ int main(int argc, char *argv[])
 
 	fprintf(stdout, "Roc (regression mode)\n");
 
+	Test1("8/1B2k3/P3Pp2/5K2/8/4b3/8/8 w - - 0 1", 24, "b7-f3");
+	exit(0);
+
 	Test1("R7/6k1/8/8/6P1/6K1/8/7r w - - 0 1", 24, "g4-g5");
 	Test1("kr6/p7/8/8/8/8/8/BBK5 w - - 0 1", 24, "g4-g5");
 
@@ -9165,6 +9176,10 @@ int main(int argc, char *argv[])
 
 #if TB
 #pragma optimize("gy", off)
+#pragma warning(push)
+#pragma warning(disable: 4334)
+#pragma warning(disable: 4244)
+#pragma warning(disable: 4800)
 #define Say(x)	// mute TB query
 // Fathom/Syzygy code at end where its #defines cannot screw us up
 #undef LOCK
