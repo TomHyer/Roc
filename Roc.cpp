@@ -1613,7 +1613,7 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 3, 4, 6, 9, 12, 15, 19, 25, 29, 34, 39, 47, 56};
+constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 3, 5, 7, 10, 14, 19, 24, 30, 36, 38, 49, 56, 63 };
 constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 
 // tuner: stop
@@ -5594,8 +5594,6 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 		if (uint64 att_opp = att & EI.area[opp])
 		{
 			EI.king_att[me] += Single(att_opp) ? KingQAttack1 : KingQAttack;
-			if (att_opp & Current->patt[me])
-				EI.king_att[me] += KingAttack;
 			for (uint64 v = att_opp; T(v); Cut(v))
 				if (att & FullLine[sq][lsb(v)] & ((Rook(me) & RMask[sq]) | (Bishop(me) & BMask[sq])))
 					EI.king_att[me]++;
@@ -5687,8 +5685,6 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		if (uint64 att_opp = att & EI.area[opp])
 		{
 			EI.king_att[me] += Single(att_opp) ? KingRAttack1 : KingRAttack;
-			if (att_opp & Current->patt[me])
-				EI.king_att[me] += KingAttack;
 			for (uint64 v = att_opp; T(v); Cut(v))
 				if (att & FullLine[sq][lsb(v)] & Major(me))
 					EI.king_att[me]++;
@@ -5801,8 +5797,6 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		if (att_opp)
 		{
 			EI.king_att[me] += Single(att_opp) ? KingBAttack1 : KingBAttack;
-			if (att_opp & Current->patt[me])
-				EI.king_att[me] += KingAttack;
 		}
 		uint64 control = att & EI.free[me];
 		if (Current->xray[opp] & b)
@@ -5843,8 +5837,6 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		if (uint64 att_opp = att & EI.area[opp])
 		{
 			EI.king_att[me] += Single(att_opp) ? KingNAttack1 : KingNAttack;
-			if (att_opp & Current->patt[me])
-				EI.king_att[me] += KingAttack;
 		}
 		Current->threat |= att & Major(opp);
 		uint64 control = F(Current->xray[opp] & b) ? att & EI.free[me] : 0ull;
@@ -6606,7 +6598,7 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 	int from = From(move);
 	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
 	{
-		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][from] & Pawn(Current->turn))))
+		if (depth < 16)
 			return pv ? 2 : 1;
 	}
 
@@ -8119,8 +8111,10 @@ template<bool exclusion, bool evasion> int cut_search(int move, int hash_move, i
 	if (exclusion)
 		return score;
 	Current->best = move;
+	assert(score >= beta);
+	//score = beta + (max(0, 6 - depth) * (score - beta)) / 6;
 	if (!evasion && depth >= 10)
-		score = Min(beta, score);
+		score = beta;
 	if (F(PieceAt(To(move))) && F(move & 0xE000))
 	{
 		if (evasion)
@@ -8163,7 +8157,6 @@ template<bool me> bool IsThreat(int move)
 	case WhiteDark >> 1:
 		return T(BishopAttacks(to, PieceAll()) & Major(opp));
 	case WhiteRook >> 1:
-		return T(RookAttacks(to, PieceAll()) & Queen(opp));
 	}
 	return false;
 }
@@ -8171,10 +8164,10 @@ template<bool me> bool IsThreat(int move)
 struct LMR_
 {
 	double scale_;
-	LMR_(int depth) : scale_(depth < 6 ? 0.0 : 0.11 + 0.12 / sqrt(double(depth))) {}
+	LMR_(int depth) : scale_(depth < 6 ? 0.0 : 0.1 + 0.0275 * log(1.0 + depth)) {}	
 	INLINE int operator()(int cnt) const
 	{
-		return scale_ > 0 && cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt - 1)))))) : 0;
+		return scale_ > 0 && cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt)))))) : 0;
 	}
 };
 
@@ -8492,6 +8485,48 @@ sint64 get_time()
 #endif
 }
 
+inline int SortDepth(int depth)
+{
+	return (2 * depth - 18) / 3;
+}
+
+template<bool me, bool evasion> pair<int, int> scout_cached(int beta, int depth)
+{
+	if (evasion)
+	{
+		Current->ref[0] = RefM(Current->move).check_ref[0];
+		Current->ref[1] = RefM(Current->move).check_ref[1];
+		mark_evasions(Current->moves);
+	}
+	else
+	{
+		Current->killer[0] = 0;
+		Current->stage = stage_search;
+		Current->gen_flags = 0;
+		Current->ref[0] = RefM(Current->move).ref[0];
+		Current->ref[1] = RefM(Current->move).ref[1];
+		Current->moves[0] = 0;
+		Current->gen_flags |= FlagNoBcSort;
+	}
+	Current->current = Current->moves;
+
+	while (int move = evasion ? pick_move() : get_move<me, 0>(depth))
+	{
+		if (IsIllegal(me, move))
+			continue;
+		do_move<me>(move);
+		int value = -MateValue;
+		if (GEntry* Entry = probe_hash())
+			if (Entry->high_depth >= depth)
+				value = -Entry->high;
+		undo_move<me>(move);
+		if (value >= beta)
+			return make_pair(value, move);
+	}
+	return make_pair(-MateValue, 0);
+}
+
+
 template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, int flags)
 {
 	int height = (int)(Current - Data);
@@ -8570,6 +8605,15 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 	}
 
 	// done with hash 
+/*	int sortDepth = SortDepth(depth);
+	if (sortDepth > 0)
+	{
+		auto value = scout_cached<me, evasion>(beta, depth);	// returns (move, score) pair
+		if (value.first >= beta)
+			return cut_search<exclusion, evasion>(value.second, hash_move, value.first, beta, depth, flags, sp_init);
+	}
+*/
+
 	bool can_hash_d0 = !exclusion && !evasion;
 	int margin = 0;
 	if (evasion)
@@ -8719,8 +8763,9 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 
 		// done splitting
 		do_move<me>(move);
-		int value = -scout<opp, 0, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));	// POSTPONED -- call scout_evasion here if check?
-		if (value >= beta && new_depth < depth - 2 + ext)
+		int testBeta = beta - 3 * CP_SEARCH * (depth - 2 + ext - new_depth);
+		int value = -scout<opp, 0, 0>(1 - testBeta, new_depth, FlagNeatSearch | ExtToFlag(ext));	// POSTPONED -- call scout_evasion here if check?
+		if (value >= testBeta && new_depth < depth - 2 + ext)
 			value = -scout<opp, 0, 0>(1 - beta, depth - 2 + ext, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
 		undo_move<me>(move);
 		++played;
