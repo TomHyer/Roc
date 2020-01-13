@@ -7560,19 +7560,19 @@ template <bool me> int* gen_delta_moves(int margin, int* list)
 	return NullTerminate(list);
 }
 
-template<bool me> int singular_extension(int ext, int prev_ext, int margin_one, int margin_two, int depth, int killer)
+template<bool me, bool evasion> int singular_extension(int ext, int prev_ext, int margin_one, int margin_two, int depth, int killer)
 {
 	int value = -MateValue;
 	int singular = 0;
 	if (ext < (prev_ext ? 1 : 2))
 	{
-		value = (IsCheck(me) ? scout<me, 1, 1> : scout<me, 1, 0>)(margin_one, depth, killer);
+		value = scout<me, 1, evasion>(margin_one, depth, killer);
 		if (value < margin_one)
 			singular = 1;
 	}
 	if (value < margin_one && ext < (prev_ext ? (prev_ext >= 2 ? 1 : 2) : 3))
 	{
-		value = (IsCheck(me) ? scout<me, 1, 1> : scout<me, 1, 0>)(margin_two, depth, killer);
+		value = scout<me, 1, evasion>(margin_two, depth, killer);
 		if (value < margin_two)
 			singular = 2;
 	}
@@ -8364,7 +8364,7 @@ template<bool me, bool evasion> HashResult_ try_hash(int beta, int depth, int fl
 					int margin_one = beta - ExclSingle(depth);
 					int margin_two = beta - ExclDouble(depth);
 					int prev_ext = ExtFromFlag(flags);
-					if (singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, test_depth, hash_move))
+					if (singular = singular_extension<me, evasion>(ext, prev_ext, margin_one, margin_two, test_depth, hash_move))
 						ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
 				}
 			}
@@ -8918,7 +8918,8 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 			hash_value = value;
 		}
 	}
-	if (F(root) && IsCheck(me))
+	const bool inCheck = IsCheck(me);
+	if (F(root) && inCheck)
 	{
 		Current->mask = Filled;
 		(void)gen_evasions<me>(Current->moves);
@@ -8948,7 +8949,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 			int margin_one = hash_value - ExclSinglePV(depth);
 			int margin_two = hash_value - ExclDoublePV(depth);
 			int prev_ext = ExtFromFlag(flags);
-			singular = singular_extension<me>(root ? 0 : ext, root ? 0 : prev_ext, margin_one, margin_two, new_depth, hash_move);
+			singular = (inCheck ? singular_extension<me, 1> : singular_extension<me, 0>)(root ? 0 : ext, root ? 0 : prev_ext, margin_one, margin_two, new_depth, hash_move);
 			if (singular)
 			{
 				ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
