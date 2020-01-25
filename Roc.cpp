@@ -5906,7 +5906,7 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 				IncV(EI.score, Ca4(KnightSpecial, KnightOutpostProtected));
 				if (att & EI.free[me] & Pawn(opp))
 					IncV(EI.score, Ca4(KnightSpecial, KnightOutpostPawnAtt));
-				if (F(Knight(opp) & Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
+				if (F(Knight(opp) | Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
 					IncV(EI.score, Ca4(KnightSpecial, KnightOutpostNoMinor));
 			}
 		}
@@ -8090,6 +8090,17 @@ INLINE int RazoringThreshold(int score, int depth, int height)
 	return score + (70 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
 }
 
+template<int PV = 0> struct LMR_
+{
+	const double scale_;
+	LMR_(int depth) : scale_(0.118 + 0.001 * depth) {}
+	INLINE int operator()(int cnt) const
+	{
+		return cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt)))))) - PV : 0;
+	}
+};
+
+
 template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 {
 	int i, value, cnt, flag, moves_to_play, score, move, ext, hash_move, do_split, sp_init, singular, played, high_depth, high_value, hash_value,
@@ -8334,7 +8345,8 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 	if (depth >= SplitDepth && PrN > 1 && parent && !exclusion)
 		do_split = 1;
 
-	while (move = get_move<me, 0>(Odd(depth)))
+	LMR_<0> lmr(depth);
+	while (move = get_move<me, 0>(depth))
 	{
 		if (move == hash_move)
 			continue;
@@ -8363,7 +8375,7 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				}
 				if (depth >= 6)
 				{
-					int reduction = msb(cnt);
+					int reduction = lmr(cnt);
 					if (move == Current->ref[0] || move == Current->ref[1])
 						reduction = Max(0, reduction - 1);
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
@@ -8431,8 +8443,9 @@ template <bool me, bool exclusion> int scout(int beta, int depth, int flags)
 
 		// done splitting
 		do_move<me>(move);
-		value = -scout<opp, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
-		if (value >= beta && new_depth < depth - 2 + ext)
+		int testBeta = beta;// -3 * CP_SEARCH * (depth - 2 + ext - new_depth);
+		value = -scout<opp, 0>(1 - testBeta, new_depth, FlagNeatSearch | ExtToFlag(ext));
+		if (value >= testBeta && new_depth < depth - 2 + ext)
 			value = -scout<opp, 0>(1 - beta, depth - 2 + ext, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
 		undo_move<me>(move);
 		++played;
@@ -8633,6 +8646,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 	Current->ref[1] = RefM(Current->move).check_ref[1];
 	mark_evasions(Current->moves);
 	Current->current = Current->moves;
+	LMR_<0> lmr(depth);
 	while (move = pick_move())
 	{
 		if (move == hash_move)
@@ -8662,15 +8676,16 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			}
 			if (depth >= 6 && cnt > 3)
 			{
-				int reduction = msb(cnt);
+				int reduction = lmr(cnt);
 				if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 					reduction += reduction / 2;
 				new_depth = Max(3, new_depth - reduction);
 			}
 		}
 		do_move<me>(move);
-		value = -scout<opp, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
-		if (value >= beta && new_depth < depth - 2 + ext)
+		int testBeta = beta;// -3 * CP_SEARCH * (depth - 2 + ext - new_depth);
+		value = -scout<opp, 0>(1 - testBeta, new_depth, FlagNeatSearch | ExtToFlag(ext));
+		if (value >= testBeta && new_depth < depth - 2 + ext)
 			value = -scout<opp, 0>(1 - beta, depth - 2 + ext, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
 		undo_move<me>(move);
 		if (value > score)
@@ -8904,6 +8919,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 	if (PrN > 1 && !root && parent && depth >= SplitDepthPV)
 		do_split = 1;
 
+	LMR_<1> lmr(depth);
 	while (move = get_move<me, root>(Odd(depth)))
 	{
 		if (move == hash_move)
@@ -8927,7 +8943,7 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
-			int reduction = msb(cnt) - 1;
+			int reduction = lmr(cnt);
 			if (move == Current->ref[0] || move == Current->ref[1])
 				reduction = Max(0, reduction - 1);
 			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
@@ -8964,22 +8980,25 @@ template <bool me, bool root> int pv_search(int alpha, int beta, int depth, int 
 		if (new_depth <= 1)
 			value = -pv_search<opp, 0>(-beta, -alpha, new_depth, ExtToFlag(ext));
 		else
-			value = -scout<opp, 0>(-alpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
-		if (value > alpha && new_depth > 1)
 		{
-			if (root)
+			int testAlpha = alpha;// -3 * CP_SEARCH * (depth - 2 + ext - new_depth);
+			value = -scout<opp, 0>(-testAlpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
+			if (value > testAlpha)
 			{
-				SetScore(&RootList[cnt - 1], 1);
-				CurrentSI->Early = 0;
-				old_best = best_move;
-				best_move = move;
-			}
-			new_depth = depth - 2 + ext;
-			value = -pv_search<opp, 0>(-beta, -alpha, new_depth, ExtToFlag(ext));
-			if (root)
-			{
-				if (value <= alpha) 
-					best_move = old_best;
+				if (root && value > alpha)
+				{
+					SetScore(&RootList[cnt - 1], 1);
+					CurrentSI->Early = 0;
+					old_best = best_move;
+					best_move = move;
+				}
+				new_depth = depth - 2 + ext;
+				value = -pv_search<opp, 0>(-beta, -alpha, new_depth, ExtToFlag(ext));
+				if (root && best_move == move)
+				{
+					if (value <= alpha)
+						best_move = old_best;
+				}
 			}
 		}
 		undo_move<me>(move);
@@ -9055,8 +9074,7 @@ template <bool me> void root()
 	{
 		auto res = TBProbe(tb_probe_root_checked, me);
 		if (res != TB_RESULT_FAILED) {
-			int bestScore;
-			best_move = GetTBMove(res, &bestScore);
+			best_move = GetTBMove(res, &best_score);
 			char movStr[16];
 			move_to_string(best_move, movStr);
 			// TODO -- if TB mate, find # of moves to mate
@@ -10662,6 +10680,9 @@ void main(int argc, char *argv[])
 	init_eval();
 	Console = true;
 
+	Test1("8/5p1k/P6P/8/4KR2/7r/8/8 b - - 0 1", 44, "h7-g8");
+	cin.ignore();
+	exit(0);
 	Test1("kr6/p7/8/8/8/8/8/BBK5 w - - 0 1", 24, "g4-g5");
 
 	Test1("4kbnr/2pr1ppp/p1Q5/4p3/4P3/2Pq1b1P/PP1P1PP1/RNB2RK1 w - - 0 1", 20, "f1-e1");	// why didn't Roc keep the rook pinned?
