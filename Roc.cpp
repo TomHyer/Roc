@@ -862,7 +862,8 @@ struct GMaterial;
 struct GPawnEntry;
 struct GEvalInfo
 {
-	uint64 occ, area[2], free[2], klocus[2];
+	uint64 area[2], free[2], klocus[2];
+	uint64 occ, rray, bray;
 	GPawnEntry* PawnEntry;
 	GMaterial* material;
 	packed_t score;
@@ -1561,9 +1562,8 @@ constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
 	0, 0, 0, 0
 };
 
-enum { BishopNonForwardPawn, BishopPawnBlock, BishopOutpostNoMinor };
+enum { BishopPawnBlock, BishopOutpostNoMinor };
 constexpr array<int, 12> BishopSpecial = { // tuner: type=array, var=20, active=0
-	0, 0, 0, 0,
 	0, 6, 12, 0,
 	60, 60, 45, 0
 };
@@ -1608,8 +1608,8 @@ constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 	-14, 15, 42, 0,
 	43, 14, -9, -1 };
 
-constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
-	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
+constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
+	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
 static const uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
 static const uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
 static const uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
@@ -1619,9 +1619,10 @@ static const uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
 static const uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
 static const uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
 static const uint32 KingAttack = UPack(1, 0);
-static const uint32 KingAttackSquare = KingAttackWeight[8];
-static const uint32 KingNoMoves = KingAttackWeight[9];
-static const uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
+static const uint32 KingPAttackInc = UPack(0, KingAttackWeight[8]);
+static const uint32 KingAttackSquare = KingAttackWeight[9];
+static const uint32 KingNoMoves = KingAttackWeight[10];
+static const uint32 KingShelterQuad = KingAttackWeight[11];	// a scale factor, not a score amount
 
 template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 {
@@ -5646,9 +5647,8 @@ template <class POP> INLINE void eval_pawn_structure(const GEvalInfo& EI, GPawnE
 	PawnEntry->score = PEI.score;
 }
 
-template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
+template <bool me> INLINE void eval_queens_xray(GEvalInfo& EI)
 {
-	POP pop;
 	uint64 u, b;
 	for (u = Queen(me); T(u); u ^= b)
 	{
@@ -5661,6 +5661,7 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 				if (Single(v))
 				{
 					Current->xray[me] |= v;
+					(RMask[sq] & King(opp) ? EI.rray : EI.bray) |= v;
 					int square = lsb(v);
 					int piece = PieceAt(square);
 					int katt = 0;
@@ -5685,6 +5686,19 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 				}
 				else if (v == (v & Minor(opp)))
 					IncV(EI.score, Ca4(KingRay, QKingRay));
+	}
+}
+
+template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
+{
+	POP pop;
+	uint64 u, b;
+	for (u = Queen(me); T(u); u ^= b)
+	{
+		int sq = lsb(u);
+		b = Bit(sq);
+		uint64 att = QueenAttacks(sq, EI.occ);
+		Current->att[me] |= att;
 
 		if (uint64 a = att & EI.area[opp])
 		{
@@ -5705,9 +5719,8 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 	}
 }
 
-template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
+template<bool me> INLINE void eval_rooks_xray(GEvalInfo& EI)
 {
-	POP pop;
 	uint64 u, b;
 	for (u = Rook(me); T(u); u ^= b)
 	{
@@ -5720,6 +5733,7 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 				if (Single(v))
 				{
 					Current->xray[me] |= v;
+					EI.rray |= v;
 					int square = lsb(v);
 					int piece = PieceAt(square);
 					int katt = 0;
@@ -5749,7 +5763,18 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 				}
 				else if (F(v & ~Minor(opp) & ~Queen(opp)))
 					IncV(EI.score, Ca4(KingRay, RKingRay));
+	}
+}
 
+template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
+{
+	POP pop;
+	uint64 u, b;
+	for (u = Rook(me); T(u); u ^= b)
+	{
+		int sq = lsb(u);
+		b = Bit(sq);
+		uint64 att = RookAttacks(sq, EI.occ);
 		if (uint64 a = att & EI.area[opp])
 		{
 			EI.king_att[me] += Single(a) ? KingRAttack1 : KingRAttack;
@@ -5807,9 +5832,8 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 	}
 }
 
-template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
+template <bool me> INLINE void eval_bishops_xray(GEvalInfo& EI)
 {
-	POP pop;
 	uint64 b;
 	for (uint64 u = Bishop(me); T(u); u ^= b)
 	{
@@ -5822,6 +5846,7 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 				if (Single(v))  // pin or discovery threat
 				{
 					Current->xray[me] |= v;
+					EI.bray |= v;
 					int square = lsb(v);
 					int piece = PieceAt(square);
 					int katt = 0;
@@ -5851,7 +5876,18 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 				}
 				else if (F(v & ~Knight(opp) & ~Major(opp)))
 					IncV(EI.score, Ca4(KingRay, BKingRay));
+	}
+}
 
+template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
+{
+	POP pop;
+	uint64 b;
+	for (uint64 u = Bishop(me); T(u); u ^= b)
+	{
+		int sq = lsb(u);
+		b = Bit(sq);
+		uint64 att = BishopAttacks(sq, EI.occ);
 		if (uint64 a = att & EI.area[opp])
 			EI.king_att[me] += Single(a) ? KingBAttack1 : KingBAttack;
 		uint64 control = att & EI.free[me];
@@ -6084,11 +6120,18 @@ template<class POP> int closure()
 
 template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 {
-	POP pop;
+	EI.king_att[me] = 0;
+	if (uint64 pa = Current->patt[me] & EI.area[opp])
+	{
+		EI.king_att[me] = KingAttack + (Multiple(pa) ? KingPAttackInc : 0);
+	}
 	Current->xray[me] = 0;
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingPAttack : 0;
-	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * PawnSpecial[PawnBlocked]);
+	eval_queens_xray<me>(EI);
+	eval_rooks_xray<me>(EI);
+	eval_bishops_xray<me>(EI);
+
 	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
+	DecV(EI.score, POP()(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
 	eval_queens<me, POP>(EI);
 	EI.free[me] |= Rook(opp);
 	eval_rooks<me, POP>(EI);
@@ -6123,30 +6166,9 @@ template<class POP> void evaluation()
 	else
 		EI.material = 0;
 
-#define me White
-	Current->xray[me] = 0;
-	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
-	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingAttack : 0;
-	eval_queens<me, POP>(EI);
-	EI.free[me] |= Rook(opp);
-	eval_rooks<me, POP>(EI);
-	EI.free[me] |= Minor(opp);
-	eval_bishops<me, POP>(EI);
-	eval_knights<me, POP>(EI);
-#undef me
-#define me Black
-	Current->xray[me] = 0;
-	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
-	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingAttack : 0;
-	eval_queens<me, POP>(EI);
-	EI.free[me] |= Rook(opp);
-	eval_rooks<me, POP>(EI);
-	EI.free[me] |= Minor(opp);
-	eval_bishops<me, POP>(EI);
-	eval_knights<me, POP>(EI);
-#undef me
+	EI.rray = EI.bray = 0;
+	eval_sequential<White, POP>(EI);
+	eval_sequential<Black, POP>(EI);
 
 	EI.PawnEntry = &PawnHash[Current->pawn_key & pawn_hash_mask];
 	if (Current->pawn_key != EI.PawnEntry->key)
@@ -10178,7 +10200,7 @@ void epd_test(char filename[], int time_limit)
 void uci()
 {
 	const char* mdy = __DATE__;
-	const char now[10] = { mdy[7], mdy[8], mdy[9], mdy[10], mdy[0], mdy[1], mdy[2], mdy[4], mdy[5], 0 };
+	const char now[10] = { mdy[7], mdy[8], mdy[9], mdy[10], mdy[0], mdy[1], mdy[2], mdy[4] == ' ' ? '0' : mdy[4], mdy[5], 0 };
 	char* ptr = nullptr;
 	char * strtok_context = nullptr;
 	int i;
@@ -10680,7 +10702,7 @@ void main(int argc, char *argv[])
 	init_eval();
 	Console = true;
 
-	Test1("8/5p1k/P6P/8/4KR2/7r/8/8 b - - 0 1", 44, "h7-g8");
+	Test1("8/5p1k/P6P/8/4KR2/7r/8/8 b - - 0 1", 30, "h7-g8");
 	cin.ignore();
 	exit(0);
 	Test1("kr6/p7/8/8/8/8/8/BBK5 w - - 0 1", 24, "g4-g5");
