@@ -970,12 +970,12 @@ INLINE uint16& HistoryM(int move)
 }
 INLINE int HistoryInc(int depth)
 {
-	return Square(Min((depth) >> 1, 8));
+	return Square(10 * depth) / Square(12 + depth);
 }
 INLINE void HistoryBad(uint16* hist, int inc)
 {
-	if ((*hist & 0x00FF) >= 256 - inc)
-		*hist = ((*hist & 0xFEFE) >> 1);
+	while ((*hist & 0x00FF) >= 192 - inc)
+		*hist -= (*hist & 0xF8F8) >> 3;
 	*hist += inc;
 }
 INLINE void HistoryBad(int move, int depth)
@@ -4846,7 +4846,7 @@ inline int HistInitPst(int piece, int to, bool good)
 void init_search(int clear_hash)
 {
 	for (int ih = 0; ih < 16 * 64; ++ih)
-		HistoryVals[ih] = HistoryVals[ih + 16 * 64] = (1 << 8) | 2;	// Leave memory for joins, etc, in History
+		HistoryVals[ih] = HistoryVals[ih + 16 * 64] = (2 << 8) | 1;	// Leave memory for joins, etc, in History
 
 	memset(DeltaVals, 0, 16 * 4096 * sizeof(sint16));
 	memset(Ref, 0, 16 * 64 * sizeof(GRef));
@@ -7339,7 +7339,8 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & NAtt[from]; T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = NAtt[to] & Major(opp) ? FlagCastling : 0;
+			int flag = NAtt[to] & Current->patt[opp] ? FlagCastling : 0;
+			// int floor = T(NAtt[to] & Major(opp));
 			list = AddHistoryP(list, IKnight[me], from, to, flag);
 		}
 	}
