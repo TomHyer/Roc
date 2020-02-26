@@ -968,9 +968,9 @@ INLINE uint16& HistoryM(int move)
 {
 	return HistoryScore(JoinFlag(move), PieceAt(From(move)), From(move), To(move));
 }
-INLINE int HistoryInc(int depth)
+template<bool main> INLINE int HistoryInc(int depth)
 {
-	return Square(10 * depth) / Square(12 + depth);
+	return Square((main ? 10 : 5) * depth) / Square((main ? 12 : 6) + depth);
 }
 INLINE void HistoryBad(uint16* hist, int inc)
 {
@@ -980,7 +980,8 @@ INLINE void HistoryBad(uint16* hist, int inc)
 }
 INLINE void HistoryBad(int move, int depth)
 {
-	HistoryBad(&HistoryM(move), HistoryInc(depth));
+	HistoryBad(&HistoryM(move), HistoryInc<true>(depth));
+	HistoryBad(&HistoryM(move ^ FlagCastling), HistoryInc<false>(depth));
 }
 INLINE void HistoryGood(uint16* hist, int inc)
 {
@@ -989,7 +990,8 @@ INLINE void HistoryGood(uint16* hist, int inc)
 }
 INLINE void HistoryGood(int move, int depth)
 {
-	HistoryGood(&HistoryM(move), HistoryInc(depth));
+	HistoryGood(&HistoryM(move), HistoryInc<true>(depth));
+	HistoryGood(&HistoryM(move ^ FlagCastling), HistoryInc<false>(depth));
 }
 INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags)
 {
@@ -7377,8 +7379,9 @@ template<bool me> int* gen_quiet_moves(int* list)
 			list = AddHistoryP(list, IQueen[me], from, to, 0);	// KAtt[to] & qTarget ? FlagCastling : 0);
 		}
 	}
+	int kFlag = T(Current->xray[opp]) ? FlagCastling : 0;
 	for (v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v)) 
-		list = AddHistoryP(list, IKing[me], lsb(King(me)), lsb(v), 0);
+		list = AddHistoryP(list, IKing[me], lsb(King(me)), lsb(v), kFlag);
 
 	return NullTerminate(list);
 }
