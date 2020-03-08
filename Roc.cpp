@@ -1569,7 +1569,7 @@ constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
 };
 
 enum { BishopPawnBlock, BishopOutpostNoMinor };
-constexpr array<int, 12> BishopSpecial = { // tuner: type=array, var=20, active=0
+constexpr array<int, 8> BishopSpecial = { // tuner: type=array, var=20, active=0
 	0, 6, 12, 0,
 	60, 60, 45, 0
 };
@@ -7168,6 +7168,7 @@ template<class T_> T_* NullTerminate(T_* list)
 
 template <bool me> int* gen_evasions(int* list)
 {
+	int* p = list;
 	int from;
 	uint64 b, u;
 	//	pair<uint64, uint64> pJoins = pawn_joins(me, Pawn(me));
@@ -7244,17 +7245,19 @@ template <bool me> int* gen_evasions(int* list)
 	}
 	inter = (inter | Bit(att_sq)) & Current->mask;
 	for (u = Knight(me); T(u); Cut(u))
-		for (esc = NAtt[lsb(u)] & inter; T(esc); Cut(esc)) 
-			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(esc), 0);
+		for (uint64 v = NAtt[lsb(u)] & inter; T(v); Cut(v)) 
+			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
 	for (u = Bishop(me); T(u); Cut(u))
-		for (esc = BishopAttacks(lsb(u), PieceAll()) & inter; T(esc); Cut(esc)) 
-			list = AddCapture(list, lsb(u), lsb(esc), 0);
+		for (uint64 v = BishopAttacks(lsb(u), PieceAll()) & inter; T(v); Cut(v)) 
+			list = AddCapture(list, lsb(u), lsb(v), 0);
 	for (u = Rook(me); T(u); Cut(u))
-		for (esc = RookAttacks(lsb(u), PieceAll()) & inter; T(esc); Cut(esc)) 
-			list = AddCaptureP(list, IRook[me], lsb(u), lsb(esc), 0);
+		for (uint64 v = RookAttacks(lsb(u), PieceAll()) & inter; T(v); Cut(v)) 
+			list = AddCaptureP(list, IRook[me], lsb(u), lsb(v), 0);
 	for (u = Queen(me); T(u); Cut(u))
-		for (esc = QueenAttacks(lsb(u), PieceAll()) & inter; T(esc); Cut(esc)) 
-			list = AddCaptureP(list, IQueen[me], lsb(u), lsb(esc), 0);
+		for (uint64 v = QueenAttacks(lsb(u), PieceAll()) & inter; T(v); Cut(v)) 
+			list = AddCaptureP(list, IQueen[me], lsb(u), lsb(v), 0);
+	// sort captures to the front
+	std::partition(p, list, [=](int m) { return To(m) == att_sq; });
 	return NullTerminate(list);
 }
 
@@ -10737,7 +10740,7 @@ void main(int argc, char *argv[])
 	//Test1("5r1k/p1q2pp1/1pb4p/n3R1NQ/7P/3B1P2/2P3P1/7K w - - 0 1", 26, "e5-e6");	
 	//Test1("6k1/p3q2p/1nr3pB/8/3Q1P2/6P1/PP5P/3R2K1 b - - 0 1", 12, "c6-d6");
 	//Test1("5r1k/1P4pp/3P1p2/4p3/1P5P/3q2P1/Q2b2K1/B3R3 w - - 0 1", 36, "a2-f7");	
-	//Test1("8/pp3k2/2p1qp2/2P5/5P2/1R2p1rp/PP2R3/4K2Q b - - 0 1", 11, "e6-e4");
+	Test1("8/pp3k2/2p1qp2/2P5/5P2/1R2p1rp/PP2R3/4K2Q b - - 0 1", 21, "e6-e4");
 	//Test1("2r3k1/pbr1q2p/1p2pnp1/3p4/3P1P2/1P1BR3/PB1Q2PP/5RK1 w - - 0 1", 31, "f4-f5");
 	//Test1("b2r1rk1/2q2ppp/p1nbpn2/1p6/1P6/P1N1PN2/1B2QPPP/1BR2RK1 w - - 0 1", 4, "c3-e4");
 	//Test1("2k5/2p3Rp/p1pb4/1p2p3/4P3/PN1P1P2/1P2KP1r/8 w - - 0 1", 25, "f3-f4");		// Roc finds in 22
