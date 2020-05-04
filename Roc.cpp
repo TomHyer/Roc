@@ -86,6 +86,118 @@ template <class C> INLINE bool Odd(const C& x)
 	return T(x & 1);
 }
 
+constexpr int MAX_PHASE = 128;
+constexpr int MIDDLE_PHASE = 64;
+constexpr int PHASE_M2M = MAX_PHASE - MIDDLE_PHASE;
+
+
+#ifdef TUNER_DATA
+struct Provenance
+{
+};
+
+Provenance operator+(const Provenance& lhs, const Provenance& rhs);
+
+struct packed_t
+{
+	sint64 val;
+	std::shared_ptr<const Provenance> why;
+
+	packed_t(sint64 val_in) : val(val_in) {}
+	packed_t() : val(0x7FFFFFFFFFFFFFFF) {}
+
+	//packed_t& operator -=(sint64 inc) { val -= inc; return *this; }
+	packed_t& operator+=(const packed_t& rhs)
+	{
+		val += rhs.val;
+		if (rhs.why.get())
+		{
+			if (why.get())
+				why.reset(new Provenance(*why + *rhs.why));
+			else
+				why = rhs.why;
+		}
+	}
+};
+
+INLINE sint16 Opening(packed_t x) { return static_cast<sint16>(x.val & 0xFFFF); }
+INLINE sint16 Middle(packed_t x) { return static_cast<sint16>((x.val >> 16) + ((x.val >> 15) & 1)); }
+INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x.val >> 32) + ((x.val >> 31) & 1)); }
+INLINE sint16 Closed(packed_t x) { return static_cast<sint16>((x.val >> 48) + ((x.val >> 47) & 1)); }
+
+INLINE sint64& val_in_pack(packed_t& x) { return x.val; }
+
+#else
+typedef sint64 packed_t;
+
+INLINE sint16 Opening(packed_t x) { return static_cast<sint16>(x & 0xFFFF); }
+INLINE sint16 Middle(packed_t x) { return static_cast<sint16>((x >> 16) + ((x >> 15) & 1)); }
+INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x >> 32) + ((x >> 31) & 1)); }
+INLINE sint16 Closed(packed_t x) { return static_cast<sint16>((x >> 48) + ((x >> 47) & 1)); }
+
+INLINE sint64& val_in_pack(packed_t& x) { return x; }
+#endif
+
+#ifdef TUNER_DATA
+struct score_t
+{
+	sint16 val;
+	std::shared_ptr<const Provenance> why;
+	score_t() : val(-32767) {}
+	score_t(sint16 val_in, const std::shared_ptr<const Provenance>& why_in) : val(val_in), why(why_in) {}
+};
+
+INLINE const sint16& operator+(const score_t& score) { return score.val; }
+INLINE score_t operator-(const score_t& score) { return score_t(-(score.val), score.why); }
+INLINE bool operator<(const score_t& lhs, sint16 rhs) { return lhs.val < rhs; }
+INLINE bool operator<=(const score_t& lhs, sint16 rhs) { return lhs.val <= rhs; }
+INLINE bool operator>(const score_t& lhs, sint16 rhs) { return lhs.val > rhs; }
+INLINE bool operator>=(const score_t& lhs, sint16 rhs) { return lhs.val >= rhs; }
+INLINE bool operator<(sint16 lhs, const score_t& rhs) { return lhs < rhs.val; }
+INLINE bool operator<=(sint16 lhs, const score_t& rhs) { return lhs <= rhs.val; }
+INLINE bool operator>(sint16 lhs, const score_t& rhs) { return lhs > rhs.val; }
+INLINE bool operator>=(sint16 lhs, const score_t& rhs) { return lhs >= rhs.val; }
+INLINE bool operator<(const score_t& lhs, const score_t& rhs) { return lhs.val < rhs.val; }
+INLINE bool operator<=(const score_t& lhs, const score_t& rhs) { return lhs.val <= rhs.val; }
+INLINE bool operator>(const score_t& lhs, const score_t& rhs) { return lhs.val > rhs.val; }
+INLINE bool operator>=(const score_t& lhs, const score_t& rhs) { return lhs.val >= rhs.val; }
+
+score_t operator-(sint16 lhs, const score_t& rhs) { return score_t(lhs - rhs.val, rhs.why); }
+score_t operator-(const score_t& lhs, sint16 rhs) { return score_t(lhs.val - rhs, lhs.why); }
+score_t operator+(const score_t& lhs, sint16 rhs) { return score_t(lhs.val + rhs, lhs.why); }
+
+INLINE score_t init_score(sint16 val) { return score_t(val, std::shared_ptr<const Provenance>(new Provenance)); }
+INLINE void add_phased(score_t* score, packed_t& inc, int phase, int closure, int mat_closed)
+{
+	if (phase > MIDDLE_PHASE)
+		score->val += (Opening(inc.val) * (phase - MIDDLE_PHASE) + Middle(inc.val) * (MAX_PHASE - phase)) / PHASE_M2M;
+	else
+		score->val += (Middle(inc.val) * phase + Endgame(inc.val) * (MIDDLE_PHASE - phase)) / MIDDLE_PHASE;
+
+	score->val += static_cast<sint16>((closure * (Min<int>(phase, MIDDLE_PHASE) * Closed(inc.val) + MIDDLE_PHASE * mat_closed)) / 8192);	// closure is capped at 128, phase at 64
+}
+INLINE void scale_score(score_t* score, int num_inc, int den)
+{
+	score->val += (num_inc * score->val) / den;
+}
+#else
+typedef sint16 score_t;
+INLINE sint16 init_score(sint16 val) { return val; }
+INLINE void add_phased(score_t* score, packed_t& inc, int phase, int closure, int mat_closed)
+{
+	if (phase > MIDDLE_PHASE)
+		*score += (Opening(inc) * (phase - MIDDLE_PHASE) + Middle(inc) * (MAX_PHASE - phase)) / PHASE_M2M;
+	else
+		*score += (Middle(inc) * phase + Endgame(inc) * (MIDDLE_PHASE - phase)) / MIDDLE_PHASE;
+
+	*score += static_cast<sint16>((closure * (Min<int>(phase, MIDDLE_PHASE) * Closed(inc) + MIDDLE_PHASE * mat_closed)) / 8192);	// closure is capped at 128, phase at 64
+}
+INLINE void scale_score(score_t* score, int num_inc, int den)
+{
+	*score += (num_inc * *score) / den;
+}
+#endif
+
 #if TB
 constexpr sint16 TBMateValue = 31380;
 constexpr sint16 TBCursedMateValue = 13;
@@ -149,7 +261,8 @@ static inline unsigned tb_probe_root_checked(
 	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
 }
 
-int GetTBMove(unsigned res, int* best_score);
+
+int GetTBMove(unsigned res, score_t* best_score);
 
 #endif
 
@@ -161,53 +274,6 @@ INLINE sint64 Pack2(sint16 x, sint16 y)
 {
 	return Pack4(x, (x + y) / 2, y, 0);
 }
-
-#ifdef TUNER_DATA
-struct Provenance
-{
-};
-
-Provenance operator+(const Provenance& lhs, const Provenance& rhs);
-
-struct packed_t
-{
-	sint64 val;
-	std::shared_ptr<const Provenance> why;
-
-	packed_t(sint64 val_in) : val(val_in) {}
-	packed_t() : val(0x7FFFFFFFFFFFFFFF) {}
-
-	//packed_t& operator -=(sint64 inc) { val -= inc; return *this; }
-	packed_t& operator+=(const packed_t& rhs)
-	{
-		val += rhs.val;
-		if (rhs.why.get())
-		{
-			if (why.get())
-				why.reset(new Provenance(*why + *rhs.why));
-			else
-				why = rhs.why;
-		}
-	}
-};
-
-INLINE sint16 Opening(packed_t x) { return static_cast<sint16>(x.val & 0xFFFF); }
-INLINE sint16 Middle(packed_t x) { return static_cast<sint16>((x.val >> 16) + ((x.val >> 15) & 1)); }
-INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x.val >> 32) + ((x.val >> 31) & 1)); }
-INLINE sint16 Closed(packed_t x) { return static_cast<sint16>((x.val >> 48) + ((x.val >> 47) & 1)); }
-
-INLINE sint64& val_in_pack(packed_t& x) { return x.val; }
-
-#else
-typedef sint64 packed_t;
-
-INLINE sint16 Opening(packed_t x) { return static_cast<sint16>(x & 0xFFFF); }
-INLINE sint16 Middle(packed_t x) { return static_cast<sint16>((x >> 16) + ((x >> 15) & 1)); }
-INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x >> 32) + ((x >> 31) & 1)); }
-INLINE sint16 Closed(packed_t x) { return static_cast<sint16>((x >> 48) + ((x >> 47) & 1)); }
-
-INLINE sint64& val_in_pack(packed_t& x) { return x; }
-#endif
 
 
 // unsigned for king_att
@@ -313,63 +379,7 @@ INLINE uint32 Low32(const uint64& x)
 
 static const int N_KILLER = 2;
 
-static const int MAX_PHASE = 128;
-static const int MIDDLE_PHASE = 64;
-static const int PHASE_M2M = MAX_PHASE - MIDDLE_PHASE;
-
 static const int MAX_HEIGHT = 128;
-
-#ifdef TUNER_DATA
-struct score_t
-{
-	sint16 val;
-	std::shared_ptr<const Provenance> why;
-	score_t() : val(-32767) {}
-	score_t(sint16 val_in, const std::shared_ptr<const Provenance>& why_in) : val(val_in), why(why_in) {}
-};
-
-INLINE const sint16& operator+(const score_t& score) { return score.val; }
-INLINE score_t operator-(const score_t& score) { return score_t(-(score.val), score.why); }
-INLINE bool operator<(const score_t& lhs, sint16 rhs) { return lhs.val < rhs; }
-INLINE bool operator<=(const score_t& lhs, sint16 rhs) { return lhs.val <= rhs; }
-INLINE bool operator>(const score_t& lhs, sint16 rhs) { return lhs.val > rhs; }
-INLINE bool operator>=(const score_t& lhs, sint16 rhs) { return lhs.val >= rhs; }
-INLINE bool operator<(sint16 lhs, const score_t& rhs) { return lhs < rhs.val; }
-INLINE bool operator<=(sint16 lhs, const score_t& rhs) { return lhs <= rhs.val; }
-INLINE bool operator>(sint16 lhs, const score_t& rhs) { return lhs > rhs.val; }
-INLINE bool operator>=(sint16 lhs, const score_t& rhs) { return lhs >= rhs.val; }
-
-INLINE score_t init_score(sint16 val) { return score_t(val, std::shared_ptr<const Provenance>(new Provenance)); }
-INLINE void add_phased(score_t* score, packed_t& inc, int phase, int closure, int mat_closed)
-{
-	if (phase > MIDDLE_PHASE)
-		score->val += (Opening(inc.val) * (phase - MIDDLE_PHASE) + Middle(inc.val) * (MAX_PHASE - phase)) / PHASE_M2M;
-	else
-		score->val += (Middle(inc.val) * phase + Endgame(inc.val) * (MIDDLE_PHASE - phase)) / MIDDLE_PHASE;
-
-	score->val += static_cast<sint16>((closure * (Min<int>(phase, MIDDLE_PHASE) * Closed(inc.val) + MIDDLE_PHASE * mat_closed)) / 8192);	// closure is capped at 128, phase at 64
-}
-INLINE void scale_score(score_t* score, int num_inc, int den)
-{
-	score->val += (num_inc * score->val) / den;
-}
-#else
-typedef sint16 score_t;
-INLINE sint16 init_score(sint16 val) { return val; }
-INLINE void add_phased(score_t* score, packed_t& inc, int phase, int closure, int mat_closed)
-{
-	if (phase > MIDDLE_PHASE)
-		*score += (Opening(inc) * (phase - MIDDLE_PHASE) + Middle(inc) * (MAX_PHASE - phase)) / PHASE_M2M;
-	else
-		*score += (Middle(inc) * phase + Endgame(inc) * (MIDDLE_PHASE - phase)) / MIDDLE_PHASE;
-
-	*score += static_cast<sint16>((closure * (Min<int>(phase, MIDDLE_PHASE) * Closed(inc) + MIDDLE_PHASE * mat_closed)) / 8192);	// closure is capped at 128, phase at 64
-}
-INLINE void scale_score(score_t* score, int num_inc, int den)
-{
-	*score += (num_inc * *score) / den;
-}
-#endif
 
 static const sint16 CP_EVAL = 4;	// numeric value of 1 centipawn, in eval phase
 static const sint16 CP_SEARCH = 4;	// numeric value of 1 centipawn, in search phase (# of value equivalence classes in 1-cp interval)
@@ -562,15 +572,15 @@ inline int MapPositive(int scale, int param)
 	return param > scale ? param : (scale * scale) / (2 * scale - param);
 }
 
-static const int FailLoInit = 22;
-static const int FailHiInit = 31;
-static const int FailLoGrowth = 37;	// numerator; denominator is 64
-static const int FailHiGrowth = 26;	// numerator; denominator is 64
-static const int FailLoDelta = 27;
-static const int FailHiDelta = 24;
-static const int InitiativeConst = 2 * CP_SEARCH;
-static const int InitiativePhase = 2 * CP_SEARCH;
-static const int FutilityThreshold = 50 * CP_SEARCH;
+constexpr sint16 FailLoInit = 22;
+constexpr sint16 FailHiInit = 31;
+constexpr int FailLoGrowth = 37;	// numerator; denominator is 64
+constexpr int FailHiGrowth = 26;	// numerator; denominator is 64
+constexpr sint16 FailLoDelta = 27;
+constexpr sint16 FailHiDelta = 24;
+constexpr int InitiativeConst = 2 * CP_SEARCH;
+constexpr int InitiativePhase = 2 * CP_SEARCH;
+constexpr sint16 FutilityThreshold = 50 * CP_SEARCH;
 
 #ifdef EXPLAIN_EVAL
 FILE* fexplain;
@@ -592,8 +602,9 @@ char GullCppFile[16384][256];
 #define DecV(var, x) IncV(var, -(x))
 
 static const sint16 KpkValue = 300 * CP_EVAL;
-static const sint16 EvalValue = 30000;
-static const sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
+static const score_t EvalValue = init_score(30000);
+static const score_t MateValue = init_score(32760 - 8 * (CP_SEARCH - 1));
+static const score_t DrawScore = init_score(0);
 
 
 /*
@@ -638,10 +649,10 @@ static const int RefTwoScore = (0xFF << 16) | (2 << 24);
         return Current->score;             \
     }                                      \
     if (Current->ply >= 100)               \
-        return 0;                          \
+        return DrawScore;                          \
     for (int i = 4; i <= Current->ply; i += 2) \
         if (Stack[sp - i] == Current->key) \
-    return 0
+    return DrawScore
 INLINE int ExtToFlag(int ext)
 {
 	return ext << 16;
@@ -1151,7 +1162,8 @@ char mstring[65536];
 int MultiPV[256];
 int pvp;
 int pv_length;
-int best_move, best_score;
+int best_move;
+score_t best_score;
 int TimeLimit1, TimeLimit2, Console, HardwarePopCnt;
 int DepthLimit, LastDepth, LastTime, LastValue, LastExactValue, PrevMove, InstCnt;
 sint64 LastSpeed;
@@ -1184,19 +1196,19 @@ uint16 SMoves[256];
 jmp_buf Jump, ResetJump;
 HANDLE StreamHandle;
 
-INLINE int ExclSingle(int depth)
+INLINE sint16 ExclSingle(int depth)
 {
 	return 8 * CP_SEARCH;
 }
-INLINE int ExclDouble(int depth)
+INLINE sint16 ExclDouble(int depth)
 {
 	return 16 * CP_SEARCH;
 }
-INLINE int ExclSinglePV(int depth)
+INLINE sint16 ExclSinglePV(int depth)
 {
 	return 8 * CP_SEARCH;
 }
-INLINE int ExclDoublePV(int depth)
+INLINE sint16 ExclDoublePV(int depth)
 {
 	return 16 * CP_SEARCH;
 }
@@ -1508,20 +1520,20 @@ constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active
 };
 namespace Values
 {
-	static const packed_t PasserOpRookBlock = 
+	static const sint64 PasserOpRookBlock =
 			Pack4(0, Av(PasserSpecial, 3, ::PasserOpRookBlock, 0), Av(PasserSpecial, 3, ::PasserOpRookBlock, 1), Av(PasserSpecial, 3, ::PasserOpRookBlock, 2));
 }
 
 array<uint8, 16> LogDist;
-array<packed_t, 8> PasserGeneral;
-array<packed_t, 8> PasserBlocked;
-array<packed_t, 8> PasserFree;
-array<packed_t, 8> PasserSupported;
-array<packed_t, 8> PasserProtected;
-array<packed_t, 8> PasserConnected;
-array<packed_t, 8> PasserOutside;
-array<packed_t, 8> PasserCandidate;
-array<packed_t, 8> PasserClear;
+array<sint64, 8> PasserGeneral;
+array<sint64, 8> PasserBlocked;
+array<sint64, 8> PasserFree;
+array<sint64, 8> PasserSupported;
+array<sint64, 8> PasserProtected;
+array<sint64, 8> PasserConnected;
+array<sint64, 8> PasserOutside;
+array<sint64, 8> PasserCandidate;
+array<sint64, 8> PasserClear;
 array<sint16, 8> PasserAtt;
 array<sint16, 8> PasserDef;
 array<sint16, 8> PasserAttLog;
@@ -1640,7 +1652,7 @@ constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
 	36, 26, 16, 0, 
 	0, 18, 36, 0, 
 	4, 4, 4, 0, 
-	0, 0, 0, 0
+	0, 1, 0, 0
 };
 
 enum { BishopPawnBlock, BishopOutpostNoMinor };
@@ -1906,24 +1918,19 @@ void undo_null();
 INLINE void evaluate();
 template <bool me> bool is_legal(int move);
 template <bool me> bool is_check(int move);
-void hash_high(int value, int depth);
-int hash_low(int move, int value, int depth);	// returns input value
-void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int knodes);
 INLINE int pick_move();
 template <bool me, bool root> int get_move(int depth);
-template <bool me> bool see(int move, int margin, const uint16* mat_value);
 template <bool me> void gen_root_moves();
 template <bool me> int* gen_captures(int* list);
 template <bool me> int* gen_evasions(int* list);
 void mark_evasions(int* list);
 template <bool me> int* gen_quiet_moves(int* list);
 template <bool me> int* gen_checks(int* list);
-template <bool me> int* gen_delta_moves(int* list);
 template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int depth, int flags);
 template <bool me, bool pv> score_t q_evasion(score_t alpha, score_t beta, int depth, int flags);
 template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int flags);
 template <bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth, int flags);
-template <bool me> int multipv(int depth);
+template <bool me> score_t multipv(int depth);
 void send_pv(int depth, score_t alpha, score_t beta, score_t score);
 void send_multipv(int depth, int curr_number);
 void send_best_move();
@@ -1945,7 +1952,7 @@ INLINE bool IsCheck(bool me)
 {
 	return T(Current->att[(me) ^ 1] & King(me));
 };
-INLINE bool IsRepetition(int margin, int move)
+INLINE bool IsRepetition(sint16 margin, int move)
 {
 	return margin > 0 
 		&& Current->ply >= 2 
@@ -4938,7 +4945,7 @@ void init_search(int clear_hash)
 	}
 	get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 	nodes = tb_hits = 0;
-	best_move = best_score = 0;
+	best_move = 0;
 	LastTime = LastValue = LastExactValue = InstCnt = 0;
 	LastSpeed = 0;
 	PVN = 1;
@@ -6141,7 +6148,7 @@ template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 	}
 }
 
-template<class POP> INLINE packed_t eval_threat(const uint64& threat)
+template<class POP> INLINE sint64 eval_threat(const uint64& threat)
 {
 	POP pop;
 	if (Single(threat))
@@ -6160,7 +6167,7 @@ template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 }
 
 
-template <class POP> void eval_unusual_material(GEvalInfo& EI)
+template <class POP> void eval_unusual_material(sint16* score, uint8* phase)
 {
 	POP pop;
 	int wp, bp, wminor, bminor, wr, br, wq, bq;
@@ -6172,11 +6179,10 @@ template <class POP> void eval_unusual_material(GEvalInfo& EI)
 	br = pop(Rook(Black));
 	wq = pop(Queen(White));
 	bq = pop(Queen(Black));
-	int phase = Min(24, (wminor + bminor) + 2 * (wr + br) + 4 * (wq + bq));
-	sint16 temp = SeeValue[WhitePawn] * (wp - bp) + SeeValue[WhiteKnight] * (wminor - bminor) + SeeValue[WhiteRook] * (wr - br) +
+
+	*phase = Min(24, (wminor + bminor) + 2 * (wr + br) + 4 * (wq + bq));
+	*score = SeeValue[WhitePawn] * (wp - bp) + SeeValue[WhiteKnight] * (wminor - bminor) + SeeValue[WhiteRook] * (wr - br) +
 		SeeValue[WhiteQueen] * (wq - bq);
-	packed_t mat_score = Pack2(temp, temp);
-	Current->score = (((Opening(mat_score + EI.score) * phase) + (Endgame(mat_score + EI.score) * (24 - phase))) / 24);
 }
 
 template<class POP, int me> int closure_x()
@@ -6277,63 +6283,68 @@ template<class POP> void evaluation()
 	eval_passer<Black, POP>(EI);
 	eval_pieces<Black, POP>(EI);
 
+	uint8 phase;
+	sint16 mat_score, mat_closed = 0;
+	const GMaterial* mat = nullptr;
 	if (Current->material & FlagUnusualMaterial)
 	{
-		eval_unusual_material<POP>(EI);
-#ifndef TUNER_DATA
-		Current->score = (Current->score * CP_SEARCH) / CP_EVAL;
-#endif
+		eval_unusual_material<POP>(&mat_score, &phase);
 	}
 	else
 	{
-#ifdef TUNER
-		if (EI.material->generation != generation)
-			calc_material(Current->material);
-#endif
-		const uint8& phase = EI.material->phase;
+		phase = EI.material->phase;
+		mat_score = EI.material->score;
+		mat_closed = EI.material->closed;
+		mat = EI.material;
+	}
 #ifdef TWO_PHASE
-		int op = Opening(EI.score), eg = Endgame(EI.score);
-		Current->score = EI.material->score;
-		Current->score += (op * phase + eg * (MAX_PHASE - phase)) / MAX_PHASE;
+	int op = Opening(EI.score), eg = Endgame(EI.score);
+	Current->score = mat_score;
+	Current->score += (op * phase + eg * (MAX_PHASE - phase)) / MAX_PHASE;
 #else
-		Current->score = init_score(EI.material->score);
-		add_phased(&Current->score, EI.score, phase, closure<POP>(), EI.material->closed);
+	Current->score = init_score(mat_score);
+	add_phased(&Current->score, EI.score, phase, closure<POP>(), mat_closed);
 #endif
-		// apply contempt before drawishness
-		if (Contempt > 0)
-		{
-			int maxContempt = (phase * Contempt * CP_EVAL) / 64;
-			int me = Data->turn;
-			int mySign = F(Data->turn) ? 1 : -1;
-			if (+Current->score * mySign > 2 * maxContempt)
-				IncV(Current->score, maxContempt);
-			else if (+Current->score * mySign > 0)
-				scale_score(&Current->score, 1, 2);
-		}
+	// apply contempt before drawishness
+	if (Contempt > 0)
+	{
+		int maxContempt = (phase * Contempt * CP_EVAL) / 64;
+		int me = Data->turn;
+		int mySign = F(Data->turn) ? 1 : -1;
+		if (+Current->score * mySign > 2 * maxContempt)
+			IncV(Current->score, maxContempt);
+		else if (+Current->score * mySign > 0)
+			scale_score(&Current->score, 1, 2);
+	}
 
-		if (Current->ply >= PliesToEvalCut)
-			scale_score(&Current->score, -1, 2);
-		const int drawCap = DrawCapConstant + (DrawCapLinear * abs(+Current->score)) / 64;  // drawishness of positions can cancel this much of the score
+	if (Current->ply >= PliesToEvalCut)
+		scale_score(&Current->score, -1, 2);
+	const int drawCap = DrawCapConstant + (DrawCapLinear * abs(+Current->score)) / 64;  // drawishness of positions can cancel this much of the score
+	if (mat)
+	{
+
 		if (Current->score > 0)
 		{
-			EI.mul = EI.material->mul[White];
-			if (EI.material->eval[White] && !eval_stalemate<White>(EI))
-				EI.material->eval[White](EI, pop.Imp());
+			EI.mul = mat->mul[White];
+			if (mat && mat->eval[White] && !eval_stalemate<White>(EI))
+				mat->eval[White](EI, pop.Imp());
 			int me = White;
 			DecV(Current->score, (Min<int>(+Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64);
 		}
 		else if (Current->score < 0)
 		{
-			EI.mul = EI.material->mul[Black];
-			if (EI.material->eval[Black] && !eval_stalemate<Black>(EI))
-				EI.material->eval[Black](EI, pop.Imp());
+			EI.mul = mat->mul[Black];
+			if (mat->eval[Black] && !eval_stalemate<Black>(EI))
+				mat->eval[Black](EI, pop.Imp());
 			int me = Black;
 			DecV(Current->score, (Min<int>(-+Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64);
 		}
 		else
-			EI.mul = Min(EI.material->mul[White], EI.material->mul[Black]);
+			EI.mul = Min(mat->mul[White], mat->mul[Black]);
+
 		scale_score(&Current->score, EI.mul * CP_SEARCH - 32 * CP_EVAL, 32 * CP_EVAL);
 	}
+
 	if (Current->turn)
 		Current->score = -Current->score;
 	if (F(Current->capture) && T(Current->move) && F(Current->move & 0xE000) && Current > Data)
@@ -6553,7 +6564,7 @@ template <bool me> bool is_check(int move)
 	return false;
 }
 
-void hash_high(int value, int depth)
+void hash_high(score_t value, int depth)
 {
 	int i;
 	GEntry* best, *Entry;
@@ -6570,13 +6581,13 @@ void hash_high(int value, int depth)
 				if (Entry->low <= value)
 				{
 					Entry->high_depth = depth;
-					Entry->high = value;
+					Entry->high = +value;
 				}
 				else if (Entry->low_depth < depth)
 				{
 					Entry->high_depth = depth;
-					Entry->high = value;
-					Entry->low = value;
+					Entry->high = +value;
+					Entry->low = +value;
 				}
 			}
 			return;
@@ -6590,7 +6601,7 @@ void hash_high(int value, int depth)
 	}
 	best->date = date;
 	best->key = Low32(Current->key);
-	best->high = value;
+	best->high = +value;
 	best->high_depth = depth;
 	best->low = 0;
 	best->low_depth = 0;
@@ -6600,7 +6611,7 @@ void hash_high(int value, int depth)
 }
 
 // POSTPONED -- can hash_low return something better than its input?
-int hash_low(int move, int value, int depth)
+score_t hash_low(int move, score_t value, int depth)
 {
 	int i;
 	GEntry* best, *Entry;
@@ -6619,13 +6630,13 @@ int hash_low(int move, int value, int depth)
 				if (Entry->high >= value)
 				{
 					Entry->low_depth = depth;
-					Entry->low = value;
+					Entry->low = +value;
 				}
 				else if (Entry->high_depth < depth)
 				{
 					Entry->low_depth = depth;
-					Entry->low = value;
-					Entry->high = value;
+					Entry->low = +value;
+					Entry->high = +value;
 				}
 			}
 			else if (F(Entry->move))
@@ -6643,14 +6654,14 @@ int hash_low(int move, int value, int depth)
 	best->key = Low32(Current->key);
 	best->high = 0;
 	best->high_depth = 0;
-	best->low = value;
+	best->low = +value;
 	best->low_depth = depth;
 	best->move = move;
 	best->flags = 0;
 	return value;
 }
 
-void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int knodes)
+void hash_exact(int move, score_t value, int depth, int exclusion, int ex_depth, int knodes)
 {
 	int i, score, min_score;
 	GPVEntry* best;
@@ -6665,7 +6676,7 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 			PVEntry->knodes += knodes;
 			if (PVEntry->depth <= depth)
 			{
-				PVEntry->value = value;
+				PVEntry->value = +value;
 				PVEntry->depth = depth;
 				PVEntry->move = move;
 				PVEntry->ply = Current->ply;
@@ -6686,7 +6697,7 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 	}
 	best->key = Low32(Current->key);
 	best->date = date;
-	best->value = value;
+	best->value = +value;
 	best->depth = depth;
 	best->move = move;
 	best->exclusion = exclusion;
@@ -7630,7 +7641,7 @@ template <bool me> int* gen_delta_moves(int margin, int* list)
 	return NullTerminate(list);
 }
 
-template<bool me> int singular_extension(int ext, int prev_ext, int margin_one, int margin_two, int depth, int killer)
+template<bool me> int singular_extension(int ext, int prev_ext, sint16 margin_one, sint16 margin_two, int depth, int killer)
 {
 	int value = -MateValue;
 	int singular = 0;
@@ -8084,8 +8095,8 @@ void init_sp(GSP* Sp, score_t alpha, score_t beta, int depth, int pv, int singul
 	Sp->claimed = 1;
 	Sp->active = Sp->finished = 0;
 	Sp->best_move = 0;
-	Sp->alpha = alpha;
-	Sp->beta = beta;
+	Sp->alpha = +alpha;
+	Sp->beta = +beta;
 	Sp->depth = depth;
 	Sp->split = 0;
 	Sp->singular = singular;
@@ -8101,7 +8112,7 @@ int CutSearch(GSP* Sp)
 	return Sp->beta;
 }
 
-template <bool me> int smp_search(GSP* Sp)
+template <bool me> sint16 smp_search(GSP* Sp)
 {
 	int i, value, move, alpha;
 	if (!Sp->move_number)
@@ -8175,7 +8186,7 @@ template <bool me> int smp_search(GSP* Sp)
 	return Sp->alpha;
 }
 
-template<bool exclusion> int cut_search(int move, int hash_move, score_t score, score_t beta, int depth, int flags, int sp_init)
+template<bool exclusion> score_t cut_search(int move, int hash_move, score_t score, score_t beta, int depth, int flags, int sp_init)
 {
 	if (exclusion)
 		return score;
@@ -8202,7 +8213,7 @@ template<bool exclusion> int cut_search(int move, int hash_move, score_t score, 
 	return score;
 };
 
-INLINE int RazoringThreshold(int score, int depth, int height)
+INLINE score_t RazoringThreshold(score_t score, int depth, int height)
 {
 	return score + (70 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
 }
@@ -8232,9 +8243,9 @@ template<bool me> inline int MinZugzwangDepth()
 
 template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int flags)
 {
-	int i, cnt, flag, moves_to_play, score, move, ext, hash_move, do_split, sp_init, singular, played, high_depth, high_value, hash_value,
+	int i, cnt, flag, moves_to_play, move, ext, hash_move, do_split, sp_init, singular, played, high_depth,
 		new_depth, move_back, hash_depth;
-	score_t value;
+	score_t value, score, hash_value, high_value;
 	int height = (int)(Current - Data);
 	GSP* Sp = nullptr;
 
@@ -8265,7 +8276,7 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 #endif
 
 	if (depth <= 1)
-		return q_search<me, 0>(beta - 1, beta, 1, flags);
+		return q_search<me, 0>(init_score(+beta - 1), beta, 1, flags);
 	if (flags & FlagHaltCheck)
 	{
 		if (height - MateValue >= beta)
@@ -8299,7 +8310,7 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 		{
 			int offset = (90 + depth * 8 + Max(depth - 5, 0) * 32 + Max(depth - 11, 0) * 128) * CP_SEARCH;
 			if (beta < -200 * CP_SEARCH)
-				offset += ((beta + 100 * CP_SEARCH) * height) / 128;
+				offset += ((+beta + 100 * CP_SEARCH) * height) / 128;
 			if (T(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())))
 				offset += SeeValue[WhiteQueen] - offset / 3;
 			if (F(Queen(White) | Queen(Black)))
@@ -8323,19 +8334,19 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 		Current->best = hash_move = flags & 0xFFFF;
 		if (GEntry* Entry = probe_hash())
 		{
+			if (Entry->high < beta && Entry->high_depth >= depth)
+				return init_score(Entry->high);
 			if (Entry->high_depth > high_depth)
 			{
 				high_depth = Entry->high_depth;
-				high_value = Entry->high;
+				high_value = init_score(Entry->high);
 			}
-			if (Entry->high < beta && Entry->high_depth >= depth)
-				return Entry->high;
 			if (T(Entry->move) && Entry->low_depth > hash_depth)
 			{
 				Current->best = hash_move = Entry->move;
 				hash_depth = Entry->low_depth;
 				if (Entry->low_depth)
-					hash_value = Entry->low;
+					hash_value = init_score(Entry->low);
 			}
 			if (Entry->low >= beta && Entry->low_depth >= depth)
 			{
@@ -8352,10 +8363,10 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 						}
 						UpdateRef(Entry->move);
 					}
-					return Entry->low;
+					return init_score(Entry->low);
 				}
 				if (F(flags & FlagReturnBestMove))
-					return Entry->low;
+					return init_score(Entry->low);
 			}
 		}
 
@@ -8364,29 +8375,30 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				tb_hits++;
-				hash_high(TbValues[res], TbDepth(depth));
-				hash_low(0, TbValues[res], TbDepth(depth));
-				return TbValues[res];
+				score_t tb_score = init_score(TbValues[res]);
+				hash_high(tb_score, TbDepth(depth));
+				return hash_low(0, tb_score, TbDepth(depth));
 			}
 		}
 #endif
 
 		if (GPVEntry* PVEntry = (depth < 20 ? nullptr : probe_pv_hash()))
 		{
-			hash_low(PVEntry->move, PVEntry->value, PVEntry->depth);
-			hash_high(PVEntry->value, PVEntry->depth);
+			score_t pv_score = init_score(PVEntry->value);
+			hash_low(PVEntry->move, pv_score, PVEntry->depth);
+			hash_high(pv_score, PVEntry->depth);
 			if (PVEntry->depth >= depth)
 			{
 				if (PVEntry->move)
 					Current->best = PVEntry->move;
 				if (F(flags & FlagReturnBestMove) && ((Current->ply <= PliesToEvalCut && PVEntry->ply <= PliesToEvalCut) || (Current->ply >= PliesToEvalCut && PVEntry->ply >= PliesToEvalCut)))
-					return PVEntry->value;
+					return pv_score;
 			}
 			if (T(PVEntry->move) && PVEntry->depth > hash_depth)
 			{
 				Current->best = hash_move = PVEntry->move;
 				hash_depth = PVEntry->depth;
-				hash_value = PVEntry->value;
+				hash_value = pv_score;
 			}
 		}
 		score = depth < 10 ? height - MateValue : beta - 1;
@@ -8428,8 +8440,8 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 				ext = is_check<me>(move) ? 1 + (depth < 16) : extension<me, 0>(move, depth);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
-					int margin_one = beta - ExclSingle(depth);
-					int margin_two = beta - ExclDouble(depth);
+					sint16 margin_one = +beta - ExclSingle(depth);
+					sint16 margin_two = +beta - ExclDouble(depth);
 					int prev_ext = ExtFromFlag(flags);
 					singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
 					if (singular)
@@ -8468,11 +8480,11 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 			move_back = 0;
 	}
 	moves_to_play = 3 + Square(depth) / 6;
-	int margin = RazoringThreshold(Current->score, depth, height);
+	score_t margin = RazoringThreshold(Current->score, depth, height);
 	if (margin < beta)
 	{
 		flag = 1;
-		score = Max(margin, score);
+		score = max(margin, score);
 		Current->stage = stage_razoring;
 		Current->mask = Piece(opp);
 		value = margin + 200 * CP_SEARCH;
@@ -8501,7 +8513,7 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 		++cnt;
 		if (move == move_back)
 		{
-			score = Max(0, score);
+			score = max(DrawScore, score);
 			continue;
 		}
 		bool check = Current->stage == r_checks || is_check<me>(move);
@@ -8589,7 +8601,7 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 
 		// done splitting
 		do_move<me>(move);
-		int testBeta = beta;// -3 * CP_SEARCH * (depth - 2 + ext - new_depth);
+		score_t testBeta = beta;// -3 * CP_SEARCH * (depth - 2 + ext - new_depth);
 		value = -scout<opp, 0>(1 - testBeta, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value >= testBeta && new_depth < depth - 2 + ext)
 			value = -scout<opp, 0>(1 - beta, depth - 2 + ext, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
@@ -8604,7 +8616,7 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 	}
 	if (do_split && sp_init)
 	{
-		value = smp_search<me>(Sp);
+		value = init_score(smp_search<me>(Sp));
 		if (value >= beta && Sp->best_move)
 		{
 			score = beta;
@@ -8621,9 +8633,8 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 	}
 	if (F(cnt) && F(flag))
 	{
-		hash_high(0, 127);
-		hash_low(0, 0, 127);
-		return 0;
+		hash_high(DrawScore, 127);
+		return hash_low(0, DrawScore, 127);
 	}
 	if (F(exclusion))
 		hash_high(score, depth);
@@ -8647,7 +8658,7 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 		halt_check;
 	}
 
-	auto cut = [&](int move, int score)
+	auto cut = [&](int move, const score_t& score)
 	{
 		if (exclusion)
 			return score;
@@ -8848,8 +8859,9 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 
 template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int depth, int flags)
 {
-	int value, move, cnt, pext = 0, ext, hash_value = -MateValue, margin, do_split = 0, sp_init = 0, singular = 0, played = 0, new_depth, hash_move,
-		hash_depth, old_alpha = alpha, old_best, ex_depth = 0, ex_value = 0, start_knodes = (int)(nodes >> 10);
+	int move, cnt, pext = 0, ext, do_split = 0, sp_init = 0, singular = 0, played = 0, new_depth, hash_move,
+		hash_depth, old_best, ex_depth = 0, ex_value = 0, start_knodes = (int)(nodes >> 10);
+	score_t value, margin, hash_value = -MateValue, old_alpha = alpha;
 	GSP* Sp = nullptr;
 	int height = (int)(Current - Data);
 
@@ -8858,7 +8870,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 		depth = Max(depth, 2);
 		flags |= ExtToFlag(1);
 		if (F(RootList[0]))
-			return 0;
+			return DrawScore;
 		if (Print)
 		{
 			fprintf(stdout, "info depth %d\n", (depth / 2));
@@ -8886,21 +8898,22 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 	Current->best = hash_move = 0;
 	if (GPVEntry* PVEntry = probe_pv_hash())
 	{
-		hash_low(PVEntry->move, PVEntry->value, PVEntry->depth);
-		hash_high(PVEntry->value, PVEntry->depth);
+		score_t pv_score = init_score(PVEntry->value);
+		hash_low(PVEntry->move, pv_score, PVEntry->depth);
+		hash_high(pv_score, PVEntry->depth);
 		if (PVEntry->depth >= depth && T(PVHashing))
 		{
 			if (PVEntry->move)
 				Current->best = PVEntry->move;
 			if ((Current->ply <= PliesToEvalCut && PVEntry->ply <= PliesToEvalCut) || (Current->ply >= PliesToEvalCut && PVEntry->ply >= PliesToEvalCut))
 				if (!PVEntry->value || !draw_in_pv<me>())
-					return PVEntry->value;
+					return pv_score;
 		}
 		if (T(PVEntry->move) && PVEntry->depth > hash_depth)
 		{
 			Current->best = hash_move = PVEntry->move;
 			hash_depth = PVEntry->depth;
-			hash_value = PVEntry->value;
+			hash_value = pv_score;
 		}
 	}
 	if (GEntry* Entry = probe_hash())
@@ -8910,7 +8923,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 			Current->best = hash_move = Entry->move;
 			hash_depth = Entry->low_depth;
 			if (Entry->low_depth)
-				hash_value = Entry->low;
+				hash_value = init_score(Entry->low);
 		}
 	}
 #if TB
@@ -8919,8 +8932,9 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 		auto res = TBProbe(tb_probe_wdl, me);
 		if (res != TB_RESULT_FAILED) {
 			tb_hits++;
-			hash_high(TbValues[res], TbDepth(depth));
-			hash_low(0, TbValues[res], TbDepth(depth));
+			score_t tb_score = init_score(TbValues[res]);
+			hash_high(tb_score, TbDepth(depth));
+			hash_low(0, tb_score, TbDepth(depth));
 		}
 	}
 #endif
@@ -8928,7 +8942,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 	if (root)
 	{
 		hash_move = RootList[0];
-		hash_value = Previous;
+		hash_value = init_score(Previous);
 		hash_depth = Max(0, depth - 2);
 	}
 
@@ -8963,10 +8977,10 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 	{
 		Current->mask = Filled;
 		(void)gen_evasions<me>(Current->moves);
+		score_t mated = static_cast<sint16>(Current - Data) - MateValue;
 		if (F(Current->moves[0]))
-			return static_cast<int>(Current - Data) - MateValue;
-		if (+alpha < static_cast<int>(Current - Data) - MateValue)
-			alpha = init_score(static_cast<int>(Current - Data) - MateValue);
+			return mated;
+		alpha = max(alpha, mated);
 		if (F(Current->moves[1]))
 			pext = 2;
 	}
@@ -8987,8 +9001,8 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 		ext = is_check<me>(move) ? 2 : Max(pext, extension<me, 1>(move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
-			int margin_one = hash_value - ExclSinglePV(depth);
-			int margin_two = hash_value - ExclDoublePV(depth);
+			sint16 margin_one = +hash_value - ExclSinglePV(depth);
+			sint16 margin_two = +hash_value - ExclDoublePV(depth);
 			int prev_ext = ExtFromFlag(flags);
 			singular = singular_extension<me>(root ? 0 : ext, root ? 0 : prev_ext, margin_one, margin_two, new_depth, hash_move);
 			if (singular)
@@ -9083,7 +9097,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 			if (Print)
 				sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt);
 		}
-		if (IsRepetition(alpha + 1, move))
+		if (IsRepetition(+alpha + 1, move))
 			continue;
 		bool check = is_check<me>(move);
 		ext = check ? 2 : Max(pext, extension<me, 1>(move, depth));
@@ -9128,7 +9142,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 			value = -pv_search<opp, 0>(-beta, -alpha, new_depth, ExtToFlag(ext));
 		else
 		{
-			int testAlpha = alpha;// -3 * CP_SEARCH * (depth - 2 + ext - new_depth);
+			score_t testAlpha = alpha;// -3 * CP_SEARCH * (depth - 2 + ext - new_depth);
 			value = -scout<opp, 0>(-testAlpha, new_depth, FlagNeatSearch | ExtToFlag(ext));
 			if (value > testAlpha)
 			{
@@ -9171,7 +9185,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 	}
 	if (do_split && sp_init)
 	{
-		value = smp_search<me>(Sp);
+		value = init_score(smp_search<me>(Sp));
 		if (value > alpha && Sp->best_move)
 		{
 			alpha = value;
@@ -9182,10 +9196,10 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 	}
 	if (F(cnt) && F(IsCheck(me)))
 	{
-		hash_high(0, 127);
-		hash_low(0, 0, 127);
-		hash_exact(0, 0, 127, 0, 0, 0);
-		return 0;
+		hash_high(DrawScore, 127);
+		hash_low(0, DrawScore, 127);
+		hash_exact(0, DrawScore, 127, 0, 0, 0);
+		return DrawScore;
 	}
 	if (F(root) || F(SearchMoves))
 		hash_high(alpha, depth);
@@ -9202,8 +9216,9 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 
 template <bool me> void root()
 {
-	int i, depth, value, alpha, beta, start_depth = 2, hash_depth = 0, hash_value = 0; 
-	int store_time = 0, time_est, ex_depth = 0, ex_value, prev_time = 0, knodes = 0;
+	int i, depth, start_depth = 2, hash_depth = 0; 
+	score_t value, alpha, beta, hash_value, ex_value;
+	int store_time = 0, time_est, ex_depth = 0, prev_time = 0, knodes = 0;
 	sint64 time;
 	GPVEntry* PVEntry;
 
@@ -9225,7 +9240,7 @@ template <bool me> void root()
 			char movStr[16];
 			move_to_string(best_move, movStr);
 			// TODO -- if TB mate, find # of moves to mate
-			printf("info depth 1 seldepth 1 score cp %d nodes 1 nps 0 tbhits 1 pv %s\n", best_score / CP_SEARCH, movStr);   // Fake PV
+			printf("info depth 1 seldepth 1 score cp %d nodes 1 nps 0 tbhits 1 pv %s\n", +best_score / CP_SEARCH, movStr);   // Fake PV
 			send_best_move();
 			Searching = 0;
 			if (MaxPrN > 1) ZERO_BIT_64(Smpi->searching, 0);
@@ -9264,21 +9279,22 @@ template <bool me> void root()
 
 	memset(CurrentSI, 0, sizeof(GSearchInfo));
 	memset(BaseSI, 0, sizeof(GSearchInfo));
-	Previous = -MateValue;
+	Previous = -+MateValue;
 	if (PVEntry = probe_pv_hash())
 	{
 		if (is_legal<me>(PVEntry->move) && PVEntry->move == best_move && PVEntry->depth > hash_depth)
 		{
 			hash_depth = PVEntry->depth;
-			hash_value = PVEntry->value;
+			hash_value = init_score(PVEntry->value);
 			ex_depth = PVEntry->ex_depth;
-			ex_value = PVEntry->exclusion;
+			ex_value = init_score(PVEntry->exclusion);
 			knodes = PVEntry->knodes;
 		}
 	}
 	if (T(hash_depth) && PVN == 1)
 	{
-		Previous = best_score = hash_value;
+		best_score = hash_value;
+		Previous = +best_score;
 		depth = hash_depth;
 		if (PVHashing)
 		{
@@ -9340,7 +9356,7 @@ template <bool me> void root()
 					undo_move<me>(best_move);
 					LastDepth = depth;
 					LastTime = prev_time;
-					LastValue = LastExactValue = hash_value;
+					LastValue = LastExactValue = +hash_value;
 					send_best_move();
 					Searching = 0;
 					if (MaxPrN > 1)
@@ -9384,17 +9400,21 @@ template <bool me> void root()
 		if (PVN > 1)
 			value = multipv<me>(depth);
 		else if ((depth / 2) < 7 || F(Aspiration))
-			LastValue = LastExactValue = value = pv_search<me, 1>(-MateValue, MateValue, depth, FlagNeatSearch);
+		{
+			value = pv_search<me, 1>(-MateValue, MateValue, depth, FlagNeatSearch);
+			LastValue = LastExactValue = +value;
+		}
 		else
 		{
 			int deltaLo = FailLoInit, deltaHi = FailHiInit;
-			alpha = Previous - deltaLo;
-			beta = Previous + deltaHi;
+			alpha = init_score(Previous - deltaLo);
+			beta = init_score(Previous + deltaHi);
 			for (; ; )	// loop:
 			{
 				if (Max(deltaLo, deltaHi) >= 1300)
 				{
-					LastValue = LastExactValue = value = pv_search<me, 1>(-MateValue, MateValue, depth, FlagNeatSearch);
+					value = pv_search<me, 1>(-MateValue, MateValue, depth, FlagNeatSearch);
+					LastValue = LastExactValue = +value;
 					break;
 				}
 				value = pv_search<me, 1>(alpha, beta, depth, FlagNeatSearch);
@@ -9402,9 +9422,9 @@ template <bool me> void root()
 				{
 					CurrentSI->FailHigh = 0;
 					CurrentSI->FailLow = 1;
-					alpha -= deltaLo;
+					alpha = init_score(+alpha - deltaLo);
 					deltaLo += (deltaLo * FailLoGrowth) / 64 + FailLoDelta;
-					LastValue = value;
+					LastValue = +value;
 					memcpy(BaseSI, CurrentSI, sizeof(GSearchInfo));
 					continue;
 				}
@@ -9415,7 +9435,7 @@ template <bool me> void root()
 					CurrentSI->Early = 1;
 					CurrentSI->Change = 0;
 					CurrentSI->Singular = Max(CurrentSI->Singular, 1);
-					beta += deltaHi;
+					beta = init_score(+beta + deltaHi);
 					deltaHi += (deltaHi * FailHiGrowth) / 64 + FailHiDelta;
 					LastDepth = depth;
 					LastTime = Max(prev_time, (int)(get_time() - StartTime));
@@ -9430,13 +9450,13 @@ template <bool me> void root()
 #ifndef TUNER
 					memset(Data + 1, 0, 127 * sizeof(GData));
 #endif
-					LastValue = value;
+					LastValue = +value;
 					memcpy(BaseSI, CurrentSI, sizeof(GSearchInfo));
 					continue;
 				}
 				else
 				{
-					LastValue = LastExactValue = value;
+					LastValue = LastExactValue = +value;
 					break;
 				}
 			}
@@ -9447,7 +9467,7 @@ template <bool me> void root()
 		LastDepth = depth;
 		LastTime = Max(prev_time, (int)(get_time() - StartTime));
 		LastSpeed = nodes / Max(LastTime, 1);
-		Previous = value;
+		Previous = +value;
 		InstCnt = 0;
 #ifdef TIMING
 		if (depth >= 6)
@@ -9461,7 +9481,7 @@ template <bool me> void root()
 		send_best_move();
 }
 
-template <bool me> int multipv(int depth)
+template <bool me> score_t multipv(int depth)
 {
 	int move, low = MateValue, value, i, cnt, ext, new_depth = depth;
 	fprintf(stdout, "info depth %d\n", (depth / 2));
@@ -9525,7 +9545,7 @@ template <bool me> int multipv(int depth)
 	return Current->score;
 }
 
-void send_pv(int depth, score_t alpha, score_t beta, int score)
+void send_pv(int depth, score_t alpha, score_t beta, score_t score)
 {
 	int i, pos, move, mate = 0, mate_score, sel_depth;
 	sint64 nps, snodes, tbhits = 0;
@@ -9582,14 +9602,14 @@ void send_pv(int depth, score_t alpha, score_t beta, int score)
 	{
 		mate = 1;
 		strcpy_s(score_string, "mate ");
-		mate_score = (MateValue - score + 1) / 2;
+		mate_score = (+MateValue - +score + 1) / 2;
 		score_string[6] = 0;
 	}
 	else if (score < -EvalValue)
 	{
 		mate = 1;
 		strcpy_s(score_string, "mate ");
-		mate_score = -(score + MateValue + 1) / 2;
+		mate_score = -(+score + +MateValue + 1) / 2;
 		score_string[6] = 0;
 	}
 	else
@@ -9613,14 +9633,14 @@ void send_pv(int depth, score_t alpha, score_t beta, int score)
 	{
 		if (score <= alpha)
 			fprintf(stdout, "info depth %d seldepth %d score %s%d upperbound time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
-					(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
+					(mate ? mate_score : +score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
 		else
 			fprintf(stdout, "info depth %d seldepth %d score %s%d time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string, 
-					(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
+					(mate ? mate_score : +score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
 	}
 	else
 		fprintf(stdout, "info depth %d seldepth %d score %s%d lowerbound time %I64d nodes %I64d nps %I64d tbhits %I64d pv %s\n", depth, sel_depth, score_string,
-				(mate ? mate_score : score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
+				(mate ? mate_score : +score / CP_SEARCH), elapsed, snodes, nps, tbhits, pv_string);
 	fflush(stdout);
 }
 
@@ -9679,13 +9699,13 @@ void send_multipv(int depth, int curr_number)
 		if (score > EvalValue)
 		{
 			strcpy_s(score_string, "mate ");
-			score = (MateValue - score + 1) / 2;
+			score = (+MateValue - score + 1) / 2;
 			score_string[6] = 0;
 		}
 		else if (score < -EvalValue)
 		{
 			strcpy_s(score_string, "mate ");
-			score = -(score + MateValue + 1) / 2;
+			score = -(score + +MateValue + 1) / 2;
 			score_string[6] = 0;
 		}
 		else
@@ -9728,7 +9748,7 @@ void send_best_move()
 #else
 	snodes = nodes;
 #endif
-	fprintf(stdout, "info nodes %I64d score cp %d\n", snodes, best_score / CP_SEARCH);
+	fprintf(stdout, "info nodes %I64d score cp %d\n", snodes, +best_score / CP_SEARCH);
 	if (!best_move)
 		return;
 	Current = Data;
@@ -10055,7 +10075,7 @@ void check_state()
 {
 	GSP* Sp, *Spc;
 	int n, nc, best, pv, new_depth, r_depth, ext, move, score;
-	sint16 alpha, beta;
+	score_t alpha, beta;
 	GMove* M;
 	score_t value;
 
@@ -10133,8 +10153,8 @@ void check_state()
 	M->id = Id;
 	Sp->split |= Bit(Id);
 	pv = Sp->pv;
-	alpha = Sp->alpha;
-	beta = Sp->beta;
+	alpha = init_score(Sp->alpha);
+	beta = init_score(Sp->beta);
 	new_depth = M->reduced_depth;
 	r_depth = M->research_depth;
 	ext = M->ext;
@@ -10196,7 +10216,7 @@ void check_state()
 	M->flags |= FlagFinished;
 	if (value > Sp->alpha)
 	{
-		Sp->alpha = Min<sint16>(+value, beta);
+		Sp->alpha = Min(+value, +beta);
 		Sp->best_move = move;
 		if (value >= beta)
 		{
@@ -10888,9 +10908,9 @@ void main(int argc, char *argv[])
 #pragma warning(pop)
 #pragma optimize("", on)
 
-int GetTBMove(unsigned res, int* best_score)
+int GetTBMove(unsigned res, score_t* best_score)
 {
-	*best_score = TbValues[TB_GET_WDL(res)];
+	*best_score = init_score(TbValues[TB_GET_WDL(res)]);
 	int retval = (TB_GET_FROM(res) << 6) | TB_GET_TO(res);
 	switch (TB_GET_PROMOTES(res))
 	{
