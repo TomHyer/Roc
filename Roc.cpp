@@ -23,6 +23,8 @@
 #include <array>
 #include <numeric>
 #include <string>
+#include <vector>
+#include <unordered_set>
 #include <thread>
 #include <memory>
 #include "setjmp.h"
@@ -31,7 +33,6 @@
 #include <assert.h>
 
 //#include "TunerParams.inc"
-
 
 #ifdef TUNER
 #include "time.h"
@@ -94,14 +95,29 @@ constexpr int PHASE_M2M = MAX_PHASE - MIDDLE_PHASE;
 #ifdef TUNER_DATA
 struct Provenance
 {
+	struct Entry
+	{
+		int line;
+		array<double, 4> contrib;
+		sint64 src;
+	};
+	std::vector<Entry> vals;
+	Provenance(const std::vector<Entry>& vals_in) : vals(vals_in) {}
 };
 
-Provenance operator+(const Provenance& lhs, const Provenance& rhs);
+shared_ptr<Provenance> NoProvenance() { return make_shared<Provenance>(std::vector<Provenance::Entry>()); }
+
+Provenance operator+(Provenance& lhs, Provenance& rhs)
+{
+	auto temp = lhs.vals;
+	temp.insert(temp.end(), rhs.vals.begin(), rhs.vals.end());
+	return Provenance(temp);
+}
 
 struct packed_t
 {
 	sint64 val;
-	std::shared_ptr<const Provenance> why;
+	std::shared_ptr<Provenance> why;
 
 	packed_t(sint64 val_in) : val(val_in) {}
 	packed_t() : val(0x7FFFFFFFFFFFFFFF) {}
@@ -117,6 +133,7 @@ struct packed_t
 			else
 				why = rhs.why;
 		}
+		return *this;
 	}
 };
 
@@ -142,9 +159,9 @@ INLINE sint64& val_in_pack(packed_t& x) { return x; }
 struct score_t
 {
 	sint16 val;
-	std::shared_ptr<const Provenance> why;
+	std::shared_ptr<Provenance> why;
 	score_t() : val(-32767) {}
-	score_t(sint16 val_in, const std::shared_ptr<const Provenance>& why_in) : val(val_in), why(why_in) {}
+	score_t(sint16 val_in, const std::shared_ptr<Provenance>& why_in) : val(val_in), why(why_in) {}
 };
 
 INLINE const sint16& operator+(const score_t& score) { return score.val; }
@@ -166,19 +183,47 @@ score_t operator-(sint16 lhs, const score_t& rhs) { return score_t(lhs - rhs.val
 score_t operator-(const score_t& lhs, sint16 rhs) { return score_t(lhs.val - rhs, lhs.why); }
 score_t operator+(const score_t& lhs, sint16 rhs) { return score_t(lhs.val + rhs, lhs.why); }
 
-INLINE score_t init_score(sint16 val) { return score_t(val, std::shared_ptr<const Provenance>(new Provenance)); }
+INLINE score_t init_score(sint16 val) { return score_t(val, std::shared_ptr<Provenance>()); }
 INLINE void add_phased(score_t* score, packed_t& inc, int phase, int closure, int mat_closed)
 {
+	sint16 op_inc = Opening(inc.val), md_inc = Middle(inc.val), eg_inc = Endgame(inc.val), cl_inc = Closed(inc.val);
+	array<double, 4> leverage = { 0.0, 0.0, 0.0, 0.0 };
 	if (phase > MIDDLE_PHASE)
+	{
 		score->val += (Opening(inc.val) * (phase - MIDDLE_PHASE) + Middle(inc.val) * (MAX_PHASE - phase)) / PHASE_M2M;
+		leverage[0] = double(phase - MIDDLE_PHASE) / PHASE_M2M;
+		leverage[1] = 1.0 - leverage[0];
+	}
 	else
+	{
 		score->val += (Middle(inc.val) * phase + Endgame(inc.val) * (MIDDLE_PHASE - phase)) / MIDDLE_PHASE;
+		leverage[1] = double(phase) / MIDDLE_PHASE;
+		leverage[2] = 1.0 - leverage[1];
+	}
 
 	score->val += static_cast<sint16>((closure * (Min<int>(phase, MIDDLE_PHASE) * Closed(inc.val) + MIDDLE_PHASE * mat_closed)) / 8192);	// closure is capped at 128, phase at 64
+	leverage[3] = double(closure * Min<int>(phase, MIDDLE_PHASE)) / 8192;
+	if (!score->why)
+		score->why = NoProvenance();
+	for (auto entry : inc.why->vals)
+	{
+		for (int ii = 0; ii < 4; ++ii)
+			entry.contrib[ii] *= leverage[ii];
+		score->why->vals.push_back(entry);
+	}
+
+	array<double, 4> mc_val = { 0.0, 0.0, 0.0, double(closure * MIDDLE_PHASE * mat_closed) / 8192 };
+	score->why->vals.push_back(Provenance::Entry({ __LINE__, mc_val, mat_closed }));
 }
+
 INLINE void scale_score(score_t* score, int num_inc, int den)
 {
 	score->val += (num_inc * score->val) / den;
+	for (auto& entry : score->why->vals)
+	{
+		for (int ii = 0; ii < 4; ++ii)
+			entry.contrib[ii] *= 1.0 + float(num_inc) / den;
+	}
 }
 #else
 typedef sint16 score_t;
@@ -594,9 +639,44 @@ char GullCppFile[16384][256];
              : (me ? (var -= (x)) : (var += (x))))
 #else
 #ifdef TUNER_DATA
-#define IncV(var, x) (me ? (var.val -= (x)) : (var.val += (x)))
+void Do_IncV(packed_t& dst, sint64 inc, int line)
+{
+	if (inc == 0)
+		return;
+	dst.val += inc;
+	array<double, 4> temp = { double(Opening(inc)), double(Middle(inc)), double(Endgame(inc)), double(Closed(inc)) };
+	Provenance::Entry next = { line, temp, inc };
+	if (!dst.why)
+		dst.why = NoProvenance();
+	dst.why->vals.push_back(next);
+}
+
+void Do_IncV(score_t& dst, sint16 inc, int line)
+{
+	if (inc == 0)
+		return;
+	dst.val += inc;
+	array<double, 4> temp = { double(inc), double(inc), double(inc), double(inc) };
+	Provenance::Entry next = { line, temp, inc };
+	if (!dst.why)
+		dst.why = NoProvenance();
+	dst.why->vals.push_back(next);
+}
+
+void Do_Notice(packed_t& dst, sint64 inc, int line)
+{
+	const array<double, 4> ZERO = { 0.0, 0.0, 0.0, 0.0 };
+	Provenance::Entry next = { line, ZERO, inc };
+	if (!dst.why)
+		dst.why = NoProvenance();
+	dst.why->vals.push_back(next);
+}
+
+#define IncV(var, x) Do_IncV(var, me ? -(x): x, __LINE__)
+#define NOTICE(var, x) Do_Notice(var, x, __LINE__)
 #else
 #define IncV(var, x) (me ? (var -= (x)) : (var += (x)))
+#define NOTICE(var, x) 
 #endif
 #endif
 #define DecV(var, x) IncV(var, -(x))
@@ -1320,7 +1400,7 @@ constexpr array<int, 10> MatQuadOpp = { // tuner: type=array, var=1000, active=0
 constexpr array<int, 9> BishopPairQuad = { // tuner: type=array, var=1000, active=0
 	-38, 164, 99, 246, -84, -57, -184, 88, -186
 };
-constexpr array<int, 6> MatClosed = { -17, 26, -27, 17, -4, 20 };
+constexpr array<int, 6> MatClosed = { -13, 21, -22, 13, -1, 16 };
 
 enum
 {
@@ -1337,99 +1417,99 @@ enum
 	MatPawnOnly
 };
 constexpr array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
-	52, 0, -52, 0,
-	40, 2, -36, 0,
-	32, 40, 48, 0,
-	16, 20, 24, 0,
-	20, 28, 36, 0,
-	-12, -22, -32, 0,
-	-16, 6, 28, 0,
-	8, 4, 0, 0,
-	0, -12, -24, 0,
-	4, 8, 12, 0,
-	0, 0, 0, -100};
+	52, 1, -52, 1,
+	40, 2, -36, 1,
+	32, 40, 48, 1,
+	16, 20, 24, 1,
+	20, 28, 36, 1,
+	-12, -22, -32, 1,
+	-16, 6, 28, 1,
+	8, 4, 1, 1,
+	0, -12, -24, 1,
+	4, 8, 12, 1,
+	0, 1, 1, -100};
 
 // piece type (6) * direction (4: h center dist, v center dist, diag dist, rank) * phase (3)
 constexpr array<int, 96> PstQuadWeights = {  // tuner: type=array, var=256, active=0
-	-60, -68, -76, 0,
-	-280, -166, -52, 0,
-	132, 26, -80, 0,
-	0, 394, 788, 0,
-	-144, -316, -488, 0,
-	0, -120, -240, 0,
-	-32, -22, -12, 0,
-	-68, -90, -112, 0,
-	-108, -180, -252, 0,
-	-68, -48, -28, 0,
-	56, 28, 0, 0,
-	-96, -58, -20, 0,
-	-256, -132, -8, 0,
-	0, -76, -152, 0,
-	-32, -16, 0, 0,
-	308, 176, 44, 0,
-	-268, -128, 12, 0,
-	-16, -192, -368, 0,
-	-8, 20, 48, 0,
-	-52, -110, -168, 0,
-	-252, -294, -336, 0,
-	-700, -434, -168, 0,
-	-8, -38, -68, 0,
-	160, 42, -76, 0
+	-60, -68, -76, 1,
+	-280, -166, -52, 1,
+	132, 26, -80, 1,
+	0, 394, 788, 1,
+	-144, -316, -488, 1,
+	0, -120, -240, 1,
+	-32, -22, -12, 1,
+	-68, -90, -112, 1,
+	-108, -180, -252, 1,
+	-68, -48, -28, 1,
+	56, 28, 1, 1,
+	-96, -58, -20, 1,
+	-256, -132, -8, 1,
+	0, -76, -152, 1,
+	-32, -16, 1, 1,
+	308, 176, 44, 1,
+	-268, -128, 12, 1,
+	-16, -192, -368, 1,
+	-8, 20, 48, 1,
+	-52, -110, -168, 1,
+	-252, -294, -336, 1,
+	-700, -434, -168, 1,
+	-8, -38, -68, 1,
+	160, 42, -76, 1
 };
 
 constexpr array<int, 96> PstLinearWeights = {  // tuner: type=array, var=1280, active=0
-	-428, -80, 268, 0,
-	-460, -64, 332, 0,
-	-220, 24, 268,  0,
-	368, 1070, 1772,  0,
-	-708, -344, 20,  0,
-	-328, -286, -244,  0,
-	-424, -420, -416,  0,
-	1092, 806, 520, 0,
-	0, -290, -580,  0,
-	-420, -326, -232, 0,
-	-396, -272, -148,  0,
-	-532, -188, 56,  0,
-	-740, -456, -172,  0,
-	-268, -240, -212,  0,
-	212, -24, -260,  0,
-	696, 616, 536, 0,
-	-516, -244, 28,  0,
-	392, -266, -924,  0,
-	428, 134, -160,  0,
-	-108, 568, 1244,  0,
-	1024, 278, -468,  0,
-	3252, 1264, -724,  0,
-	8, -426, -860,  0,
+	-428, -80, 268, 1,
+	-460, -64, 332, 1,
+	-220, 24, 268,  1,
+	368, 1070, 1772,  1,
+	-708, -344, 20,  1,
+	-328, -286, -244,  1,
+	-424, -420, -416,  1,
+	1092, 806, 520, 1,
+	1, -290, -580,  1,
+	-420, -326, -232, 1,
+	-396, -272, -148,  1,
+	-532, -188, 56,  1,
+	-740, -456, -172,  1,
+	-268, -240, -212,  1,
+	212, -24, -260,  1,
+	696, 616, 536, 1,
+	-516, -244, 28,  1,
+	392, -266, -924,  1,
+	428, 134, -160,  1,
+	-108, 568, 1244,  1,
+	1024, 278, -468,  1,
+	3252, 1264, -724,  1,
+	8, -426, -860,  1,
 	-176, 600, 1376, 0 };
 
 // piece type (6) * type (2: h * v, h * rank) * phase (3)
 constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256, active=0
-	56, 16, -24,  0,
-	4, -6, -16,  0,
-	-32, -20, -8,  0,
-	16, 0, -16, 0,
-	4, -12, -28,  0,
-	-48, -24, 0,  0,
-	-8, -6, -4,  0,
-	-20, -2, 16, 0,
-	20, -10, -40,  0,
-	0, 8, 16,  0,
-	-8, 6, 20,  0,
+	56, 16, -24,  1,
+	4, -6, -16,  1,
+	-32, -20, -8,  1,
+	16, 1, -16, 1,
+	4, -12, -28,  1,
+	-48, -24, 1,  1,
+	-8, -6, -4,  1,
+	-20, -2, 16, 1,
+	20, -10, -40,  1,
+	0, 8, 16,  1,
+	-8, 6, 20,  1,
 	16, 4, -8, 0
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 18, 2000, 891, 89, -215, 257, 289, -47, 178 };
-constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 137, 1687, 1644, 1594, -580, -96, 437, 136, 502 };
-constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 22, -565, 248, 1251, 7, 64, 59, 53, -15 };
-constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, 16, 1755, 324, -1091, 8, 65, 89, 20, -18 };
+constexpr array<int, 12> MobCoeffsKnight = { 1281, 840, 583, 18, 2000, 873, 78, -217, 246, 264, -51, 182 };
+constexpr array<int, 12> MobCoeffsBishop = { 1334, 671, 587, 121, 1516, 1478, 1675, -520, -108, 391, 136, 554 };
+constexpr array<int, 12> MobCoeffsRook = { 984, 796, 724, 24, -507, 221, 1340, 9, 58, 51, 55, -18 };
+constexpr array<int, 12> MobCoeffsQueen = { 536, 786, 1035, 18, 1578, 290, -980, 9, 57, 78, 18, -15 };
 
 constexpr int N_LOCUS = 22;
 
-array<array<packed_t, 9>, 2> MobKnight;
-array<array<packed_t, 15>, 2> MobBishop, MobRook;
-array<array<packed_t, 28>, 2> MobQueen;
+array<array<sint64, 9>, 2> MobKnight;
+array<array<sint64, 15>, 2> MobBishop, MobRook;
+array<array<sint64, 28>, 2> MobQueen;
 array<uint64, 64> KingLocus;
 
 // file type (3) * distance from 2d rank/open (5)
@@ -1471,25 +1551,25 @@ array<sint16, 4> StormFree;
 
 // type (9: general, blocked, free, supported, protected, connected, outside, candidate, clear) * phase (4)
 constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
-	76, 64, 52, 0,
-	84, 48, 12, 0,
-	-32, 204, 504, 0,
-	0, 130, 260,  0,
-	128, 176, 224,  0,
-	108, 44, -20,  0,
-	128, 32, -64, 0,
-	52, 34, 16,  0,
-	4, 4, 4, 0 };
+	66, 57, 59, 2,
+	74, 41, 15, 2,
+	-34, 224, 556, 2,
+	0, 120, 288, 2,
+	132, 171, 248, 2,
+	95, 38, -24, 2,
+	113, 27, -72, 2,
+	45, 29, 20, 2,
+	6, 5, 2, 1 };
 constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
-	164, 86, 8, 0,
-	444, 394, 344, 0,
-	375, 582, 452, 0,
-	808, 434, 60, 0,
-	-244, -80, 84, 0,
-	372, 518, 664, 0,
-	344, 356, 368, 0,
-	108, 122, 136, 0,
-	-72, -50, -28, 0 };
+	146, 76, 11, 2,
+	398, 353, 380, 2,
+	391, 636, 499, 2,
+	725, 402, 68, 2,
+	-251, -78, 94, 2,
+	333, 464, 732, 2,
+	308, 318, 407, 2,
+	95, 108, 152, 2,
+	-72, -50, -28, 1 };
 constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
 	0, 0, 0, 0,
 	0, 0, 0, 0,
@@ -1502,10 +1582,10 @@ constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, act
 	0, 0, 0, 0 };
 // type (2: att, def) * scaling (2: linear, log) 
 constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
-	764, 204, 332, 76
+	842, 226, 367, 86
 };
 constexpr array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
-	2536, 16, 932, 264
+	2792, 20, 1027, 292
 };
 constexpr array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=0
 	0, 0, 0, 0
@@ -1513,10 +1593,10 @@ constexpr array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, act
 enum { PasserOnePiece, PasserOpKingControl, PasserOpMinorControl, PasserOpRookBlock };
 // case(4) * phase(3 -- no opening)
 constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active=0
-	0, 0, 0,
-	0, 0, 0,
-	0, 0, 0,
-	26, 52, 0
+	1, 1, 1,
+	1, 1, 1,
+	1, 1, 1,
+	27, 51, 2
 };
 namespace Values
 {
@@ -1548,11 +1628,11 @@ enum
 	IsolatedDoubledClosed
 };
 constexpr array<int, 20> Isolated = {	
-	36, 28, 19, 1,
-	40, 21, 1, 12,
-	-40, -20, -3, -3,
-	0, 10, 45, 3,
-	27, 27, 36, 8 };
+	33, 25, 17, 1,
+	37, 19, 1, 10,
+	-38, -20, -2, -3,
+	1, 9, 46, 3,
+	25, 25, 37, 8 };
 
 enum
 {
@@ -1561,25 +1641,25 @@ enum
 	ChainRoot
 };
 constexpr array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
-	16, 18, 20, 0,
-	-20, -12, -4, 0,
-	36, 16, -4, 0 };
+	20, 20, 22, -1,
+	-18, -12, -5, 2,
+	30, 13, -5, -1 };
 enum
 {
 	BackwardOpen,
 	BackwardClosed
 };
 constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
-	68, 54, 40, 0,
-	16, 10, 4, 0 };
+	68, 55, 36, -2,
+	16, 10, 3, -2 };
 enum
 {
 	DoubledOpen,
 	DoubledClosed
 };
 constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-	12, 6, 0, 0,
-	4, 2, 0, 0 };
+	12, 6, 1, 1,
+	4, 2, 1, 1 };
 
 enum
 {
@@ -1595,35 +1675,35 @@ enum
 	Rook7thDoubled
 };
 constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
-	32, 16, 0, 0,
-	8, 4, 0, 0,
-	44, 38, 32, 0,
-	-4, 2, 8, 0,
-	-4, -4, -4, 0,
-	56, 26, -4, 0,
-	20, 0, -20, 0,
-	-20, -10, 0, 0,
-	-24, 4, 32, 0,
-	-28, 48, 124, 0 };
+	29, 14, 1, -1,
+	5, 3, 2, 2,
+	38, 32, 34, 2,
+	-4, 1, 9, 2,
+	-4, -4, -4, 1,
+	48, 22, -5, 2,
+	16, -1, -22, 2,
+	-23, -13, -1, 3,
+	-28, 3, 31, 3,
+	-29, 43, 110, 3 };
 
 enum
 {
-	TacticalMajorPawn,
-	TacticalMinorPawn,
+	TacticalQueenPawn, TacticalRookPawn,
+	TacticalBishopPawn, TacticalKnightPawn,
 	TacticalMajorMinor,
 	TacticalMinorMinor,
 	TacticalThreat,
-	TacticalDoubleThreat,
-	TacticalUnguardedQ
+	TacticalDoubleThreat
 };
-constexpr array<int, 28> Tactical = {  // tuner: type=array, var=51, active=0
-	-4, 8, 20, 0,
-	0, 10, 20, 0,
-	44, 80, 116, 0,
-	92, 110, 128, 0,
-	76, 60, 44, 0,
-	164, 106, 48, 0,
-	0,	10,	40,	-10
+constexpr array<int, 36> Tactical = {  // tuner: type=array, var=51, active=0
+	-5, 7, 16, 3, 
+	-3, 9, 21, -1,
+	1, 11, 22, -1, 
+	1, 8, 16, 1,	
+	40, 70, 107, 2,
+	83, 97, 113, 3,
+	73, 52, 45, 2,
+	159, 95, 49, 2
 };
 
 enum
@@ -1634,10 +1714,10 @@ enum
 	KingDefQueen
 };
 constexpr array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
-	8, 4, 0, 0,
-	0, 2, 4, 0,
-	0, 0, 0, 0,
-	16, 8, 0, 0 };
+	11, 5, -1, -1,
+	1, 2, 5, 1,
+	0, 1, 1, 1,
+	17, 7, -1, -1 };
 
 enum
 {
@@ -1648,17 +1728,17 @@ enum
 	PawnRestrictsK
 };
 constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
-	44, 40, 36, 0, 
-	36, 26, 16, 0, 
-	0, 18, 36, 0, 
-	4, 4, 4, 0, 
-	0, 1, 0, 0
+	39, 34, 41, 2, 
+	32, 22, 19, 2, 
+	1, 19, 34, -1, 
+	4, 3, 6, 2, 
+	1, 2, 1, 3
 };
 
 enum { BishopPawnBlock, BishopOutpostNoMinor };
 constexpr array<int, 8> BishopSpecial = { // tuner: type=array, var=20, active=0
-	0, 6, 12, 0,
-	60, 60, 45, 0
+	1, 7, 10, 1,
+	58, 60, 45, 1
 };
 
 constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
@@ -1670,25 +1750,25 @@ enum
 	KnightOutpostNoMinor
 };
 constexpr array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
-	40, 40, 24, 0,
-	41, 40, 0, 0,
-	44, 44, 18, 0,
-	41, 40, 0, 0 };
+	34, 34, 21, 2,
+	35, 36, 1, -1,
+	38, 38, 18, -1,
+	38, 37, -1, 1 };
 
 enum
 {
-	WeakPin,
+	QueenWeakPin, RookWeakPin,
 	StrongPin,
 	ThreatPin,
 	SelfPawnPin,
 	SelfPiecePin
 };
-constexpr array<int, 20> Pin = {  // tuner: type=array, var=51, active=0
-	84, 120, 156, 0,
-	24, 172, 320, 0,
-	180, 148, 116, 0,
-	32, 34, 36, 0,
-	192, 150, 108, 0 };
+constexpr array<int, 24> Pin = {  // tuner: type=array, var=51, active=0
+	74, 106, 138, 3, 74, 116, 151, 2,
+	20, 153, 296, 3,
+	196, 165, 130, -1,
+	31, 33, 36, 3,	
+	171, 147, 106, 3 };	
 
 enum
 {
@@ -1697,9 +1777,9 @@ enum
 	BKingRay
 };
 constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
-	17, 26, 33, -2,
-	-14, 15, 42, 0,
-	43, 14, -9, -1 };
+	15, 24, 31, 1,
+	-7, 16, 44, -1,
+	34, 15, -7, 1 };
 
 constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
@@ -3891,7 +3971,7 @@ template<class T_> void init_mobility
 		double val = pop * (coeffs[phase] - coeffs[phase + 8]) + log(1.0 + pop) * coeffs[phase + 4];
 		return static_cast<sint16>(val / 64.0);
 	};
-	auto m2 = [&](int pop)->packed_t
+	auto m2 = [&](int pop)->sint64
 	{
 		return Pack4(m1(0, pop), m1(1, pop), m1(2, pop), m1(3, pop));
 	};
@@ -3899,7 +3979,7 @@ template<class T_> void init_mobility
 	{
 		return static_cast<sint16>(pop * coeffs[phase + 8] / double(N_LOCUS));
 	};
-	auto l2 = [&](int pop)->packed_t
+	auto l2 = [&](int pop)->sint64
 	{
 		return Pack4(l1(0, pop), l1(1, pop), l1(2, pop), l1(3, pop));
 	};
@@ -5142,7 +5222,7 @@ int move_from_string(char string[])
 	from = ((string[1] - '1') * 8) + (string[0] - 'a');
 	to = ((string[3] - '1') * 8) + (string[2] - 'a');
 	move = (from << 6) | to;
-	if (Board->square[from] >= WhiteKing && abs(to - from) == 2)
+	if (PieceAt(from) >= WhiteKing && abs(to - from) == 2)
 		move |= FlagCastling;
 	if (T(Current->ep_square) && to == Current->ep_square)
 		move |= FlagEP;
@@ -5619,7 +5699,7 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 		int open = !(PawnAll() & way);
 
 		if (isolated)
-		{
+		{	// POSTPONED -- split lines for tuning
 			DecV(PEI.score, open ? Ca4(Isolated, IsolatedOpen) : Ca4(Isolated, IsolatedClosed));
 			if (F(open) && next == IPawn[opp])
 				DecV(PEI.score, Ca4(Isolated, IsolatedBlocked));
@@ -5627,7 +5707,7 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 				DecV(PEI.score, open ? Ca4(Isolated, IsolatedDoubledOpen) : Ca4(Isolated, IsolatedDoubledClosed));
 		}
 		else
-		{
+		{	// POSTPONED -- split lines for tuning
 			if (doubled)
 				DecV(PEI.score, open ? Ca4(Doubled, DoubledOpen) : Ca4(Doubled, DoubledClosed));
 			if (rrank >= 3 && (b & (File[2] | File[3] | File[4] | File[5])) && next != IPawn[opp] && (PIsolated[file] & Line[rank] & Pawn(me)))
@@ -5642,7 +5722,7 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 				if (OwnRank<me>(NB<me>(PEI.patt[me] & way)) > OwnRank<me>(NB<me>(v)))
 					backward = 1;
 		}
-		if (backward)
+		if (backward)	// POSTPONED -- split lines for tuning
 			DecV(PEI.score, open ? Ca4(Backward, BackwardOpen) : Ca4(Backward, BackwardClosed));
 		else
 		{
@@ -5764,7 +5844,7 @@ template <bool me> INLINE void eval_queens_xray(GEvalInfo& EI)
 					}
 					else if (piece != IPawn[opp] && !(((BMask[sq] & Bishop(opp)) | (RMask[sq] & Rook(opp)) | Queen(opp)) & v))
 					{
-						IncV(EI.score, Ca4(Pin, WeakPin));
+						IncV(EI.score, Ca4(Pin, QueenWeakPin));
 						if (!(Current->patt[opp] & v))
 							katt = 1;
 					}
@@ -5798,7 +5878,7 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 		IncV(EI.score, MobQueen[0][pop(control)]);
 		IncV(EI.score, MobQueen[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
-			IncV(EI.score, Ca4(Tactical, TacticalMajorPawn));
+			IncV(EI.score, Ca4(Tactical, TacticalQueenPawn));
 		if (control & Minor(opp))
 			IncV(EI.score, Ca4(Tactical, TacticalMajorMinor));
 		if (att & EI.area[me])
@@ -5838,7 +5918,7 @@ template<bool me> INLINE void eval_rooks_xray(GEvalInfo& EI)
 					{
 						if (piece < WhiteRook)
 						{
-							IncV(EI.score, Ca4(Pin, WeakPin));
+							IncV(EI.score, Ca4(Pin, RookWeakPin));
 							if (!(Current->patt[opp] & v))
 								katt = 1;
 						}
@@ -5874,13 +5954,13 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		IncV(EI.score, MobRook[0][pop(control)]);
 		IncV(EI.score, MobRook[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
-			IncV(EI.score, Ca4(Tactical, TacticalMajorPawn));
+			IncV(EI.score, Ca4(Tactical, TacticalRookPawn));
 		if (control & Minor(opp))
 			IncV(EI.score, Ca4(Tactical, TacticalMajorMinor));
 		if (!(PWay[me][sq] & Pawn(me)))
 		{
 			IncV(EI.score, Ca4(RookSpecial, RookHof));
-			packed_t hof_score = 0;
+			sint64 hof_score = 0;
 			if (!(PWay[me][sq] & Pawn(opp)))
 			{
 				IncV(EI.score, Ca4(RookSpecial, RookOf));
@@ -5981,7 +6061,7 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		IncV(EI.score, MobBishop[0][pop(control)]);
 		IncV(EI.score, MobBishop[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
-			IncV(EI.score, Ca4(Tactical, TacticalMinorPawn));
+			IncV(EI.score, Ca4(Tactical, TacticalBishopPawn));
 		if (control & Knight(opp))
 			IncV(EI.score, Ca4(Tactical, TacticalMinorMinor));
 		if (att & EI.area[me])
@@ -6022,7 +6102,7 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		IncV(EI.score, MobKnight[0][pop(control)]);
 		IncV(EI.score, MobKnight[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
-			IncV(EI.score, Ca4(Tactical, TacticalMinorPawn));
+			IncV(EI.score, Ca4(Tactical, TacticalKnightPawn));
 		if (control & Bishop(opp))
 			IncV(EI.score, Ca4(Tactical, TacticalMinorMinor));
 		if (att & EI.area[me])
@@ -6046,6 +6126,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	POP pop;
 	uint16 cnt = Min<uint16>(10, UUnpack1(EI.king_att[me]));
+	NOTICE(EI.score, cnt);
 	uint16 score = UUnpack2(EI.king_att[me]);
 	if (cnt >= 2 && T(Queen(me)))
 	{
@@ -6076,7 +6157,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 24, 20, 3, 0 };
+	static constexpr array<int, 4> PHASE = { 22, 18, 3, -1 };
 	int op = ((PHASE[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 32;
 	int md = (PHASE[1] * adjusted) / 32;
 	int eg = (PHASE[2] * adjusted) / 32;
@@ -6149,7 +6230,7 @@ template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 }
 
 template<class POP> INLINE sint64 eval_threat(const uint64& threat)
-{
+{	// POSTPONED -- inline for tuning
 	POP pop;
 	if (Single(threat))
 		return threat ? Ca4(Tactical, TacticalThreat) : 0;
@@ -6159,11 +6240,11 @@ template<class POP> INLINE sint64 eval_threat(const uint64& threat)
 
 template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 {
-	POP pop;
+
 	Current->threat |= Current->att[opp] & (~Current->att[me]) & Piece(me);
 	DecV(EI.score, eval_threat<POP>(Current->threat & Piece(me)));
-	if (T(Queen(me)) && F(Queen(opp)))
-		IncV(EI.score, pop((Piece(opp) ^ King(opp)) & ~Current->att[opp]) * Ca4(Tactical, TacticalUnguardedQ));
+
+
 }
 
 
@@ -6329,7 +6410,7 @@ template<class POP> void evaluation()
 			if (mat && mat->eval[White] && !eval_stalemate<White>(EI))
 				mat->eval[White](EI, pop.Imp());
 			int me = White;
-			DecV(Current->score, (Min<int>(+Current->score, drawCap) * EI.PawnEntry->draw[White]) / 64);
+			DecV(Current->score, (Min<int>(+Current->score, drawCap) * EI.PawnEntry->draw[White]) / 68);
 		}
 		else if (Current->score < 0)
 		{
@@ -6337,7 +6418,7 @@ template<class POP> void evaluation()
 			if (mat->eval[Black] && !eval_stalemate<Black>(EI))
 				mat->eval[Black](EI, pop.Imp());
 			int me = Black;
-			DecV(Current->score, (Min<int>(-+Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 64);
+			DecV(Current->score, (Min<int>(-+Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 68);
 		}
 		else
 			EI.mul = Min(mat->mul[White], mat->mul[Black]);
@@ -6365,13 +6446,10 @@ BYE}
 
 template<bool me> bool is_legal(int move)
 {
-	int from, to, piece, capture;
 	uint64 u, occ;
 
-	from = From(move);
-	to = To(move);
-	piece = Board->square[from];
-	capture = Board->square[to];
+	int from = From(move), to = To(move);
+	int piece = PieceAt(from), capture = PieceAt(to);
 	if (piece == 0)
 		return 0;
 	if ((piece & 1) != Current->turn)
@@ -6400,9 +6478,9 @@ template<bool me> bool is_legal(int move)
 			return 0;
 		return 1;
 	}
-	if (IsCastling(piece, move) && Board->square[from] < WhiteKing)
+	if (IsCastling(piece, move) && piece < WhiteKing)
 		return 0;
-	if (IsPromotion(move) && Board->square[from] >= WhiteKnight)
+	if (IsPromotion(move) && piece >= WhiteKnight)
 		return 0;
 	if (piece == IPawn[me])
 	{
@@ -6661,7 +6739,7 @@ score_t hash_low(int move, score_t value, int depth)
 	return value;
 }
 
-void hash_exact(int move, score_t value, int depth, int exclusion, int ex_depth, int knodes)
+void hash_exact(int move, score_t value, int depth, score_t exclusion, int ex_depth, int knodes)
 {
 	int i, score, min_score;
 	GPVEntry* best;
@@ -6682,7 +6760,7 @@ void hash_exact(int move, score_t value, int depth, int exclusion, int ex_depth,
 				PVEntry->ply = Current->ply;
 				if (ex_depth)
 				{
-					PVEntry->exclusion = exclusion;
+					PVEntry->exclusion = +exclusion;
 					PVEntry->ex_depth = ex_depth;
 				}
 			}
@@ -6700,7 +6778,7 @@ void hash_exact(int move, score_t value, int depth, int exclusion, int ex_depth,
 	best->value = +value;
 	best->depth = depth;
 	best->move = move;
-	best->exclusion = exclusion;
+	best->exclusion = +exclusion;
 	best->ex_depth = ex_depth;
 	best->knodes = knodes;
 	best->ply = Current->ply;
@@ -7641,9 +7719,9 @@ template <bool me> int* gen_delta_moves(int margin, int* list)
 	return NullTerminate(list);
 }
 
-template<bool me> int singular_extension(int ext, int prev_ext, sint16 margin_one, sint16 margin_two, int depth, int killer)
+template<bool me> int singular_extension(int ext, int prev_ext, score_t margin_one, score_t margin_two, int depth, int killer)
 {
-	int value = -MateValue;
+	score_t value = -MateValue;
 	int singular = 0;
 	if (ext < (prev_ext ? 1 : 2))
 	{
@@ -7660,7 +7738,7 @@ template<bool me> int singular_extension(int ext, int prev_ext, sint16 margin_on
 	return singular;
 }
 
-template<bool me> INLINE uint64 capture_margin_mask(int alpha, int* score) 
+template<bool me> INLINE uint64 capture_margin_mask(const score_t& alpha, score_t* score) 
 {
 	uint64 retval = Piece(opp);
 	if (Current->score + 200 * CP_SEARCH < alpha) {
@@ -7690,9 +7768,10 @@ template<bool me> INLINE uint64 capture_margin_mask(int alpha, int* score)
 
 template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int depth, int flags)
 {
-	int i, value, score, move, hash_move, hash_depth, cnt;
+	int i, move, hash_move, hash_depth, cnt;
+	score_t value, score;
 	GEntry* Entry;
-	auto finish = [&](int score)
+	auto finish = [&](const score_t& score)
 	{
 		if (depth >= -2 && (depth >= 0 || Current->score + FutilityThreshold >= alpha))
 			hash_high(score, 1);
@@ -7748,7 +7827,7 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 				if (T(Entry->low_depth))
 				{
 					if (Entry->low >= beta && !pv)
-						return Entry->low;
+						return init_score(Entry->low);
 					if (Entry->low_depth > hash_depth && T(Entry->move))
 					{
 						hash_move = Entry->move;
@@ -7756,7 +7835,7 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 					}
 				}
 				if (T(Entry->high_depth) && Entry->high <= alpha && !pv)
-					return Entry->high;
+					return init_score(Entry->high);
 				break;
 			}
 		}
@@ -7830,7 +7909,7 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 	Current->current = Current->moves;
 	while (move = pick_move())
 	{
-		if (move != hash_move && !IsIllegal(me, move) && !IsRepetition(alpha + 1, move) && see<me>(move, -SeeThreshold, SeeValue))
+		if (move != hash_move && !IsIllegal(me, move) && !IsRepetition(+alpha + 1, move) && see<me>(move, -SeeThreshold, SeeValue))
 		{
 			do_move<me>(move);
 			value = -q_evasion<opp, pv>(-beta, -alpha, depth - 1, FlagNeatSearch);
@@ -7851,12 +7930,12 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 	if (T(cnt) || Current->score + 30 * CP_SEARCH < alpha || T(Current->threat & Piece(me)) || T(Current->xray[opp] & NonPawn(opp)) ||
 		T(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())))
 		return finish(score);
-	int margin = alpha - Current->score + 6 * CP_SEARCH;
+	sint16 margin = +alpha - +Current->score + 6 * CP_SEARCH;
 	gen_delta_moves<me>(margin, Current->moves);
 	Current->current = Current->moves;
 	while (move = pick_move())
 	{
-		if (move != hash_move && !IsIllegal(me, move) && !IsRepetition(alpha + 1, move) && see<me>(move, -SeeThreshold, SeeValue))
+		if (move != hash_move && !IsIllegal(me, move) && !IsRepetition(+alpha + 1, move) && see<me>(move, -SeeThreshold, SeeValue))
 		{
 			++cnt;
 			do_move<me>(move);
@@ -7888,7 +7967,8 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 
 template <bool me, bool pv> score_t q_evasion(score_t alpha, score_t beta, int depth, int flags)
 {
-	int i, value, pext, score, move, cnt, hash_move, hash_depth;
+	int i, pext, move, cnt, hash_move, hash_depth;
+	score_t value, score;
 	int* p;
 	GEntry* Entry;
 
@@ -7906,7 +7986,7 @@ template <bool me, bool pv> score_t q_evasion(score_t alpha, score_t beta, int d
 				if (T(Entry->low_depth))
 				{
 					if (Entry->low >= beta && !pv)
-						return Entry->low;
+						return init_score(Entry->low);
 					if (Entry->low_depth > hash_depth && T(Entry->move))
 					{
 						hash_move = Entry->move;
@@ -7914,7 +7994,7 @@ template <bool me, bool pv> score_t q_evasion(score_t alpha, score_t beta, int d
 					}
 				}
 				if (T(Entry->high_depth) && Entry->high <= alpha && !pv)
-					return Entry->high;
+					return init_score(Entry->high);
 				break;
 			}
 		}
@@ -7960,9 +8040,9 @@ template <bool me, bool pv> score_t q_evasion(score_t alpha, score_t beta, int d
 		if (IsIllegal(me, move))
 			continue;
 		++cnt;
-		if (IsRepetition(alpha + 1, move))
+		if (IsRepetition(+alpha + 1, move))
 		{
-			score = Max(0, score);
+			score = Max(DrawScore, score);
 			continue;
 		}
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
@@ -8006,7 +8086,8 @@ void send_position(GPos* Pos)
 	Pos->Position->piece = Current->piece;
 	Pos->Position->pst = Current->pst;
 	Pos->Position->material = Current->material;
-	for (int i = 0; i < 64; ++i) Pos->Position->square[i] = Board->square[i];
+	for (int i = 0; i < 64; ++i) 
+		Pos->Position->square[i] = PieceAt(i);
 	Pos->date = date;
 	Pos->sp = sp;
 	for (int i = 0; i <= Current->ply; ++i) Pos->stack[i] = Stack[sp - i];
@@ -8022,7 +8103,7 @@ void retrieve_board(GPos* Pos)
 	for (int i = 0; i < 64; ++i)
 	{
 		int piece = Pos->Position->square[i];
-		Board->square[i] = piece;
+		PieceAt(i) = piece;
 		if (piece)
 		{
 			Board->bb[piece & 1] |= Bit(i);
@@ -8114,7 +8195,8 @@ int CutSearch(GSP* Sp)
 
 template <bool me> sint16 smp_search(GSP* Sp)
 {
-	int i, value, move, alpha;
+	int i, move;
+	score_t value, alpha;
 	if (!Sp->move_number)
 		return Sp->alpha;
 	send_position(Sp->Pos);
@@ -8156,14 +8238,14 @@ template <bool me> sint16 smp_search(GSP* Sp)
 				M->id = Id;
 			}
 			move = M->move;
-			alpha = Sp->alpha;
+			alpha = init_score(Sp->alpha);
 			UNLOCK(Sp->lock);
 			do_move<me>(move);
 			value = -scout<opp, 0>(-alpha, M->reduced_depth, FlagNeatSearch | ExtToFlag(M->ext));
 			if (value > alpha && (Sp->pv || M->reduced_depth < M->research_depth))
 			{
 				if (Sp->pv)
-					value = -pv_search<opp, 0>(-Sp->beta, -Sp->alpha, M->research_depth, FlagNeatSearch | ExtToFlag(M->ext));
+					value = -pv_search<opp, 0>(init_score(-Sp->beta), -alpha, M->research_depth, FlagNeatSearch | ExtToFlag(M->ext));
 				else
 					value = -scout<opp, 0>(-alpha, M->research_depth, FlagNeatSearch | FlagDisableNull | ExtToFlag(M->ext));
 			}
@@ -8175,7 +8257,7 @@ template <bool me> sint16 smp_search(GSP* Sp)
 			if (value > Sp->alpha)
 			{
 				Sp->best_move = move;
-				Sp->alpha = Min<volatile int>(value, Sp->beta);
+				Sp->alpha = Min<volatile int>(+value, Sp->beta);
 				if (value >= Sp->beta)
 					return CutSearch(Sp);
 			}
@@ -8440,8 +8522,8 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 				ext = is_check<me>(move) ? 1 + (depth < 16) : extension<me, 0>(move, depth);
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
-					sint16 margin_one = +beta - ExclSingle(depth);
-					sint16 margin_two = +beta - ExclDouble(depth);
+					score_t margin_one = beta - ExclSingle(depth);
+					score_t margin_two = beta - ExclDouble(depth);
 					int prev_ext = ExtFromFlag(flags);
 					singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
 					if (singular)
@@ -8643,7 +8725,8 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 
 template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth, int flags)
 {
-	int value, score, pext, move, cnt, hash_value = -MateValue, hash_depth, hash_move, new_depth, ext, moves_to_play;
+	int pext, move, cnt, hash_depth, hash_move, new_depth, ext, moves_to_play;
+	score_t value, score, hash_value = -MateValue;
 	int height = (int)(Current - Data);
 
 	if (depth <= 1)
@@ -8686,7 +8769,7 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 		if (GEntry* Entry = probe_hash())
 		{
 			if (Entry->high < beta && Entry->high_depth >= depth)
-				return Entry->high;
+				return init_score(Entry->high);
 			if (T(Entry->move) && Entry->low_depth > hash_depth)
 			{
 				Current->best = hash_move = Entry->move;
@@ -8702,28 +8785,29 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 						UpdateCheckRef(Entry->move);
 					}
 				}
-				return Entry->low;
+				return init_score(Entry->low);
 			}
 			if (Entry->low_depth >= depth - 8 && Entry->low > hash_value)
-				hash_value = Entry->low;
+				hash_value = init_score(Entry->low);
 		}
 
 		if (depth >= 20)
 			if (GPVEntry* PVEntry = probe_pv_hash())
 			{
-				hash_low(PVEntry->move, PVEntry->value, PVEntry->depth);
-				hash_high(PVEntry->value, PVEntry->depth);
+				score_t pv_score = init_score(PVEntry->value);
+				hash_low(PVEntry->move, pv_score, PVEntry->depth);
+				hash_high(pv_score, PVEntry->depth);
 				if (PVEntry->depth >= depth)
 				{
 					if (PVEntry->move)
 						Current->best = PVEntry->move;
-					return PVEntry->value;
+					return pv_score;
 				}
 				if (T(PVEntry->move) && PVEntry->depth > hash_depth)
 				{
 					Current->best = hash_move = PVEntry->move;
 					hash_depth = PVEntry->depth;
-					hash_value = PVEntry->value;
+					hash_value = pv_score;
 				}
 			}
 #if TB
@@ -8731,15 +8815,15 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 			auto res = TBProbe(tb_probe_wdl, me);
 			if (res != TB_RESULT_FAILED) {
 				tb_hits++;
-				hash_high(TbValues[res], TbDepth(depth));
-				hash_low(0, TbValues[res], TbDepth(depth));
-				return TbValues[res];
+				score_t tb_score = init_score(TbValues[res]);
+				hash_high(tb_score, TbDepth(depth));
+				return hash_low(0, tb_score, TbDepth(depth));
 			}
 		}
 #endif
 
 		if (hash_depth >= depth && hash_value > -EvalValue)
-			score = Min(beta - 1, Max(score, hash_value));
+			score = min(beta - 1, max(score, hash_value));
 		if (flags & FlagCallEvaluation)
 			evaluate();
 
@@ -8766,8 +8850,8 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 				ext = is_check<me>(move) ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<me, 0>(move, depth));
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
-					int margin_one = beta - ExclSingle(depth);
-					int margin_two = beta - ExclDouble(depth);
+					score_t margin_one = beta - ExclSingle(depth);
+					score_t margin_two = beta - ExclDouble(depth);
 					int prev_ext = ExtFromFlag(flags);
 					int singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
 					if (singular)
@@ -8811,9 +8895,9 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 		if (IsIllegal(me, move))
 			continue;
 		++cnt;
-		if (IsRepetition(beta, move))
+		if (IsRepetition(+beta, move))
 		{
-			score = Max(0, score);
+			score = Max(DrawScore, score);
 			continue;
 		}
 		bool check = is_check<me>(move);
@@ -8840,7 +8924,7 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 			}
 		}
 		do_move<me>(move);
-		int testBeta = beta;// -3 * CP_SEARCH * (depth - 2 + ext - new_depth);
+		score_t testBeta = beta;// -3 * CP_SEARCH * (depth - 2 + ext - new_depth);
 		value = -scout<opp, 0>(1 - testBeta, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value >= testBeta && new_depth < depth - 2 + ext)
 			value = -scout<opp, 0>(1 - beta, depth - 2 + ext, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
@@ -8860,8 +8944,8 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int depth, int flags)
 {
 	int move, cnt, pext = 0, ext, do_split = 0, sp_init = 0, singular = 0, played = 0, new_depth, hash_move,
-		hash_depth, old_best, ex_depth = 0, ex_value = 0, start_knodes = (int)(nodes >> 10);
-	score_t value, margin, hash_value = -MateValue, old_alpha = alpha;
+		hash_depth, old_best, ex_depth = 0, start_knodes = (int)(nodes >> 10);
+	score_t value, margin, hash_value = -MateValue, old_alpha = alpha, ex_value(EvalValue);
 	GSP* Sp = nullptr;
 	int height = (int)(Current - Data);
 
@@ -9001,8 +9085,8 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 		ext = is_check<me>(move) ? 2 : Max(pext, extension<me, 1>(move, depth));
 		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
-			sint16 margin_one = +hash_value - ExclSinglePV(depth);
-			sint16 margin_two = +hash_value - ExclDoublePV(depth);
+			score_t margin_one = hash_value - ExclSinglePV(depth);
+			score_t margin_two = hash_value - ExclDoublePV(depth);
 			int prev_ext = ExtFromFlag(flags);
 			singular = singular_extension<me>(root ? 0 : ext, root ? 0 : prev_ext, margin_one, margin_two, new_depth, hash_move);
 			if (singular)
@@ -9198,7 +9282,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 	{
 		hash_high(DrawScore, 127);
 		hash_low(0, DrawScore, 127);
-		hash_exact(0, DrawScore, 127, 0, 0, 0);
+		hash_exact(0, DrawScore, 127, EvalValue, 0, 0);
 		return DrawScore;
 	}
 	if (F(root) || F(SearchMoves))
@@ -9483,7 +9567,8 @@ template <bool me> void root()
 
 template <bool me> score_t multipv(int depth)
 {
-	int move, low = MateValue, value, i, cnt, ext, new_depth = depth;
+	int move, i, cnt, ext, new_depth = depth;
+	score_t low = MateValue, value;
 	fprintf(stdout, "info depth %d\n", (depth / 2));
 	fflush(stdout);
 	for (cnt = 0; cnt < PVN && T(move = (MultiPV[cnt] & 0xFFFF)); ++cnt)
@@ -9495,7 +9580,7 @@ template <bool me> score_t multipv(int depth)
 		new_depth = depth - 2 + (ext = extension<me, 1>(move, depth));
 		do_move<me>(move);
 		value = -pv_search<opp, 0>(-MateValue, MateValue, new_depth, ExtToFlag(ext));
-		MultiPV[cnt] |= value << 16;
+		MultiPV[cnt] |= +value << 16;
 		if (value < low)
 			low = value;
 		undo_move<me>(move);
@@ -9504,11 +9589,11 @@ template <bool me> score_t multipv(int depth)
 			if ((MultiPV[i] >> 16) < value)
 			{
 				MultiPV[i + 1] = MultiPV[i];
-				MultiPV[i] = move | (value << 16);
+				MultiPV[i] = move | (+value << 16);
 			}
 		}
 		best_move = MultiPV[0] & 0xFFFF;
-		Current->score = MultiPV[0] >> 16;
+		Current->score = init_score(MultiPV[0] >> 16);
 		send_multipv((depth / 2), cnt);
 	}
 	for (; T(move = (MultiPV[cnt] & 0xFFFF)); ++cnt)
@@ -9522,23 +9607,23 @@ template <bool me> score_t multipv(int depth)
 		value = -scout<opp, 0>(-low, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value > low)
 			value = -pv_search<opp, 0>(-MateValue, -low, new_depth, ExtToFlag(ext));
-		MultiPV[cnt] |= value << 16;
+		MultiPV[cnt] |= +value << 16;
 		undo_move<me>(move);
 		if (value > low)
 		{
 			for (i = cnt; i >= PVN; --i) MultiPV[i] = MultiPV[i - 1];
-			MultiPV[PVN - 1] = move | (value << 16);
+			MultiPV[PVN - 1] = move | (+value << 16);
 			for (i = PVN - 2; i >= 0; --i)
 			{
 				if ((MultiPV[i] >> 16) < value)
 				{
 					MultiPV[i + 1] = MultiPV[i];
-					MultiPV[i] = move | (value << 16);
+					MultiPV[i] = move | (+value << 16);
 				}
 			}
 			best_move = MultiPV[0] & 0xFFFF;
-			Current->score = MultiPV[0] >> 16;
-			low = MultiPV[PVN - 1] >> 16;
+			Current->score = init_score(MultiPV[0] >> 16);
+			low = init_score(MultiPV[PVN - 1] >> 16);
 			send_multipv((depth / 2), cnt);
 		}
 	}
@@ -10041,6 +10126,9 @@ void check_time(const int* time, int searching)
 #ifdef CPU_TIMING
 	if (!time && CpuTiming && UciMaxKNodes && nodes > UciMaxKNodes * 1024)
 		Stop = 1;
+#endif
+#ifdef TUNER_DATA
+	return;
 #endif
 #ifdef TUNER
 #ifndef TIMING
@@ -10607,6 +10695,7 @@ HANDLE CreateChildProcess(int child_id)
 }
 
 #ifndef REGRESSION
+#ifndef TUNER_DATA
 void main(int argc, char* argv[])
 {
 	DWORD p;
@@ -10799,6 +10888,228 @@ reset_jump:
 	while (true) uci();
 }
 #else
+
+constexpr int MOVE_AMBIGUOUS = -3;
+
+template<class I_> int parse_move(I_ src)
+{
+	static const array<int, 19> name_to_piece = { 0, WhiteLight, 0, 0, 0, 0, 0, 0, 0, 0, WhiteKing, 0, 0, WhiteKnight, 0, 0, WhiteQueen, WhiteRook };
+	static const array<int, 19> name_to_promo = { 0, FlagPBishop, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, FlagPKnight, 0, 0, FlagPQueen, FlagPRook};
+
+	if (*src == 'O')
+	{
+		int step = *(src + 3) == '-' ? -2 : 2;
+		int from = Current->turn ? 60 : 4;
+		return (from << 6) | (from + step) | FlagCastling;
+	}
+
+	if (*src >= 'a' && *src <= 'h')
+	{
+		// pawn move
+		int file = *src++ - 'a';
+		bool capture = *src == 'x';
+		int to_file = file;
+		if (capture)
+		{
+			++src;
+			to_file = *src++ - 'a';
+		}
+		int to_rank = *src++ - '1';
+		int to_sq = 8 * to_rank + to_file;
+		int from_sq = (8 * to_rank + file) + (Current->turn ? 8 : -8);
+		if (!HasBit(Pawn(Current->turn), from_sq))
+			from_sq += (Current->turn ? 8 : -8);
+		int move = (from_sq << 6) | to_sq;
+		if (capture && !HasBit(PieceAll(), to_sq))
+			move |= FlagEP;
+		if (*src == '=')
+			move |= name_to_promo[*++src - 'A'];
+		return move;
+	}
+	int mover = name_to_piece[*src - 'A'];
+	++src;
+	int file = -1, rank = -1;
+	if (*src > '0' && *src < '9')
+		rank = *src++ - '1';
+	if (*src == 'x')
+		++src;
+	int to_file = *src++ - 'a';
+	if (*src == 'x')
+		++src;
+	if (*src >= 'a' && *src <= 'h')
+	{
+		file = to_file;
+		to_file = *src++ - 'a';
+	}
+	int to_rank = *src++ - '1';
+	int to_sq = 8 * to_rank + to_file;
+	if (mover == WhiteLight && HasBit(DarkArea, to_sq))
+		mover = WhiteDark;
+	mover |= Current->turn;
+	uint64 occ = PieceAll(), mask;
+	switch (mover & ~1)
+	{ 
+	case WhiteLight:
+	case WhiteDark:
+		mask = BishopAttacks(to_sq, occ);
+		break;
+	case WhiteKnight:
+		mask = NAtt[to_sq];
+		break;
+	case WhiteRook:
+		mask = RookAttacks(to_sq, occ);
+		break;
+	case WhiteQueen:
+		mask = QueenAttacks(to_sq, occ);
+		break;
+	case WhiteKing:
+		mask = KAtt[to_sq];
+		break;
+	}
+	if (rank >= 0)
+		mask &= Line[rank];
+	else if (file >= 0)
+		mask &= File[file];
+	if (Multiple(mask & Piece(mover)))
+		return MOVE_AMBIGUOUS;
+	int from = lsb(mask & Piece(mover));
+	return (from << 6) | to_sq;
+}
+
+void record_to_file(const vector<string>& msgs)
+{
+	const char* report_file = "D:\\data\\lichess_db_standard_rated_2014-09.txt";
+	auto report = fopen(report_file, "a");
+	auto say = [&](const string& x) { fprintf(report, x.c_str()); };
+	for (const auto& m : msgs)
+		say(m);
+	fclose(report);
+}
+
+pair<bool, vector<string>> parse_game(const std::string& line, std::unordered_set<uint64>& known_hashes)
+{
+	constexpr int DEPTH = 4;
+	vector<string> retval;
+	auto say = [&](const string& s) { retval.push_back(s); };
+	bool partial = false;
+	try
+	{
+		init_search(1);	// each line is a game
+		Print = false;
+		get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+		for (size_t start = 0, stop; ; start = stop)
+		{
+			size_t e_loc = line.find("eval", start);
+			if (e_loc == std::string::npos)
+				break;
+			stop = line.find('}', e_loc) + 1;
+			size_t e_end = line.find(']', e_loc);
+			string e_str(line.begin() + e_loc + 5, line.begin() + e_end);
+			if (e_str.find('#') != string::npos)
+				break;	// eval is mate
+			double e_val = std::stod(e_str);
+			// now parse the move
+			size_t m_loc = line.find_first_not_of("0123456789. ", start + 2);
+			int move = parse_move(line.begin() + m_loc);
+			if (move == MOVE_AMBIGUOUS)
+			{
+				std::cerr << "Ambiguous move at " << line.substr(start, stop - start) << "\n";
+				break;
+			}
+			do_move(Current->turn, move);
+			memcpy(Data, Current, sizeof(GData));
+			Current = Data;
+			say("BEGIN " + to_string(Current->key) + "\n");
+			partial = true;
+			say("THEIRS " + to_string(e_val) + "\n");
+			if (known_hashes.count(Current->key))
+				say("DUPLICATE\n");
+			else
+			{
+				evaluate();
+				auto score = Current->turn
+					? (gen_root_moves<1>(), -pv_search<true, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch))
+					: (gen_root_moves<0>(), pv_search<false, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch));
+
+				say("OURS " + to_string(+score) + "\n");
+				if (!score.why)
+					say("UNDOCUMENTED\n");
+				else
+				{
+					for (const auto& entry : score.why->vals)
+					{
+						if (abs(entry.contrib[0]) < 0.0001 && abs(entry.contrib[1]) < 0.0001 && abs(entry.contrib[2]) < 0.0001 && abs(entry.contrib[3]) < 0.0001)
+							continue;
+						say("+ " + to_string(entry.line));
+						for (auto c : entry.contrib)
+							say(" " + to_string(c));
+						say(" " + to_string(entry.src) + "\n");
+					}
+				}
+				known_hashes.insert(Current->key);
+			}
+			say("END\n");
+			partial = false;
+		}
+	}
+	catch (...)
+	{
+		std::cerr << "Error\n";
+		std::cerr << line << "\n";
+	}
+	return make_pair(!partial, retval);
+}
+
+int main(int argc, char* argv[])
+{
+	int CPUInfo[4] = { -1, 0, 0, 0 };
+	__cpuid(CPUInfo, 1);
+	HardwarePopCnt = (CPUInfo[2] >> 23) & 1;
+	int start_line = atoi(argv[1]);
+	int end_line = atoi(argv[2]);
+	std::cerr << start_line << " - " << end_line << "\n";
+
+	init();
+
+	fprintf(stdout, "Roc (regression mode)\n");
+
+	init_hash();
+
+	init_pst();
+	init_eval();
+	Console = false;
+	Infinite = true;
+
+	const char* pgn_file = "D:\\data\\lichess_db_standard_rated_2014-09.pgn\\lichess_db_standard_rated_2014-09.eval.pgn";
+	auto pgn_src = fopen(pgn_file, "r");
+	std::cerr << "Reading " << pgn_file << "... ";
+	char buf[65535];
+	std::unordered_set<uint64> known_hashes;
+	int line_no = 0;
+	while (fgets(buf, 65535, pgn_src))
+	{
+		std::cerr << "Line " << ++line_no << "\n";
+		if (line_no < start_line)
+			continue;
+		if (line_no >= end_line)
+			break;
+
+		string line(buf);
+		auto s_msgs = parse_game(line, known_hashes);
+		if (!s_msgs.first)
+		{
+			std::cerr << "Unexpected halt at line " << line_no << "\n";
+			break;
+		}
+		record_to_file(s_msgs.second);
+	}
+	fclose(pgn_src);
+	std::cerr << "Done\n";
+	return 0;
+}
+
+#endif
+#else
 // regression tester
 struct WriteMove_
 {
@@ -10829,8 +11140,8 @@ void Test1(const char* fen, int max_depth, const char* solution)
 		auto score = Current->turn
 			? pv_search<true, true>(-MateValue, MateValue, depth, FlagNeatSearch)
 			: pv_search<false, true>(-MateValue, MateValue, depth, FlagNeatSearch);
-		cout << WriteMove_(best_move) << ":  " << score << ", " << nodes << " nodes\n";
-		Previous = score;
+		cout << WriteMove_(best_move) << ":  " << +score << ", " << nodes << " nodes\n";
+		Previous = +score;
 	}
 }
 
