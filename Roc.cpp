@@ -4,7 +4,7 @@
 //#define CPU_TIMING
 //#define TUNER
 //#define EXPLAIN_EVAL
-//#define TUNER_DATA
+#define TUNER_DATA
 //#define TWO_PHASE
 //#define THREE_PHASE
 #define LARGE_PAGES
@@ -33,7 +33,6 @@
 #include <assert.h>
 
 //#include "TunerParams.inc"
-
 #ifdef TUNER
 #include "time.h"
 //#define PGN
@@ -674,9 +673,72 @@ void Do_Notice(packed_t& dst, sint64 inc, int line)
 
 #define IncV(var, x) Do_IncV(var, me ? -(x): x, __LINE__)
 #define NOTICE(var, x) Do_Notice(var, x, __LINE__)
+
+template<class POP> score_t score_from_material(sint16 val)
+{
+	POP pop;
+	score_t retval = init_score(val);
+	array<int, 2> p = { pop(Pawn(White)), pop(Pawn(Black)) };
+	array<int, 2> n = { pop(Knight(White)), pop(Knight(Black)) };
+	array<int, 2> b = { pop(Bishop(White)), pop(Bishop(Black)) };
+	array<int, 2> r = { pop(Rook(White)), pop(Rook(Black)) };
+	array<int, 2> q = { pop(Queen(White)), pop(Queen(Black)) };
+	for (int me = 0; me < 2; ++me)
+	{
+		// MatLinear
+		IncV(retval, p[me]);
+		IncV(retval, n[me]);
+		IncV(retval, b[me]);
+		IncV(retval, r[me]);
+		IncV(retval, q[me]);
+		IncV(retval, b[me] > 1 ? 1 : 0);
+		// MatQuadMe
+		IncV(retval, p[me] * p[me]);
+		IncV(retval, p[me] * n[me]);
+		IncV(retval, p[me] * b[me]);
+		IncV(retval, p[me] * r[me]);
+		IncV(retval, p[me] * q[me]);
+		IncV(retval, n[me] * n[me]);
+		IncV(retval, n[me] * b[me]);
+		IncV(retval, n[me] * r[me]);
+		IncV(retval, n[me] * q[me]);
+		IncV(retval, b[me] * b[me]);
+		IncV(retval, b[me] * r[me]);
+		IncV(retval, b[me] * q[me]);
+		IncV(retval, r[me] * r[me]);
+		IncV(retval, r[me] * q[me]);
+		// MatQuadOpp
+		IncV(retval, p[me] * n[opp]);
+		IncV(retval, p[me] * b[opp]);
+		IncV(retval, p[me] * r[opp]);
+		IncV(retval, p[me] * q[opp]);
+		IncV(retval, n[me] * b[opp]);
+		IncV(retval, n[me] * r[opp]);
+		IncV(retval, n[me] * q[opp]);
+		IncV(retval, b[me] * r[opp]);
+		IncV(retval, b[me] * q[opp]);
+		IncV(retval, r[me] * q[opp]);
+		// BishopPairQuad
+		if (b[me] > 1)
+		{
+			IncV(retval, p[me]);
+			IncV(retval, n[me]);
+			IncV(retval, r[me]);
+			IncV(retval, q[me]);
+			IncV(retval, p[opp]);
+			IncV(retval, n[opp]);
+			IncV(retval, b[opp]);
+			IncV(retval, r[opp]);
+			IncV(retval, q[opp]);
+		}
+	}
+	retval.val = val;
+	return retval;
+}
 #else
 #define IncV(var, x) (me ? (var -= (x)) : (var += (x)))
 #define NOTICE(var, x) 
+template<class POP> score_t score_from_material(sint16 val) { return init_score(val); }
 #endif
 #endif
 #define DecV(var, x) IncV(var, -(x))
@@ -1342,47 +1404,6 @@ template<class C_> INLINE sint64 Ca4(const C_& x, int y)
 
 // EVAL WEIGHTS
 
-// tuner: start
-enum
-{  // tuner: enum
-	IMatLinear,
-	IMatQuadMe = IMatLinear + 5,
-	IMatQuadOpp = IMatQuadMe + 14,
-	IBishopPairQuad = IMatQuadOpp + 10,
-	iMatClosed = IBishopPairQuad + 9,
-	IMatSpecial = iMatClosed + 6,
-	IPstQuadWeights = IMatSpecial + 40,
-	IPstLinearWeights = IPstQuadWeights + 96,
-	IPstQuadMixedWeights = IPstLinearWeights + 96,
-	IMobilityLinear = IPstQuadMixedWeights + 48,
-	IMobilityLog = IMobilityLinear + 16,
-	IMobilityLocus = IMobilityLog + 16,
-	IShelterValue = IMobilityLocus + 16,
-	IStormQuad = IShelterValue + 15,
-	IStormLinear = IStormQuad + 5,
-	IStormHof = IStormLinear + 5,
-	IPasserQuad = IStormHof + 2,
-	IPasserLinear = IPasserQuad + 36,
-	IPasserConstant = IPasserLinear + 36,
-	IPasserAttDefQuad = IPasserConstant + 36,
-	IPasserAttDefLinear = IPasserAttDefQuad + 4,
-	IPasserAttDefConst = IPasserAttDefLinear + 4,
-	IPasserSpecial = IPasserAttDefConst + 4,
-	IIsolated = IPasserSpecial + 12,
-	IUnprotected = IIsolated + 10,
-	IBackward = IUnprotected + 6,
-	IDoubled = IBackward + 4,
-	IRookSpecial = IDoubled + 4,
-	ITactical = IRookSpecial + 20,
-	IKingDefence = ITactical + 12,
-	IPawnSpecial = IKingDefence + 8,
-	IBishopSpecial = IPawnSpecial + 8,
-	IKnightSpecial = IBishopSpecial + 4,
-	IPin = IKnightSpecial + 10,
-	IKingRay = IPin + 10,
-	IKingAttackWeight = IKingRay + 6
-};
-
 constexpr array<int, 6> MatLinear = { 29, -5, -12, 88, -19, -3 };
 // pawn, knight, bishop, rook, queen, pair
 constexpr array<int, 14> MatQuadMe = { // tuner: type=array, var=1000, active=0
@@ -1500,10 +1521,10 @@ constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256,
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1281, 840, 583, 18, 2000, 873, 78, -217, 246, 264, -51, 182 };
-constexpr array<int, 12> MobCoeffsBishop = { 1334, 671, 587, 121, 1516, 1478, 1675, -520, -108, 391, 136, 554 };
-constexpr array<int, 12> MobCoeffsRook = { 984, 796, 724, 24, -507, 221, 1340, 9, 58, 51, 55, -18 };
-constexpr array<int, 12> MobCoeffsQueen = { 536, 786, 1035, 18, 1578, 290, -980, 9, 57, 78, 18, -15 };
+constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 18, 2000, 891, 89, -215, 257, 289, -47, 178 };
+constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 137, 1687, 1644, 1594, -580, -96, 437, 136, 502 };
+constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 22, -565, 248, 1251, 7, 64, 59, 53, -15 };
+constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, 16, 1755, 324, -1091, 8, 65, 89, 20, -18 };
 
 constexpr int N_LOCUS = 22;
 
@@ -1688,8 +1709,10 @@ constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
 
 enum
 {
-	TacticalQueenPawn, TacticalRookPawn,
-	TacticalBishopPawn, TacticalKnightPawn,
+	TacticalQueenPawn, 
+	TacticalRookPawn,
+	TacticalBishopPawn, 
+	TacticalKnightPawn,
 	TacticalMajorMinor,
 	TacticalMinorMinor,
 	TacticalThreat,
@@ -5690,6 +5713,7 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 		b = Bit(sq);
 		int rank = RankOf(sq);
 		int rrank = OwnRank<me>(sq);
+		NOTICE(PEI.score, rrank);
 		int file = FileOf(sq);
 		uint64 way = PWay[me][sq];
 		int next = PieceAt(sq + Push[me]);
@@ -5699,19 +5723,36 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 		int open = !(PawnAll() & way);
 
 		if (isolated)
-		{	// POSTPONED -- split lines for tuning
-			DecV(PEI.score, open ? Ca4(Isolated, IsolatedOpen) : Ca4(Isolated, IsolatedClosed));
-			if (F(open) && next == IPawn[opp])
-				DecV(PEI.score, Ca4(Isolated, IsolatedBlocked));
-			if (doubled)
-				DecV(PEI.score, open ? Ca4(Isolated, IsolatedDoubledOpen) : Ca4(Isolated, IsolatedDoubledClosed));
+		{
+			if (open)
+			{
+				DecV(PEI.score, Ca4(Isolated, IsolatedOpen));
+				if (doubled)
+					DecV(PEI.score, Ca4(Isolated, IsolatedDoubledOpen));
+			}
+			else
+			{
+				DecV(PEI.score, Ca4(Isolated, IsolatedClosed));
+				if (doubled)
+					DecV(PEI.score, Ca4(Isolated, IsolatedDoubledClosed));
+				if (next == IPawn[opp])
+					DecV(PEI.score, Ca4(Isolated, IsolatedBlocked));
+			}
 		}
 		else
-		{	// POSTPONED -- split lines for tuning
+		{	
 			if (doubled)
-				DecV(PEI.score, open ? Ca4(Doubled, DoubledOpen) : Ca4(Doubled, DoubledClosed));
+			{
+				if (open)
+					DecV(PEI.score, Ca4(Doubled, DoubledOpen));
+				else
+					DecV(PEI.score, Ca4(Doubled, DoubledClosed));
+			}
 			if (rrank >= 3 && (b & (File[2] | File[3] | File[4] | File[5])) && next != IPawn[opp] && (PIsolated[file] & Line[rank] & Pawn(me)))
-				IncV(PEI.score, Ca4(PawnSpecial, PawnChainLinear) * (rrank - 3) + Ca4(PawnSpecial, PawnChain));
+			{
+				IncV(PEI.score, Ca4(PawnSpecial, PawnChain));
+				IncV(PEI.score, Ca4(PawnSpecial, PawnChainLinear) * (rrank - 3));
+			}
 		}
 		int backward = 0;
 		if (!(PSupport[me][sq] & Pawn(me)))
@@ -5722,8 +5763,13 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 				if (OwnRank<me>(NB<me>(PEI.patt[me] & way)) > OwnRank<me>(NB<me>(v)))
 					backward = 1;
 		}
-		if (backward)	// POSTPONED -- split lines for tuning
-			DecV(PEI.score, open ? Ca4(Backward, BackwardOpen) : Ca4(Backward, BackwardClosed));
+		if (backward)
+		{
+			if (open)
+				DecV(PEI.score, Ca4(Backward, BackwardOpen));
+			else
+				DecV(PEI.score, Ca4(Backward, BackwardClosed));
+		}
 		else
 		{
 			if (open && (F(Pawn(opp) & PIsolated[file]) || pop(Pawn(me) & PIsolated[file]) >= pop(Pawn(opp) & PIsolated[file])))
@@ -5739,7 +5785,8 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 				if (rrank <= 2)	
 				{	
 					DecV(PEI.score, Ca4(Unprotected, PasserTarget));	
-					if (rrank <= 1) DecV(PEI.score, Ca4(Unprotected, PasserTarget));	
+					if (rrank <= 1) 
+						DecV(PEI.score, Ca4(Unprotected, PasserTarget));	
 				}	// Gull 3 was thinking of removing this term, because fitted weight is negative
 
 				for (uint64 v = PAtt[me][sq] & Pawn(me); v; Cut(v)) if ((PSupport[me][lsb(v)] & Pawn(me)) == b)
@@ -5825,6 +5872,7 @@ template <bool me> INLINE void eval_queens_xray(GEvalInfo& EI)
 		Current->att[me] |= att;
 		if (QMask[sq] & King(opp))
 			if (uint64 v = Between[EI.king[opp]][sq] & EI.occ)
+			{
 				if (Single(v))
 				{
 					Current->xray[me] |= v;
@@ -5851,8 +5899,13 @@ template <bool me> INLINE void eval_queens_xray(GEvalInfo& EI)
 					if (katt && !(att & EI.area[opp]))
 						EI.king_att[me] += KingAttack;
 				}
-				else if (v == (v & Minor(opp)))
-					IncV(EI.score, Ca4(KingRay, QKingRay));
+				else
+				{
+					uint64 pinnable = Knight(opp) & (BMask[sq] & King(opp) ? Rook(opp) : Bishop(opp));
+					if (F(v & ~pinnable))
+						IncV(EI.score, Ca4(KingRay, QKingRay));
+				}
+			}
 	}
 }
 
@@ -5875,6 +5928,7 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 					EI.king_att[me]++;
 		}
 		uint64 control = att & EI.free[me];
+		NOTICE(EI.score, pop(control));
 		IncV(EI.score, MobQueen[0][pop(control)]);
 		IncV(EI.score, MobQueen[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
@@ -5951,6 +6005,7 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		}
 		Current->threat |= att & Queen(opp);
 		uint64 control = att & EI.free[me];
+		NOTICE(EI.score, pop(control));
 		IncV(EI.score, MobRook[0][pop(control)]);
 		IncV(EI.score, MobRook[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
@@ -6058,6 +6113,7 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		if (uint64 a = att & EI.area[opp])
 			EI.king_att[me] += Single(a) ? KingBAttack1 : KingBAttack;
 		uint64 control = att & EI.free[me];
+		NOTICE(EI.score, pop(control));
 		IncV(EI.score, MobBishop[0][pop(control)]);
 		IncV(EI.score, MobBishop[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
@@ -6099,6 +6155,7 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 			EI.king_att[me] += Single(a) ? KingNAttack1 : KingNAttack;
 		Current->threat |= att & Major(opp);
 		uint64 control = att & EI.free[me];
+		NOTICE(EI.score, pop(control));
 		IncV(EI.score, MobKnight[0][pop(control)]);
 		IncV(EI.score, MobKnight[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
@@ -6179,6 +6236,8 @@ template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 		Current->passer |= Bit(sq);
 		if (rank <= 2)
 			continue;
+		NOTICE(EI.score, rank);
+
 		if (!PieceAt(sq + Push[me]))
 			IncV(EI.score, PasserBlocked[rank]);
 		uint64 way = PWay[me][sq];
@@ -6240,11 +6299,20 @@ template<class POP> INLINE sint64 eval_threat(const uint64& threat)
 
 template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 {
-
-	Current->threat |= Current->att[opp] & (~Current->att[me]) & Piece(me);
+	uint64 threat = Current->att[opp] & (~Current->att[me]) & Piece(me);
+	if (F(threat))
+		return;
+	Current->threat |= threat;
 	DecV(EI.score, eval_threat<POP>(Current->threat & Piece(me)));
-
-
+	if (Single(threat))
+		DecV(EI.score, Ca4(Tactical, TacticalThreat));
+	else
+	{
+		POP pop;
+		// according to Gull, second threat is extra DoubleThreat, third and after are simple Threat again
+		DecV(EI.score, Ca4(Tactical, TacticalDoubleThreat));
+		DecV(EI.score, pop(threat) * Ca4(Tactical, TacticalThreat));
+	}
 }
 
 
@@ -6383,7 +6451,7 @@ template<class POP> void evaluation()
 	Current->score = mat_score;
 	Current->score += (op * phase + eg * (MAX_PHASE - phase)) / MAX_PHASE;
 #else
-	Current->score = init_score(mat_score);
+	Current->score = score_from_material<POP>(mat_score);
 	add_phased(&Current->score, EI.score, phase, closure<POP>(), mat_closed);
 #endif
 	// apply contempt before drawishness
