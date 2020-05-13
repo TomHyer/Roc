@@ -99,6 +99,7 @@ struct Provenance
 		int line;
 		array<double, 4> contrib;
 		sint64 src;
+		bool keep;
 	};
 	std::vector<Entry> vals;
 	Provenance(const std::vector<Entry>& vals_in) : vals(vals_in) {}
@@ -212,7 +213,7 @@ INLINE void add_phased(score_t* score, packed_t& inc, int phase, int closure, in
 	}
 
 	array<double, 4> mc_val = { 0.0, 0.0, 0.0, double(closure * MIDDLE_PHASE * mat_closed) / 8192 };
-	score->why->vals.push_back(Provenance::Entry({ __LINE__, mc_val, mat_closed }));
+	score->why->vals.push_back(Provenance::Entry({ __LINE__, mc_val, mat_closed, false }));
 }
 
 INLINE void scale_score(score_t* score, int num_inc, int den)
@@ -626,6 +627,7 @@ constexpr int InitiativeConst = 2 * CP_SEARCH;
 constexpr int InitiativePhase = 2 * CP_SEARCH;
 constexpr sint16 FutilityThreshold = 50 * CP_SEARCH;
 
+
 #ifdef EXPLAIN_EVAL
 FILE* fexplain;
 int explain = 0, cpp_length;
@@ -644,7 +646,7 @@ void Do_IncV(packed_t& dst, sint64 inc, int line)
 		return;
 	dst.val += inc;
 	array<double, 4> temp = { double(Opening(inc)), double(Middle(inc)), double(Endgame(inc)), double(Closed(inc)) };
-	Provenance::Entry next = { line, temp, inc };
+	Provenance::Entry next = { line, temp, inc, false };
 	if (!dst.why)
 		dst.why = NoProvenance();
 	dst.why->vals.push_back(next);
@@ -656,7 +658,7 @@ void Do_IncV(score_t& dst, sint16 inc, int line)
 		return;
 	dst.val += inc;
 	array<double, 4> temp = { double(inc), double(inc), double(inc), double(inc) };
-	Provenance::Entry next = { line, temp, inc };
+	Provenance::Entry next = { line, temp, inc, false };
 	if (!dst.why)
 		dst.why = NoProvenance();
 	dst.why->vals.push_back(next);
@@ -665,7 +667,7 @@ void Do_IncV(score_t& dst, sint16 inc, int line)
 void Do_Notice(packed_t& dst, sint64 inc, int line)
 {
 	const array<double, 4> ZERO = { 0.0, 0.0, 0.0, 0.0 };
-	Provenance::Entry next = { line, ZERO, inc };
+	Provenance::Entry next = { line, ZERO, inc, true };
 	if (!dst.why)
 		dst.why = NoProvenance();
 	dst.why->vals.push_back(next);
@@ -1404,24 +1406,24 @@ template<class C_> INLINE sint64 Ca4(const C_& x, int y)
 
 // EVAL WEIGHTS
 
-constexpr array<int, 6> MatLinear = { 29, -5, -12, 88, -19, -3 };
+constexpr array<int, 6> MatLinear = { 28, -6, -8, 87, -18, 3 };
 // pawn, knight, bishop, rook, queen, pair
 constexpr array<int, 14> MatQuadMe = { // tuner: type=array, var=1000, active=0
-	-33, 17, -23, -155, -247,
-	15, 296, -105, -83,
-	-162, 327, 315,
-	-861, -1013
+	-29, 18, -13, -151, -243,
+	17, 293, -105, -84,
+	-154, 321, 310,
+	-859, -1011
 };
 constexpr array<int, 10> MatQuadOpp = { // tuner: type=array, var=1000, active=0
-	-14, 47, -20, -278,
-	35, 39, 49,
-	9, -2,
+	-10, 53, -20, -279,
+	40, 41, 51,
+	5, 1,
 	75
 };
 constexpr array<int, 9> BishopPairQuad = { // tuner: type=array, var=1000, active=0
-	-38, 164, 99, 246, -84, -57, -184, 88, -186
+	-28, 158, 90, 239, -74, -50, -180, 80, -180
 };
-constexpr array<int, 6> MatClosed = { -13, 21, -22, 13, -1, 16 };
+constexpr array<int, 6> MatClosed = { 1, -1, 1, -1, 1, -1 };
 
 enum
 {
@@ -1521,10 +1523,10 @@ constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256,
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 18, 2000, 891, 89, -215, 257, 289, -47, 178 };
-constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 137, 1687, 1644, 1594, -580, -96, 437, 136, 502 };
-constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 22, -565, 248, 1251, 7, 64, 59, 53, -15 };
-constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, 16, 1755, 324, -1091, 8, 65, 89, 20, -18 };
+constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 18, 2000, 891, 89, -215, 251, 280, -53, 181 };
+constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 137, 1687, 1644, 1594, -580, -106, 427, 135, 512 };
+constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 22, -565, 248, 1251, 7, 59, 49, 55, -12 };
+constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, 16, 1755, 324, -1091, 8, 55, 79, 17, -11 };
 
 constexpr int N_LOCUS = 22;
 
@@ -1617,7 +1619,7 @@ constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active
 	1, 1, 1,
 	1, 1, 1,
 	1, 1, 1,
-	27, 51, 2
+	25, 50, 2
 };
 namespace Values
 {
@@ -1649,38 +1651,40 @@ enum
 	IsolatedDoubledClosed
 };
 constexpr array<int, 20> Isolated = {	
-	33, 25, 17, 1,
-	37, 19, 1, 10,
-	-38, -20, -2, -3,
-	1, 9, 46, 3,
-	25, 25, 37, 8 };
+	23, 20, 8, 2,
+	27, 9, 4, 17,
+	-35, -19, 2, -2,
+	-1, 10, 42, 4,
+	19, 18, 43, 8 };
 
 enum
 {
 	UpBlocked,
-	PasserTarget,
+	PasserTarget, 
+	PasserTarget2,
 	ChainRoot
 };
-constexpr array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
-	20, 20, 22, -1,
-	-18, -12, -5, 2,
-	30, 13, -5, -1 };
+constexpr array<int, 16> Unprotected = {  // tuner: type=array, var=26, active=0
+	30, 25, 28, -1,
+	-16, -16, -10, 2, 
+	-10, -10, -10, 4,
+	23, 7, -8, -2 };
 enum
 {
 	BackwardOpen,
 	BackwardClosed
 };
 constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
-	68, 55, 36, -2,
-	16, 10, 3, -2 };
+	58, 54, 26, 1,
+	12, 4, 7, -5 };
 enum
 {
 	DoubledOpen,
 	DoubledClosed
 };
 constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-	12, 6, 1, 1,
-	4, 2, 1, 1 };
+	22, 12, 1, -4,
+	14, 7, 4, -1 };
 
 enum
 {
@@ -1696,16 +1700,16 @@ enum
 	Rook7thDoubled
 };
 constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
-	29, 14, 1, -1,
+	26, 10, 1, -1,
 	5, 3, 2, 2,
-	38, 32, 34, 2,
+	28, 22, 35, 4,
 	-4, 1, 9, 2,
 	-4, -4, -4, 1,
 	48, 22, -5, 2,
 	16, -1, -22, 2,
-	-23, -13, -1, 3,
-	-28, 3, 31, 3,
-	-29, 43, 110, 3 };
+	-30, -22, -2, 5,
+	-36, -2, 28, 5,
+	-31, 37, 100, 4 };
 
 enum
 {
@@ -1719,12 +1723,12 @@ enum
 	TacticalDoubleThreat
 };
 constexpr array<int, 36> Tactical = {  // tuner: type=array, var=51, active=0
-	-5, 7, 16, 3, 
-	-3, 9, 21, -1,
-	1, 11, 22, -1, 
-	1, 8, 16, 1,	
-	40, 70, 107, 2,
-	83, 97, 113, 3,
+	-9, -1, 10, 7, 
+	-2, 10, 21, 1,
+	1, 11, 23, -1, 
+	2, 2, 7, -1,	
+	34, 60, 99, 2,
+	75, 87, 101, 7,
 	73, 52, 45, 2,
 	159, 95, 49, 2
 };
@@ -1737,10 +1741,10 @@ enum
 	KingDefQueen
 };
 constexpr array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
-	11, 5, -1, -1,
-	1, 2, 5, 1,
+	21, 10, -2, -3,
+	-1, 1, 7, 2,
 	0, 1, 1, 1,
-	17, 7, -1, -1 };
+	18, 5, -2, -1 };
 
 enum
 {
@@ -1751,17 +1755,17 @@ enum
 	PawnRestrictsK
 };
 constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
-	39, 34, 41, 2, 
-	32, 22, 19, 2, 
-	1, 19, 34, -1, 
-	4, 3, 6, 2, 
-	1, 2, 1, 3
+	34, 33, 51, 4, 
+	22, 12, 29, 5, 
+	4, 21, 31, -2, 
+	4, 2, 12, 2, 
+	4, 4, 1, 5
 };
 
 enum { BishopPawnBlock, BishopOutpostNoMinor };
 constexpr array<int, 8> BishopSpecial = { // tuner: type=array, var=20, active=0
-	1, 7, 10, 1,
-	58, 60, 45, 1
+	4, 13, 8, -1,
+	56, 59, 43, 2
 };
 
 constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
@@ -1773,25 +1777,31 @@ enum
 	KnightOutpostNoMinor
 };
 constexpr array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
-	34, 34, 21, 2,
-	35, 36, 1, -1,
-	38, 38, 18, -1,
-	38, 37, -1, 1 };
+	25, 24, 16, 4,
+	31, 32, 1, 1,
+	30, 30, 19, -1,
+	35, 34, 1, 2 };
 
 enum
 {
-	QueenWeakPin, RookWeakPin,
+	QueenWeakPin, 
+	RookWeakPin,
 	StrongPin,
 	ThreatPin,
 	SelfPawnPin,
-	SelfPiecePin
+	QueenSelfPin,
+	RookSelfPin,
+	BishopSelfPin
 };
-constexpr array<int, 24> Pin = {  // tuner: type=array, var=51, active=0
-	74, 106, 138, 3, 74, 116, 151, 2,
-	20, 153, 296, 3,
-	196, 165, 130, -1,
-	31, 33, 36, 3,	
-	171, 147, 106, 3 };	
+constexpr array<int, 32> Pin = {  // tuner: type=array, var=51, active=0
+	64, 96, 130, 7, 
+	73, 117, 150, 3,
+	10, 143, 293, 6,
+	207, 179, 144, -2,
+	31, 33, 36, 4,
+	161, 148, 107, 5,	
+	161, 144, 103, 5,	
+	171, 147, 109, 3 };
 
 enum
 {
@@ -1801,8 +1811,8 @@ enum
 };
 constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 	15, 24, 31, 1,
-	-7, 16, 44, -1,
-	34, 15, -7, 1 };
+	-5, 19, 46, -1,
+	26, 17, -6, 2 };
 
 constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
@@ -5887,7 +5897,7 @@ template <bool me> INLINE void eval_queens_xray(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-						IncV(EI.score, Ca4(Pin, SelfPiecePin));
+						IncV(EI.score, Ca4(Pin, QueenSelfPin));
 						katt = 1;
 					}
 					else if (piece != IPawn[opp] && !(((BMask[sq] & Bishop(opp)) | (RMask[sq] & Rook(opp)) | Queen(opp)) & v))
@@ -5965,7 +5975,7 @@ template<bool me> INLINE void eval_rooks_xray(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-						IncV(EI.score, Ca4(Pin, SelfPiecePin));
+						IncV(EI.score, Ca4(Pin, RookSelfPin));
 						katt = 1;
 					}
 					else if (piece != IPawn[opp])
@@ -6015,33 +6025,31 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		if (!(PWay[me][sq] & Pawn(me)))
 		{
 			IncV(EI.score, Ca4(RookSpecial, RookHof));
-			sint64 hof_score = 0;
+			int force = (PWay[opp][sq] & att & Major(me)) ? 2 : 1;
+			NOTICE(EI.score, force);
 			if (!(PWay[me][sq] & Pawn(opp)))
 			{
 				IncV(EI.score, Ca4(RookSpecial, RookOf));
 				if (att & OwnLine(me, 7))
-					hof_score += Ca4(RookSpecial, RookOfOpen);
+					IncV(EI.score, force * Ca4(RookSpecial, RookOfOpen));
 				else if (uint64 target = att & PWay[me][sq] & Minor(opp))
 				{
 					if (!(Current->patt[opp] & target))
 					{
-						hof_score += Ca4(RookSpecial, RookOfMinorHanging);
+						IncV(EI.score, force * Ca4(RookSpecial, RookOfMinorHanging));
 						if (PWay[me][sq] & King(opp))
-							hof_score += Ca4(RookSpecial, RookOfKingAtt);
+							IncV(EI.score, force * Ca4(RookSpecial, RookOfKingAtt));
 					}
 					else
-						hof_score += Ca4(RookSpecial, RookOfMinorFixed);
+						IncV(EI.score, force * Ca4(RookSpecial, RookOfMinorFixed));
 				}
 			}
 			else if (att & PWay[me][sq] & Pawn(opp))
 			{
 				uint64 square = lsb(att & PWay[me][sq] & Pawn(opp));
 				if (!(PSupport[opp][square] & Pawn(opp)))
-					hof_score += Ca4(RookSpecial, RookHofWeakPAtt);
+					IncV(EI.score, force * Ca4(RookSpecial, RookHofWeakPAtt));
 			}
-			IncV(EI.score, hof_score);
-			if (PWay[opp][sq] & att & Major(me))
-				IncV(EI.score, hof_score);
 		}
 		if ((b & OwnLine(me, 6)) && ((King(opp) | Pawn(opp)) & (OwnLine(me, 6) | OwnLine(me, 7))))
 		{
@@ -6079,7 +6087,7 @@ template <bool me> INLINE void eval_bishops_xray(GEvalInfo& EI)
 					}
 					else if ((piece & 1) == me)
 					{
-						IncV(EI.score, Ca4(Pin, SelfPiecePin));
+						IncV(EI.score, Ca4(Pin, BishopSelfPin));
 						katt = 1;
 					}
 					else if (piece != IPawn[opp])
@@ -6288,14 +6296,14 @@ template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 	}
 }
 
-template<class POP> INLINE sint64 eval_threat(const uint64& threat)
-{	// POSTPONED -- inline for tuning
-	POP pop;
-	if (Single(threat))
-		return threat ? Ca4(Tactical, TacticalThreat) : 0;
-	// according to Gull, second threat is extra DoubleThreat, third and after are simple Threat again
-	return Ca4(Tactical, TacticalDoubleThreat) + pop(threat) * Ca4(Tactical, TacticalThreat);
-}
+
+
+
+
+
+
+
+
 
 template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 {
@@ -6303,7 +6311,7 @@ template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 	if (F(threat))
 		return;
 	Current->threat |= threat;
-	DecV(EI.score, eval_threat<POP>(Current->threat & Piece(me)));
+	
 	if (Single(threat))
 		DecV(EI.score, Ca4(Tactical, TacticalThreat));
 	else
@@ -11046,7 +11054,7 @@ template<class I_> int parse_move(I_ src)
 
 void record_to_file(const vector<string>& msgs)
 {
-	const char* report_file = "D:\\data\\lichess_db_standard_rated_2014-09.txt";
+	const char* report_file = "D:\\data\\eval_report.txt";
 	auto report = fopen(report_file, "a");
 	auto say = [&](const string& x) { fprintf(report, x.c_str()); };
 	for (const auto& m : msgs)
@@ -11106,7 +11114,7 @@ pair<bool, vector<string>> parse_game(const std::string& line, std::unordered_se
 				{
 					for (const auto& entry : score.why->vals)
 					{
-						if (abs(entry.contrib[0]) < 0.0001 && abs(entry.contrib[1]) < 0.0001 && abs(entry.contrib[2]) < 0.0001 && abs(entry.contrib[3]) < 0.0001)
+						if (!entry.keep && abs(entry.contrib[0]) < 0.0001 && abs(entry.contrib[1]) < 0.0001 && abs(entry.contrib[2]) < 0.0001 && abs(entry.contrib[3]) < 0.0001)
 							continue;
 						say("+ " + to_string(entry.line));
 						for (auto c : entry.contrib)
@@ -11148,7 +11156,7 @@ int main(int argc, char* argv[])
 	Console = false;
 	Infinite = true;
 
-	const char* pgn_file = "D:\\data\\lichess_db_standard_rated_2014-09.pgn\\lichess_db_standard_rated_2014-09.eval.pgn";
+	const char* pgn_file = "D:\\data\\eval_source.pgn";
 	auto pgn_src = fopen(pgn_file, "r");
 	std::cerr << "Reading " << pgn_file << "... ";
 	char buf[65535];
