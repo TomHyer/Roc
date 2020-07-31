@@ -3,12 +3,20 @@
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
 //#define EXPLAIN_EVAL
-#define TUNER_DATA
+//#define TUNER_DATA
 #define LARGE_PAGES
 #define MP_NPS
 //#define TIME_TO_DEPTH
 #define TB 1
 //#define HNI
+
+#ifdef _MSC_VER
+typedef unsigned long bitscan_t;
+#else
+typedef unsigned bitscan_t;
+#include <cmath>
+#include <algorithm>
+#endif
 
 #ifdef W32_BUILD
 #define NTDDI_VERSION 0x05010200
@@ -78,6 +86,9 @@ constexpr int PHASE_M2M = MAX_PHASE - MIDDLE_PHASE;
 #ifdef TUNER_DATA
 #include <vector>
 #include <unordered_set>
+constexpr int NO_INFO = -9999;
+static int theLastInfo = NO_INFO;
+
 struct Provenance
 {
 	struct Entry
@@ -85,13 +96,18 @@ struct Provenance
 		int line;
 		array<double, 4> contrib;
 		sint64 src;
-		bool keep;
+		int info;
+		Entry(int l, const array<double, 4>& c, sint64 s) : line(l), contrib(c), src(s), info(theLastInfo) {}
 	};
 	std::vector<Entry> vals;
 	Provenance(const std::vector<Entry>& vals_in) : vals(vals_in) {}
 };
 
-shared_ptr<Provenance> NoProvenance() { return make_shared<Provenance>(std::vector<Provenance::Entry>()); }
+shared_ptr<Provenance> NoProvenance() 
+{ 
+	theLastInfo = NO_INFO;
+	return make_shared<Provenance>(std::vector<Provenance::Entry>()); 
+}
 
 Provenance operator+(Provenance& lhs, Provenance& rhs)
 {
@@ -199,7 +215,7 @@ INLINE void add_phased(score_t* score, packed_t& inc, int phase, int closure, in
 	}
 
 	array<double, 4> mc_val = { 0.0, 0.0, 0.0, double(closure * MIDDLE_PHASE * mat_closed) / 8192 };
-	score->why->vals.push_back(Provenance::Entry({ __LINE__, mc_val, mat_closed, false }));
+	score->why->vals.push_back(Provenance::Entry(__LINE__, mc_val, mat_closed));
 }
 
 INLINE void scale_score(score_t* score, int num_inc, int den)
@@ -227,74 +243,6 @@ INLINE void scale_score(score_t* score, int num_inc, int den)
 {
 	*score += (num_inc * *score) / den;
 }
-#endif
-
-#if TB
-constexpr sint16 TBMateValue = 31380;
-constexpr sint16 TBCursedMateValue = 13;
-constexpr array<int, 5> TbValues = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
-constexpr int NominalTbDepth = 33;
-INLINE int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
-
-constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
-extern unsigned TB_LARGEST;
-bool tb_init_fwd(const char*);
-
-#define TB_CUSTOM_POP_COUNT pop1
-#define TB_CUSTOM_LSB lsb
-#define TB_CUSTOM_BSWAP32 _byteswap_ulong 
-template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
-{
-	return func(Piece(White), Piece(Black),
-		King(White) | King(Black),
-		Queen(White) | Queen(Black),
-		Rook(White) | Rook(Black),
-		Bishop(White) | Bishop(Black),
-		Knight(White) | Knight(Black),
-		Pawn(White) | Pawn(Black),
-		Current->ply,
-		Current->castle_flags,
-		Current->ep_square,
-		(me == White), std::forward<Args_>(args)...);
-}
-
-
-
-unsigned tb_probe_root_fwd(
-	uint64_t _white,
-	uint64_t _black,
-	uint64_t _kings,
-	uint64_t _queens,
-	uint64_t _rooks,
-	uint64_t _bishops,
-	uint64_t _knights,
-	uint64_t _pawns,
-	unsigned _rule50,
-	unsigned _ep,
-	bool     _turn);
-
-static inline unsigned tb_probe_root_checked(
-	uint64_t _white,
-	uint64_t _black,
-	uint64_t _kings,
-	uint64_t _queens,
-	uint64_t _rooks,
-	uint64_t _bishops,
-	uint64_t _knights,
-	uint64_t _pawns,
-	unsigned _rule50,
-	unsigned _castling,
-	unsigned _ep,
-	bool     _turn)
-{
-	if (_castling != 0)
-		return TB_RESULT_FAILED;
-	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
-}
-
-
-int GetTBMove(unsigned res, score_t* best_score);
-
 #endif
 
 INLINE sint64 Pack4(sint16 op, sint16 mid, sint16 eg, sint16 asym)
@@ -414,20 +362,6 @@ static const int MAX_HEIGHT = 128;
 
 static const sint16 CP_EVAL = 4;	// numeric value of 1 centipawn, in eval phase
 static const sint16 CP_SEARCH = 4;	// numeric value of 1 centipawn, in search phase (# of value equivalence classes in 1-cp interval)
-
-// helper to divide intermediate quantities to form scores
-// note that straight integer division (a la Gull) creates an attractor at 0
-// we support this, especially for weights inherited from Gull which have not been tuned for Roc
-template<int DEN, int SINK> struct Div_
-{
-	int operator()(int x) const
-	{
-		static const int shift = std::numeric_limits<int>::max / (2 * DEN);
-		static const int shrink = (SINK - DEN) / 2;
-		x = x > 0 ? max(0, x - shrink) : min(0, x + shrink);
-		return (y + DEN * shift) / DEN - shift;
-	}
-};
 
 static const uint8 White = 0;
 static const uint8 Black = 1;
@@ -593,7 +527,7 @@ INLINE const uint64& OwnLine(bool me, int n)
 static const int PliesToEvalCut = 50;	// halfway to 50-move
 static const int KingSafetyNoQueen = 8;	// numerator; denominator is 16
 static const int SeeThreshold = 40 * CP_EVAL;
-static const int DrawCapConstant = 100 * CP_EVAL;
+static const int DrawCapConstant = 110 * CP_EVAL;
 static const int DrawCapLinear = 0;	// numerator; denominator is 64
 static const int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
 static const int TBMinDepth = 7;
@@ -632,7 +566,7 @@ void Do_IncV(packed_t& dst, sint64 inc, int line, bool fake = false)
 	if (!fake)
 		dst.val += inc;
 	array<double, 4> temp = { double(Opening(inc)), double(Middle(inc)), double(Endgame(inc)), double(Closed(inc)) };
-	Provenance::Entry next = { line, temp, inc, false };
+	Provenance::Entry next(line, temp, inc);
 	if (!dst.why)
 		dst.why = NoProvenance();
 	dst.why->vals.push_back(next);
@@ -644,19 +578,15 @@ void Do_IncV(score_t& dst, sint16 inc, int line)
 		return;
 	dst.val += inc;
 	array<double, 4> temp = { double(inc), double(inc), double(inc), double(inc) };
-	Provenance::Entry next = { line, temp, inc, false };
+	Provenance::Entry next(line, temp, inc);
 	if (!dst.why)
 		dst.why = NoProvenance();
 	dst.why->vals.push_back(next);
 }
 
-void Do_Notice(packed_t& dst, sint64 inc, int line)
+void Do_Notice(packed_t& dst, int val, int line)
 {
-	const array<double, 4> ZERO = { 0.0, 0.0, 0.0, 0.0 };
-	Provenance::Entry next = { line, ZERO, inc, true };
-	if (!dst.why)
-		dst.why = NoProvenance();
-	dst.why->vals.push_back(next);
+	theLastInfo = val;
 }
 
 #define IncV(var, x) Do_IncV(var, me ? -(x): x, __LINE__)
@@ -806,7 +736,7 @@ typedef struct
 	array<uint64, 16> bb;
 	array<uint8, 64> square;
 } GBoard;
-__declspec(align(64)) GBoard Board[1];
+GBoard Board[1];
 array<uint64, 2048> Stack;
 int sp, save_sp;
 uint64 nodes, tb_hits, check_node, check_node_smp;
@@ -840,7 +770,7 @@ typedef struct
 } GPosData;
 typedef struct
 {
-	array<uint64, 2> att, patt, xray;
+	array<uint64, 2> att, patt, dbl_att, xray;
 	uint64 key, pawn_key, eval_key, passer, threat, mask;
 	sint64 pst;	// postponed -- provenance of PST?
 	int material;
@@ -853,7 +783,7 @@ typedef struct
 	uint8 turn, castle_flags, ply, ep_square, capture, gen_flags, piece, stage, mul, dummy;
 	sint32 moves[230];
 } GData;
-__declspec(align(64)) GData Data[MAX_HEIGHT];
+GData Data[MAX_HEIGHT];
 GData* Current = Data;
 static const uint8 FlagSort = 1 << 0;
 static const uint8 FlagNoBcSort = 1 << 1;
@@ -904,7 +834,7 @@ struct GPawnEntry
 };
 static const GPawnEntry NullPawnEntry = { 0, packed_t(0), {0, 0}, {0, 0}, {0, 0} };
 static const int pawn_hash_size = 1 << 20;
-__declspec(align(64)) array<GPawnEntry, pawn_hash_size> PawnHash;
+array<GPawnEntry, pawn_hash_size> PawnHash;
 static const int pawn_hash_mask = pawn_hash_size - 1;
 
 typedef struct
@@ -929,6 +859,70 @@ template<class T> void prefetch(T* p)
 {
 	_mm_prefetch(reinterpret_cast<char*>(p), _MM_HINT_NTA);
 }
+
+#if TB
+constexpr sint16 TBMateValue = 31380;
+constexpr sint16 TBCursedMateValue = 13;
+constexpr array<int, 5> TbValues = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
+constexpr int NominalTbDepth = 33;
+INLINE int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
+
+constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
+extern unsigned TB_LARGEST;
+bool tb_init_fwd(const char*);
+
+#define TB_CUSTOM_POP_COUNT pop1
+#define TB_CUSTOM_LSB lsb
+#define TB_CUSTOM_BSWAP32 _byteswap_ulong 
+template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
+{
+	return func(Piece(White), Piece(Black),
+		King(White) | King(Black),
+		Queen(White) | Queen(Black),
+		Rook(White) | Rook(Black),
+		Bishop(White) | Bishop(Black),
+		Knight(White) | Knight(Black),
+		Pawn(White) | Pawn(Black),
+		Current->ply,
+		Current->castle_flags,
+		Current->ep_square,
+		(me == White), std::forward<Args_>(args)...);
+}
+
+unsigned tb_probe_root_fwd(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _ep,
+	bool     _turn);
+
+static inline unsigned tb_probe_root_checked(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _castling,
+	unsigned _ep,
+	bool     _turn)
+{
+	if (_castling != 0)
+		return TB_RESULT_FAILED;
+	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
+}
+
+int GetTBMove(unsigned res, score_t* best_score);
+#endif
 
 uint64 Forward[2][8];
 uint64 West[8];
@@ -972,18 +966,17 @@ uint64 QueenAttacks(int sq, const uint64& occ)
 	return BishopAttacks(sq, occ) | RookAttacks(sq, occ);
 }
 
-
 #ifndef W32_BUILD
 INLINE int lsb(uint64 x)
 {
-	unsigned long y;
-	_BitScanForward64(&y, x); 
+	bitscan_t y;
+	_BitScanForward64(&y, x);
 	return y;
 }
 
 INLINE int msb(uint64 x)
 {
-	unsigned long y;
+	bitscan_t y;
 	_BitScanReverse64(&y, x);
 	return y;
 }
@@ -1321,24 +1314,24 @@ template<class C_> INLINE sint64 Ca4(const C_& x, int y)
 
 // EVAL WEIGHTS
 
-constexpr array<int, 6> MatLinear = { 26, -16, -10, 84, -20, -8 };
+constexpr array<int, 6> MatLinear = { 26, -14, -12, 84, -20, -10 };
 // pawn, knight, bishop, rook, queen, pair
 constexpr array<int, 14> MatQuadMe = { // tuner: type=array, var=1000, active=0
-	-62, -2, -48, -195, -289,
-	13, 281, -116, -59,
-	-193, 301, 298,
-	-936, -1058
+	-64, 3, -46, -208, -292,
+	22, 284, -109, -53,
+	-215, 277, 280,
+	-954, -1058
 };
 constexpr array<int, 10> MatQuadOpp = { // tuner: type=array, var=1000, active=0
-	-25, 37, -29, -305,
-	35, 33, 72,
-	10, -26,
-	69
+	-34, 44, -29, -305,
+	39, 43, 79,
+	12, -33,
+	65
 };
 constexpr array<int, 9> BishopPairQuad = { // tuner: type=array, var=1000, active=0
-	-75, 142, 67, 247, -99, -86, -197, 58, -232
+	-80, 139, 63, 237, -103, -90, -201, 54, -241
 };
-constexpr array<int, 6> MatClosed = { 3, 26, 18, -4, -7, 29 };
+constexpr array<int, 6> MatClosed = { 13, 37, 11, -13, -7, 24 };
 
 enum
 {
@@ -1438,10 +1431,10 @@ constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256,
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1511, 923, 668, -240, 1062, 593, 0, 492, 256, 208, -56, 178 };
-constexpr array<int, 12> MobCoeffsBishop = { 1610, 818, 613, 0, 1128, 1308, 1319, -939, -201, 276, 113, 511 };
-constexpr array<int, 12> MobCoeffsRook = { 1178, 950, 740, -30, -865, 0, 960, 499, 74, 30, 16, -3 };
-constexpr array<int, 12> MobCoeffsQueen = { 662, 958, 1259, 46, 1432, 0, -1472, -92, 39, 13, 1, 10 };
+constexpr array<int, 12> MobCoeffsKnight = { 1231, 753, 518, -340, 1832, 1170, 524, 761, 241, 156, -61, 164 };
+constexpr array<int, 12> MobCoeffsBishop = { 1300, 678, 503, -220, 2106, 1613, 1443, -336, -243, 271, 109, 501 };
+constexpr array<int, 12> MobCoeffsRook = { 1038, 840, 675, 35, -542, 323, 1189, 354, 84, 26, -4, -3 };
+constexpr array<int, 12> MobCoeffsQueen = { 472, 838, 1169, 96, 2157, 529, -1054, -210, 48, -7, -7, -1 };
 
 constexpr int N_LOCUS = 22;
 
@@ -1491,23 +1484,24 @@ array<sint16, 4> StormFree;
 
 namespace PasserWeights
 {
-	constexpr array<array<int, 4>, 3> Candidate = { array<int, 4>({-2, -4, 5, 12}), array<int, 4>({16, 13, 27, 43}), array<int, 4>({47, 38, 24, -12}) };
-	constexpr array<array<int, 4>, 3> General = { array<int, 4>({-20, -5, 5, 24}), array<int, 4>({45, 19, 7, 9}), array<int, 4>({94, 73, 28, 2}) };
-	constexpr array<array<int, 4>, 3> Protected = { array<int, 4>({-23, -31, 1, 2}), array<int, 4>({34, 75, 92, 27}), array<int, 4>({86, 176, 245, 3}) };
-	constexpr array<array<int, 4>, 3> Outside = { array<int, 4>({-14, -8, -1, 18}), array<int, 4>({64, 42, 22, -2}), array<int, 4>({142, 101, 10, 1}) };
-	constexpr array<array<int, 4>, 3> Blocked = { array<int, 4>({-16, -11, 2, 27}), array<int, 4>({71, 54, 39, 3}), array<int, 4>({153, 129, 66, 1}) };	
-	constexpr array<array<int, 4>, 3> Connected = { array<int, 4>({-11, -12, -10, 14}), array<int, 4>({89, 100, 103, -1}), array<int, 4>({206, 185, 130, 1}) };
-	constexpr array<array<int, 4>, 3> Free = { array<int, 4>({1, -5, 13, -1}), array<int, 4>({88, 148, 190, -1}), array<int, 4>({88, 376, 478, -1}) };
-	constexpr array<array<int, 4>, 3> Supported = { array<int, 4>({-7, -5, 1, 13}), array<int, 4>({116, 107, 88, 0}), array<int, 4>({191, 216, 238, 1}) };
-	constexpr array<array<int, 4>, 3> Clear = { array<int, 4>({4, 2, 1, 0}), array<int, 4>({13, 8, 3, 0}), array<int, 4>({16, 9, 2, 0}) };
+	constexpr array<array<int, 4>, 3> Candidate = { array<int, 4>({-7, -6, 3, 12}), array<int, 4>({15, 9, 19, 68}), array<int, 4>({28, 28, 17, -11}) };
+	constexpr array<array<int, 4>, 3> General = { array<int, 4>({-24, -4, 5, 31}), array<int, 4>({45, 17, 4, 10}), array<int, 4>({79, 69, 16, 4}) };
+	constexpr array<array<int, 4>, 3> Protected = { array<int, 4>({-31, -44, 0, -9}), array<int, 4>({45, 85, 87, 38}), array<int, 4>({98, 189, 258, 8}) };
+	constexpr array<array<int, 4>, 3> Outside = { array<int, 4>({-17, -4, 0, 22}), array<int, 4>({63, 38, 14, -4}), array<int, 4>({110, 91, 0, 1}) };
+	constexpr array<array<int, 4>, 3> Blocked = { array<int, 4>({-15, -9, 4, 26}), array<int, 4>({68, 52, 32, 5}), array<int, 4>({132, 127, 56, 1}) };	
+	constexpr array<array<int, 4>, 3> Clear = { array<int, 4>({5, 3, 1, 1}), array<int, 4>({13, 8, 6, 1}), array<int, 4>({24, 9, 8, 1}) };
+	constexpr array<array<int, 4>, 3> Connected = { array<int, 4>({-12, -13, -9, 13}), array<int, 4>({91, 103, 102, -1}), array<int, 4>({229, 208, 132, 1}) };
+	constexpr array<array<int, 4>, 3> Free = { array<int, 4>({1, -8, 13, -1}), array<int, 4>({92, 150, 177, -1}), array<int, 4>({90, 380, 431, -1}) };
+	constexpr array<array<int, 4>, 3> Supported = { array<int, 4>({-5, -2, 4, 14}), array<int, 4>({115, 109, 89, 0}), array<int, 4>({189, 216, 231, 1}) };
+
 }
 
 // type (2: att, def) * scaling (2: linear, log) 
 constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
-	875, 233, 380, 87
+	833, 221, 361, 82
 };
 constexpr array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
-	2930, 19, 1067, 302
+	2787, 18, 1015, 287
 };
 
 enum { PasserOnePiece, PasserOpKingControl, PasserOpMinorControl, PasserOpRookBlock };
@@ -1516,7 +1510,7 @@ constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active
 	0, 0, 0,
 	0, 0, 0,
 	0, 0, 0,
-	1, 104, 0
+	1, 116, 0
 };
 namespace Values
 {
@@ -1541,11 +1535,11 @@ enum
 	IsolatedDoubledClosed
 };
 constexpr array<int, 20> Isolated = {	
-	19, 22, 16, -6,
-	16, 7, 3, 9,
-	-22, -9, 1, 1,
-	9, 26, 47, -17,
-	36, 25, 25, -22 };
+	18, 20, 17, -10,
+	20, 7, 2, 10,
+	-18, -8, -1, 4,
+	10, 30, 51, -22,
+	39, 27, 28, -27 };
 
 enum
 {
@@ -1555,26 +1549,26 @@ enum
 	ChainRoot
 };
 constexpr array<int, 16> Unprotected = {  // tuner: type=array, var=26, active=0
-	31, 43, 31, -5,
-	-14, -33, -33, 20,
-	-2, -12, -36, 14,
-	9, -3, -6, -9 };
+	18, 45, 31, -6,
+	-16, -36, -38, 22,
+	-3, -10, -39, 9,
+	7, -3, -3, -14 };
 enum
 {
 	BackwardOpen,
 	BackwardClosed
 };
 constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
-	78, 76, 51, 4,
-	9, 7, 13, 13 };
+	81, 77, 54, -2,
+	14, 9, 14, 17 };
 enum
 {
 	DoubledOpen,
 	DoubledClosed
 };
 constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-	86, 17, 2, -86,
-	8, 3, 4, -12 };
+	86, 19, 4, -90,
+	10, 2, 7, -8 };
 
 enum
 {
@@ -1588,14 +1582,14 @@ enum
 	Rook7thDoubled
 };
 constexpr array<int, 32> RookSpecial = {  // tuner: type=array, var=26, active=0
-	11, 1, 1, 3,
-	11, 1, 18, 16,
-	31, 5, -13, 8,
-	13, -3, -27, 9,
-	11, 12, 5, 1,
-	-36, -32, -9, 20,
-	-43, -10, 11, 16,
-	-32, 30, 63, 13 };
+	9, -1, -1, 2,
+	8, -1, 15, 21,
+	27, 2, -16, 7,
+	11, -6, -27, 15,
+	11, 12, 5, -3,
+	-3, -3, -2, 26,
+	-3, -3, 6, 22,
+	-2, 26, 52, 16 };
 
 enum
 {
@@ -1609,34 +1603,34 @@ enum
 	TacticalThreat,
 	TacticalDoubleThreat,
 	TacticalExtraThreat,
+	TacticalWeakThreat,
 	TacticalUnguardedQ
 };
-constexpr array<int, 44> Tactical = {  // tuner: type=array, var=51, active=0
-	1, -7, 6, 9,
-	53, 26, 74, -2,
-	5, 14, 38, 18,
-	28, 32, 72, 9,
-	-1, 32, 40, 24,
-	27, 67, 86, 27,
-	82, 73, 71, 14,
-	39, 35, 43, 11,
-	187, 165, 149, 32,
-	43, 46, 53, 7,
-	-14, -1, 13, -9
+constexpr array<int, 48> Tactical = {  // tuner: type=array, var=51, active=0
+	4, 1, 3, 3,
+	53, 20, 69, -7,
+	6, 11, 37, 22,
+	29, 29, 66, 10,
+	-1, 28, 35, 30,
+	26, 59, 71, 30,
+	89, 78, 74, 20,
+	39, 35, 42, 13,
+	179, 160, 147, 36,
+	42, 46, 53, 5,
+	20, 20, 24, 5,
+	-20, -3, 11, -21
 };
 
 enum
 {
 	KingDefKnight,
 	KingDefBishop,
-	
 	KingDefQueen
 };
 constexpr array<int, 12> KingDefence = {  // tuner: type=array, var=13, active=0
-	61, 14, 1, -25,
-	11, 21, 17, 14,
-	
-	12, 6, 1, 2 };
+	65, 19, 4, -27,
+	9, 18, 12, 18,
+	12, 6, 1, 4 };
 
 enum
 {
@@ -1646,16 +1640,15 @@ enum
 	PawnRestrictsK
 };
 constexpr array<int, 16> PawnSpecial = {  // tuner: type=array, var=26, active=0
-	48, 32, 17, -27, 
-	18, 33, 32, 31, 
-	24, 26, 30, -11, 
-	20, 6, 1, 33
+	39, 35, 21, -28, 
+	27, 31, 28, 33, 
+	26, 27, 31, -14, 
+	23, 9, 1, 45
 };
 
 enum { BishopOutpostNoMinor };
 constexpr array<int, 4> BishopSpecial = { // tuner: type=array, var=20, active=0
-	
-	71, 73, 30, 12
+	72, 73, 26, 15
 };
 
 constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
@@ -1667,10 +1660,10 @@ enum
 	KnightOutpostNoMinor
 };
 constexpr array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
-	26, 19, 10, 11,
-	50, 36, 4, 1,
-	18, 19, 29, -3,
-	42, 42, 5, 6 };
+	28, 21, 11, 15,
+	54, 41, 7, 4,
+	17, 20, 33, 2,
+	47, 49, 10, 18 };
 
 enum
 {
@@ -1687,17 +1680,17 @@ enum
 	BishopThreatPin
 };
 constexpr array<int, 44> Pin = {  // tuner: type=array, var=51, active=0
-	11, 33, 38, 28,
-	79, 111, 91, 39,
-	63, 66, 109, -1,
-	46, 27, 30, 5,
-	59, 103, 89, 46,
-	40, 90, 122, 17,
-	243, 185, 126, -3,
-	34, 46, 47, 3,
-	155, 150, 128, 10,
-	-17, 90, 218, 35,
-	113, 240, 189, 17 };
+	11, 33, 38, 34,
+	62, 107, 88, 55,
+	69, 61, 102, -5,
+	49, 25, 27, 9,
+	37, 96, 86, 78,
+	33, 86, 122, 25,
+	256, 189, 128, -6,
+	32, 47, 50, 7,
+	141, 149, 127, 16,
+	-1, 82, 195, 51,
+	101, 272, 214, 27 };
 
 enum
 {
@@ -1706,9 +1699,9 @@ enum
 	BKingRay
 };
 constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
-	13, 18, 24, -3,
-	1, 2, 47, -4,
-	8, 18, 7, 18 };
+	15, 18, 22, -11,
+	1, 5, 50, 2,
+	2, 21, 7, 30 };
 
 constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
@@ -1733,8 +1726,8 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 4, 6, 9, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
-constexpr array<int, 4> KingCenterScale = { 59, 58, 67, 64 };
+constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 3, 4, 6, 11, 17, 24, 31, 39, 47, 46, 65, 65, 65 };
+constexpr array<int, 4> KingCenterScale = { 57, 56, 67, 64 };
 
 // tuner: stop
 
@@ -4134,6 +4127,8 @@ void do_null()
 	Next->att[Black] = Current->att[Black];
 	Next->patt[White] = Current->patt[White];
 	Next->patt[Black] = Current->patt[Black];
+	Next->dbl_att[White] = Current->dbl_att[White];
+	Next->dbl_att[Black] = Current->dbl_att[Black];
 	Next->xray[White] = Current->xray[White];
 	Next->xray[Black] = Current->xray[Black];
 	Stack[sp] = Next->key;
@@ -4239,7 +4234,6 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 		b = Bit(sq);
 		int rank = RankOf(sq);
 		int rrank = OwnRank<me>(sq);
-		NOTICE(PEI.score, rrank);
 		int file = FileOf(sq);
 		uint64 way = PWay[me][sq];
 		int next = PieceAt(sq + Push[me]);
@@ -4297,9 +4291,11 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 		}
 		else
 		{
+			NOTICE(PEI.score, rrank);
 			if (open && (F(Pawn(opp) & PIsolated[file]) || pop(Pawn(me) & PIsolated[file]) >= pop(Pawn(opp) & PIsolated[file])))
 				IncV(PEI.score, PasserCandidate[rrank]);  // IDEA: more precise pawn counting for the case of, say,
 														  // white e5 candidate with black pawn on f5 or f4...
+			NOTICE(PEI.score, NO_INFO);
 		}
 
 		if (F(PEI.patt[me] & b) && next == IPawn[opp])  // unprotected and can't advance
@@ -4324,12 +4320,13 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 		if (open && F(PIsolated[file] & Forward[me][rank] & Pawn(opp)))
 		{
 			PawnEntry->passer[me] |= (uint8)(1 << file);
-			if (!(Current->material & FlagUnusualMaterial))
-			{
-				int deficit = (me ? 1 : -1) * Material[Current->material].imbalance;
-				if (rrank <= deficit)
-					continue;
-			}
+			if (rrank < 3) continue;
+			//if (!(Current->material & FlagUnusualMaterial))
+			//{
+			//	int deficit = (me ? 1 : -1) * Material[Current->material].imbalance;
+			//	if (rrank <= deficit) continue;
+			//}
+			NOTICE(PEI.score, rrank);
 			IncV(PEI.score, PasserGeneral[rrank]);
 			if (PEI.patt[me] & b)
 				IncV(PEI.score, PasserProtected[rrank]);
@@ -4344,6 +4341,7 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 				- dist_def * PasserDef[rrank] - LogDist[dist_def] * PasserDefLog[rrank];  // IDEA -- incorporate side-to-move in closer-king check?
 			// IDEA -- scale down rook pawns?
 			IncV(PEI.score, Pack2(0, value / 256));
+			NOTICE(PEI.score, NO_INFO);
 		}
 	}
 	if (T(Rook(opp)) && !((kf * kr) % 7))
@@ -4400,6 +4398,7 @@ template <bool me> INLINE void eval_queens_xray(GEvalInfo& EI)
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = QueenAttacks(sq, EI.occ);
+		Current->dbl_att[me] |= att & Current->att[me];
 		Current->att[me] |= att;
 		if (QMask[sq] & King(opp))
 			if (uint64 v = Between[EI.king[opp]][sq] & EI.occ)
@@ -4443,6 +4442,7 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = QueenAttacks(sq, EI.occ);
+		Current->dbl_att[me] |= att & Current->att[me];
 		Current->att[me] |= att;
 
 		if (uint64 a = att & EI.area[opp])
@@ -4455,6 +4455,7 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 		uint64 control = att & EI.free[me];
 		NOTICE(EI.score, pop(control));
 		IncV(EI.score, MobQueen[0][pop(control)]);
+		NOTICE(EI.score, NO_INFO);
 		FakeV(EI.score, (64 * pop(control & KingLocus[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
 		IncV(EI.score, MobQueen[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
@@ -4474,6 +4475,7 @@ template<bool me> INLINE void eval_rooks_xray(GEvalInfo& EI)
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = RookAttacks(sq, EI.occ);
+		Current->dbl_att[me] |= att & Current->att[me];
 		Current->att[me] |= att;
 		if (RMask[sq] & King(opp))
 			if (uint64 v = Between[EI.king[opp]][sq] & EI.occ)
@@ -4533,6 +4535,7 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		uint64 control = att & EI.free[me];
 		NOTICE(EI.score, pop(control));
 		IncV(EI.score, MobRook[0][pop(control)]);
+		NOTICE(EI.score, NO_INFO);
 		FakeV(EI.score, (64 * pop(control & KingLocus[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
 		IncV(EI.score, MobRook[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
@@ -4584,6 +4587,7 @@ template <bool me> INLINE void eval_bishops_xray(GEvalInfo& EI)
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = BishopAttacks(sq, EI.occ);
+		Current->dbl_att[me] |= att & Current->att[me];
 		Current->att[me] |= att;
 		if (BMask[sq] & King(opp))
 			if (uint64 v = Between[EI.king[opp]][sq] & EI.occ)
@@ -4637,6 +4641,7 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		uint64 control = att & EI.free[me];
 		NOTICE(EI.score, pop(control));
 		IncV(EI.score, MobBishop[0][pop(control)]);
+		NOTICE(EI.score, NO_INFO);
 		FakeV(EI.score, (64 * pop(control & KingLocus[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
 		IncV(EI.score, MobBishop[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Pawn(opp))
@@ -4646,10 +4651,6 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		if (att & EI.area[me])
 			IncV(EI.score, Ca4(KingDefence, KingDefBishop));
 		Current->threat |= att & Major(opp);
-		const uint64& myArea = (b & LightArea) ? LightArea : DarkArea;
-		
-		
-		
 		if (T(b & Outpost[me])
 			&& F(Knight(opp))
 			&& T(Current->patt[me] & b)
@@ -4662,7 +4663,11 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 template <bool me> INLINE void eval_knights_xray(GEvalInfo& EI)
 {
 	for (uint64 u = Knight(me); T(u); Cut(u))
-		Current->att[me] |= NAtt[lsb(u)];
+	{
+		uint64 att = NAtt[lsb(u)];
+		Current->dbl_att[me] |= Current->att[me] & att;
+		Current->att[me] |= att;
+	}
 }
 
 template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
@@ -4673,13 +4678,13 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = NAtt[sq];
-		Current->att[me] |= att;
 		if (uint64 a = att & EI.area[opp])
 			EI.king_att[me] += Single(a) ? KingNAttack1 : KingNAttack;
 		Current->threat |= att & Major(opp);
 		uint64 control = att & EI.free[me];
 		NOTICE(EI.score, pop(control));
 		IncV(EI.score, MobKnight[0][pop(control)]);
+		NOTICE(EI.score, NO_INFO);
 		FakeV(EI.score, (64 * pop(control & KingLocus[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
 		IncV(EI.score, MobKnight[1][pop(control & KingLocus[EI.king[opp]])]);
 		if (control & Bishop(opp))
@@ -4704,7 +4709,7 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	POP pop;
-	uint16 cnt = Min<uint16>(10, UUnpack1(EI.king_att[me]));
+	uint16 cnt = Min<uint16>(15, UUnpack1(EI.king_att[me]));
 	uint16 score = UUnpack2(EI.king_att[me]);
 	if (cnt >= 2 && T(Queen(me)))
 	{
@@ -4718,7 +4723,6 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	int kf = FileOf(EI.king[opp]);
 	if (kf > 3)
 		kf = 7 - kf;
-	NOTICE(EI.score, kf);
 	adjusted = (adjusted * KingCenterScale[kf]) / 64;
 	if (!Queen(me))
 		adjusted = (adjusted * KingSafetyNoQueen) / 16;
@@ -4741,7 +4745,9 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	int md = (PHASE[1] * adjusted) / 32;
 	int eg = (PHASE[2] * adjusted) / 32;
 	int cl = (PHASE[3] * adjusted) / 32;
+	NOTICE(EI.score, cnt);
 	IncV(EI.score, Pack4(op, md, eg, cl));
+	NOTICE(EI.score, NO_INFO);
 }
 
 template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
@@ -4756,12 +4762,12 @@ template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 		int sq = NB<opp>(File[file] & Pawn(me));  // most advanced in this file
 		int rank = OwnRank<me>(sq);
 		Current->passer |= Bit(sq);
-		if (EI.material)
-		{
-			int deficit = (me ? 1 : -1) * EI.material->imbalance;
-			if (rank <= deficit)
-				continue;
-		}
+		if (rank < 3) continue;
+		//if (EI.material)
+		//{
+		//	int deficit = (me ? 1 : -1) * EI.material->imbalance;
+		//	if (rank <= deficit) continue;
+		//}
 		NOTICE(EI.score, rank);
 
 		if (!PieceAt(sq + Push[me]))
@@ -4805,6 +4811,7 @@ template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 					unsupported = 1;
 			}
 		}
+		NOTICE(EI.score, NO_INFO);
 
 		if (sr_me)
 		{
@@ -4829,6 +4836,9 @@ template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 		DecV(EI.score, Ca4(Tactical, TacticalDoubleThreat));
 		DecV(EI.score, (pop(threat) - 2) * Ca4(Tactical, TacticalExtraThreat));
 	}
+	if (uint64 weakThreat = Current->dbl_att[opp] & ~(Current->att[me] | threat) & Piece(me))
+		DecV(EI.score, Ca4(Tactical, TacticalWeakThreat));
+
 	if (T(Queen(me)) && F(Queen(opp)))
 		IncV(EI.score, pop((Piece(opp) ^ King(opp)) & ~Current->att[opp]) * Ca4(Tactical, TacticalUnguardedQ));
 }
@@ -4917,6 +4927,8 @@ template<class POP> void evaluation()
 	EI.occ = PieceAll();
 	Current->patt[White] = ShiftW<White>(Pawn(White)) | ShiftE<White>(Pawn(White));
 	Current->patt[Black] = ShiftW<Black>(Pawn(Black)) | ShiftE<Black>(Pawn(Black));
+	Current->dbl_att[White] = ShiftW<White>(Pawn(White)) & ShiftE<White>(Pawn(White));
+	Current->dbl_att[Black] = ShiftW<Black>(Pawn(Black)) & ShiftE<Black>(Pawn(Black));
 	EI.area[White] = (KAtt[EI.king[White]] | King(White)) & ((~Current->patt[White]) | Current->patt[Black]);
 	EI.area[Black] = (KAtt[EI.king[Black]] | King(Black)) & ((~Current->patt[Black]) | Current->patt[White]);
 	Current->att[White] = Current->patt[White];
@@ -5880,10 +5892,16 @@ template<bool me> INLINE bool forkable(int dst)
 template <bool me> int* gen_captures(int* list)
 {
 	uint64 u, v;
-
+	int kMe = lsb(King(me)), kOpp = lsb(King(opp));
+	auto bonus = [&](int to)
+	{
+		if (!HasBit(Current->att[opp], to))
+			return 2 << 26;
+		return T(HasBit(Current->dbl_att[me] & ~Current->dbl_att[opp], to)) << 26;
+	};
 	if (Current->ep_square)
 		for (v = PAtt[opp][Current->ep_square] & Pawn(me); T(v); Cut(v)) 
-			list = AddMove(list, lsb(v), Current->ep_square, FlagEP, MvvLva[IPawn[me]][IPawn[opp]]);
+			list = AddMove(list, lsb(v), Current->ep_square, FlagEP, MvvLva[IPawn[me]][IPawn[opp]] + bonus(lsb(v)));
 	for (u = Pawn(me) & OwnLine(me, 6); T(u); Cut(u))
 		if (F(PieceAt(lsb(u) + Push[me])))
 		{
@@ -5894,36 +5912,71 @@ template <bool me> int* gen_captures(int* list)
 		}
 	for (v = ShiftW<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
 	{
-		list = AddMove(list, lsb(v), lsb(v) + PushE[me], FlagPQueen, MvvLvaPromotionCap(PieceAt(lsb(v) + PushE[me])));
-		if (HasBit(NAtt[lsb(King(opp))], lsb(v) + PushE[me]))
-			list = AddMove(list, lsb(v), lsb(v) + PushE[me], FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(lsb(v) + PushE[me])));
+		int from = lsb(v), to = from + PushE[me];
+		list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotionCap(PieceAt(to)) + bonus(to));
+		if (HasBit(NAtt[kOpp], to))
+			list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(to)) + bonus(to));
 	}
 	for (v = ShiftE<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
 	{
-		list = AddMove(list, lsb(v), lsb(v) + PushW[me], FlagPQueen, MvvLvaPromotionCap(PieceAt(lsb(v) + PushW[me])));
-		if (HasBit(NAtt[lsb(King(opp))], lsb(v) + PushW[me]))
-			list = AddMove(list, lsb(v), lsb(v) + PushW[me], FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(lsb(v) + PushW[me])));
+		int from = lsb(v), to = from + PushW[me];
+		list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotionCap(PieceAt(to)) + bonus(to));
+		if (HasBit(NAtt[kOpp], to))
+			list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(to)) + bonus(to));
 	}
 	if (T(Current->att[me] & Current->mask))
 	{
-		for (v = ShiftW<opp>(Current->mask) & Pawn(me) & (~OwnLine(me, 6)); T(v); Cut(v)) 
-			list = AddCaptureP(list, IPawn[me], lsb(v), lsb(v) + PushE[me], 0);
+		for (v = ShiftW<opp>(Current->mask) & Pawn(me) & (~OwnLine(me, 6)); T(v); Cut(v))
+		{
+			int from = lsb(v), to = lsb(v) + PushE[me];
+			list = AddCaptureP(list, IPawn[me], from, to, 0, bonus(to));
+		}
 		for (v = ShiftE<opp>(Current->mask) & Pawn(me) & (~OwnLine(me, 6)); T(v); Cut(v)) 
-			list = AddCaptureP(list, IPawn[me], lsb(v), lsb(v) + PushW[me], 0);
-		for (v = KAtt[lsb(King(me))] & Current->mask & (~Current->att[opp]); T(v); Cut(v)) 
-			list = AddCaptureP(list, IKing[me], lsb(King(me)), lsb(v), 0);
+		{
+			int from = lsb(v), to = lsb(v) + PushW[me];
+			list = AddCaptureP(list, IPawn[me], from, to, 0, bonus(to));
+		}
+		for (v = KAtt[kMe] & Current->mask & (~Current->att[opp]); T(v); Cut(v))
+		{
+			int from = kMe, to = lsb(v);
+			list = AddCaptureP(list, IKing[me], from, to, 0, bonus(to));
+		}
 		for (u = Knight(me); T(u); Cut(u))
-			for (v = NAtt[lsb(u)] & Current->mask; T(v); Cut(v)) 
-				list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
+		{
+			int from = lsb(u);
+			for (v = NAtt[from] & Current->mask; T(v); Cut(v))
+			{
+				int to = lsb(v);
+				list = AddCaptureP(list, IKnight[me], from, to, 0, bonus(to));
+			}
+		}
 		for (u = Bishop(me); T(u); Cut(u))
-			for (v = BishopAttacks(lsb(u), PieceAll()) & Current->mask; T(v); Cut(v)) 
-				list = AddCapture(list, lsb(u), lsb(v), 0);
+		{
+			int from = lsb(u), mover = PieceAt(from);
+			for (v = BishopAttacks(from, PieceAll()) & Current->mask; T(v); Cut(v))
+			{
+				int to = lsb(v);
+				list = AddCaptureP(list, mover, from, to, 0, bonus(to));
+			}
+		}
 		for (u = Rook(me); T(u); Cut(u))
-			for (v = RookAttacks(lsb(u), PieceAll()) & Current->mask; T(v); Cut(v)) 
-				list = AddCaptureP(list, IRook[me], lsb(u), lsb(v), 0);
+		{
+			int from = lsb(u);
+			for (v = RookAttacks(from, PieceAll()) & Current->mask; T(v); Cut(v))
+			{
+				int to = lsb(v);
+				list = AddCaptureP(list, IRook[me], from, to, 0, bonus(to));
+			}
+		}
 		for (u = Queen(me); T(u); Cut(u))
-			for (v = QueenAttacks(lsb(u), PieceAll()) & Current->mask; T(v); Cut(v)) 
-				list = AddCaptureP(list, IQueen[me], lsb(u), lsb(v), 0);
+		{
+			int from = lsb(u);
+			for (v = QueenAttacks(from, PieceAll()) & Current->mask; T(v); Cut(v))
+			{
+				int to = lsb(v);
+				list = AddCaptureP(list, IQueen[me], from, to, 0, bonus(to));
+			}
+		}
 	}
 	return NullTerminate(list);
 }
@@ -6088,7 +6141,8 @@ INLINE bool can_castle(const uint64& occ, bool me, bool kingside)
 template<bool me> int* gen_quiet_moves(int* list)
 {
 	uint64 u, v;
-	auto safe3 = [&](int loc) { return HasBit(Current->att[opp] & ~Current->att[me], loc) ? 0 : FlagCastling; };
+	auto drop = [&](int loc) { return HasBit(Current->att[opp] & ~Current->dbl_att[me], loc) ? FlagCastling : 0; };
+	auto dropPawn = [&](int loc) { return HasBit(Current->att[opp] & ~Current->att[me], loc) ? FlagCastling : 0; };
 
 	uint64 occ = PieceAll();
 	if (me == White)
@@ -6108,14 +6162,13 @@ template<bool me> int* gen_quiet_moves(int* list)
 
 	uint64 free = ~occ;
 	auto pTarget = PawnJoins<me>();
-	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
 		int passer = T(HasBit(Current->passer, to - Push[me]));
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], FlagCastling);
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to), Square(OwnRank<me>(to) + 4 * passer - 2));
+			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], dropPawn(to + Push[me]));
+		list = AddHistoryP(list, IPawn[me], to - Push[me], to, dropPawn(to), Square(OwnRank<me>(to) + 4 * passer - 2));
 	}
 
 	for (u = Knight(me); T(u); Cut(u))
@@ -6124,9 +6177,8 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & NAtt[from]; T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = NAtt[to] & Current->patt[opp] ? FlagCastling : 0;
 			// int floor = T(NAtt[to] & Major(opp));
-			list = AddHistoryP(list, IKnight[me], from, to, flag);
+			list = AddHistoryP(list, IKnight[me], from, to, drop(to));
 		}
 	}
 
@@ -6137,8 +6189,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & BishopAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = BMask[to] & (PAtt[opp][to] & Pawn(me) ? Major(opp) : Rook(opp)) ? FlagCastling : 0;
-			list = AddHistoryP(list, which, from, to, flag);
+			list = AddHistoryP(list, which, from, to, drop(to));
 		}
 	}
 
@@ -6148,8 +6199,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & RookAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = (PAtt[opp][to] & Pawn(me)) && (RMask[to] & Queen(opp)) ? FlagCastling : 0;
-			list = AddHistoryP(list, IRook[me], from, to, flag);
+			list = AddHistoryP(list, IRook[me], from, to, drop(to));
 		}
 	}
 	for (u = Queen(me); T(u); Cut(u))
@@ -6159,12 +6209,16 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			list = AddHistoryP(list, IQueen[me], from, to, 0);	// KAtt[to] & qTarget ? FlagCastling : 0);
+			list = AddHistoryP(list, IQueen[me], from, to, drop(to));	// KAtt[to] & qTarget ? FlagCastling : 0);
 		}
 	}
-	int kFlag = T(Current->xray[opp]) ? FlagCastling : 0;
-	for (v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v)) 
-		list = AddHistoryP(list, IKing[me], lsb(King(me)), lsb(v), kFlag);
+	int kLoc = lsb(King(me));
+	auto xray = [&](int loc) { return T(Current->xray[opp]) && F(Current->xray[opp] & FullLine[kLoc][loc]) ? FlagCastling : 0; };
+	for (v = KAtt[kLoc] & free & (~Current->att[opp]); T(v); Cut(v))
+	{
+		int to = lsb(v);
+		list = AddHistoryP(list, IKing[me], kLoc, to, xray(to));
+	}
 
 	return NullTerminate(list);
 }
@@ -9521,6 +9575,7 @@ pair<bool, vector<string>> parse_game(const std::string& line, std::unordered_se
 		Print = false;
 		get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 		double se2 = 0.0, pvs_val = NO_VAL;
+		int n_evals = 0;
 		for (size_t start = 0, plies = 0, stop; ++plies <= 200; start = stop)	// stop after 100 moves
 		{
 			size_t e_loc = line.find("eval", start);
@@ -9549,39 +9604,49 @@ pair<bool, vector<string>> parse_game(const std::string& line, std::unordered_se
 			do_move(Current->turn, move);
 			memcpy(Data, Current, sizeof(GData));
 			Current = Data;
-			say("BEGIN " + to_string(Current->key) + "\n");
-			partial = true;
-			say("THEIRS " + to_string(e_val) + "\n");
-			if (known_hashes.count(Current->key))
-				say("DUPLICATE\n");
+			if (n_evals < 6)
+				std::cerr << ".";
 			else
 			{
-				evaluate();
-				auto score = Current->turn
-					? (gen_root_moves<1>(), -pv_search<true, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch))
-					: (gen_root_moves<0>(), pv_search<false, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch));
-
-				say("OURS " + to_string(+score) + "\n");
-				if (!score.why)
-					say("UNDOCUMENTED\n");
+				say("BEGIN " + to_string(Current->key) + "\n");
+				partial = true;
+				say("THEIRS " + to_string(e_val) + "\n");
+				if (known_hashes.count(Current->key))
+					say("DUPLICATE\n");
 				else
 				{
-					for (const auto& entry : score.why->vals)
+					evaluate();
+					auto score = Current->turn
+						? (gen_root_moves<1>(), -pv_search<true, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch))
+						: (gen_root_moves<0>(), pv_search<false, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch));
+
+					say("OURS " + to_string(+score) + "\n");
+					if (!score.why)
+						say("UNDOCUMENTED\n");
+					else
 					{
-						array<int, 4> contrib = { round_contrib(entry.contrib[0]) , round_contrib(entry.contrib[1]) , round_contrib(entry.contrib[2]) , round_contrib(entry.contrib[3]) };
-						if (!entry.keep && !contrib[0] && !contrib[1] && !contrib[2] && !contrib[3])
-							continue;
-						say("+ " + to_string(entry.line));
-						for (auto c : contrib)
-							say(" " + to_string(c));
-						say(" " + to_string(entry.src) + "\n");
+						for (const auto& entry : score.why->vals)
+						{
+							array<int, 4> contrib = { round_contrib(entry.contrib[0]) , round_contrib(entry.contrib[1]) , round_contrib(entry.contrib[2]) , round_contrib(entry.contrib[3]) };
+							if (!contrib[0] && !contrib[1] && !contrib[2] && !contrib[3])
+								continue;
+							say("+ " + to_string(entry.line));
+							for (auto c : contrib)
+								say(" " + to_string(c) + " ");
+							say(to_string(entry.src));
+							if (entry.info != NO_INFO)
+								say(" i " + to_string(entry.info));
+							say("\n");
+						}
 					}
+					known_hashes.insert(Current->key);
 				}
-				known_hashes.insert(Current->key);
+				say("END\n");
+				partial = false;
 			}
-			say("END\n");
-			partial = false;
+			++n_evals;
 		}
+		std::cerr << " wrote " << n_evals << " records";
 	}
 	catch (...)
 	{
@@ -9619,7 +9684,7 @@ int main(int argc, char* argv[])
 	int line_no = 0;
 	while (fgets(buf, 65535, pgn_src))
 	{
-		std::cerr << "Line " << ++line_no << "\n";
+		std::cerr << "\nLine " << ++line_no;
 		if (line_no < start_line)
 			continue;
 		if (line_no >= end_line)
@@ -9762,9 +9827,9 @@ void main(int argc, char* argv[])
 #if TB
 #undef LOCK
 #undef UNLOCK
-#include "src\tbconfig.h"
-#include "src\tbcore.h"
-#include "src\tbprobe.c"
+#include "src/tbconfig.h"
+#include "src/tbcore.h"
+#include "src/tbprobe.c"
 #pragma warning(pop)
 #pragma optimize("", on)
 
