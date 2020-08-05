@@ -318,14 +318,14 @@ template<bool me> INLINE uint8 Promotion(uint16 move)
 #ifndef W32_BUILD
 INLINE int lsb(uint64 x)
 {
-	register unsigned long y;
+	unsigned long y;
 	_BitScanForward64(&y, x);
 	return y;
 }
 
 INLINE int msb(uint64 x)
 {
-	register unsigned long y;
+	unsigned long y;
 	_BitScanReverse64(&y, x);
 	return y;
 }
@@ -876,7 +876,7 @@ typedef struct
 } GPosData;
 typedef struct
 {
-	array<uint64, 2> att, patt, xray;
+	array<uint64, 2> att, patt, dbl_att, xray;
 	uint64 key, pawn_key, eval_key, passer, threat, mask;
 	packed_t material, pst;
 	int *start, *current;
@@ -1713,7 +1713,7 @@ namespace Params
 		KnightPawnSpread,
 		KnightPawnGap
 	};
-	constexpr array<int, 20> KnightSpecial = {  // tuner: type=array, var=26, active=0
+	constexpr array<int, 24> KnightSpecial = {  // tuner: type=array, var=26, active=0
 		40, 40, 24, 0,
 		41, 40, 0, 0,
 		44, 44, 18, 0,
@@ -1784,7 +1784,7 @@ namespace Values
 #undef VALUE
 }
 
-constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
+constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
 constexpr uint16 KingAttackThreshold = 48;
 
@@ -4652,6 +4652,8 @@ void do_null()
 	Next->att[Black] = Current->att[Black];
 	Next->patt[White] = Current->patt[White];
 	Next->patt[Black] = Current->patt[Black];
+	Next->dbl_att[White] = Current->dbl_att[White];
+	Next->dbl_att[Black] = Current->dbl_att[Black];
 	Next->xray[White] = Current->xray[White];
 	Next->xray[Black] = Current->xray[Black];
 	Stack[sp] = Next->key;
@@ -4899,6 +4901,7 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = QueenAttacks(sq, EI.occ);
+		Current->dbl_att[me] |= Current->att[me] & att;
 		Current->att[me] |= att;
 		if (QMask[sq] & King(opp))
 			if (uint64 v = RO->Between[EI.king[opp]][sq] & EI.occ)
@@ -4966,6 +4969,7 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = RookAttacks(sq, EI.occ);
+		Current->dbl_att[me] |= Current->att[me] & att;
 		Current->att[me] |= att;
 		if (RMask[sq] & King(opp))
 			if (uint64 v = RO->Between[EI.king[opp]][sq] & EI.occ)
@@ -5081,6 +5085,7 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = BishopAttacks(sq, EI.occ);
+		Current->dbl_att[me] |= Current->att[me] & att;
 		Current->att[me] |= att;
 		if (BMask[sq] & King(opp))
 			if (uint64 v = RO->Between[EI.king[opp]][sq] & EI.occ)
@@ -5154,6 +5159,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		int sq = lsb(u);
 		b = Bit(sq);
 		uint64 att = NAtt[sq];
+		Current->dbl_att[me] |= Current->att[me] & att;
 		Current->att[me] |= att;
 		if (uint64 a = att & EI.area[opp])
 			EI.king_att[me] += Single(a) ? KingNAttack1 : KingNAttack;
@@ -5428,12 +5434,12 @@ template<class POP> void evaluation()
 	EI.king[White] = lsb(King(White));
 	EI.king[Black] = lsb(King(Black));
 	EI.occ = PieceAll();
-	Current->patt[White] = ShiftW<White>(Pawn(White)) | ShiftE<White>(Pawn(White));
-	Current->patt[Black] = ShiftW<Black>(Pawn(Black)) | ShiftE<Black>(Pawn(Black));
+	Current->att[White] = Current->patt[White] = ShiftW<White>(Pawn(White)) | ShiftE<White>(Pawn(White));
+	Current->att[Black] = Current->patt[Black] = ShiftW<Black>(Pawn(Black)) | ShiftE<Black>(Pawn(Black));
+	Current->dbl_att[White] = ShiftW<White>(Pawn(White)) & ShiftE<White>(Pawn(White));
+	Current->dbl_att[Black] = ShiftW<Black>(Pawn(Black)) & ShiftE<Black>(Pawn(Black));
 	EI.area[White] = (KAtt[EI.king[White]] | King(White)) & ((~Current->patt[White]) | Current->patt[Black]);
 	EI.area[Black] = (KAtt[EI.king[Black]] | King(Black)) & ((~Current->patt[Black]) | Current->patt[White]);
-	Current->att[White] = Current->patt[White];
-	Current->att[Black] = Current->patt[Black];
 	Current->passer = 0;
 	Current->threat = (Current->patt[White] & NonPawn(Black)) | (Current->patt[Black] & NonPawn(White));
 	EI.score = Current->pst;
@@ -6031,11 +6037,11 @@ template<class I> void sort_moves(I start, I finish)
 
 INLINE int pick_move()
 {
-	register int move = *(Current->current);
+	int move = *(Current->current);
 	if (F(move))
 		return 0;
-	register int* best = Current->current;
-	for (register int* p = Current->current + 1; T(*p); ++p)
+	int* best = Current->current;
+	for (int* p = Current->current + 1; T(*p); ++p)
 	{
 		if ((*p) > move)
 		{
@@ -6638,7 +6644,7 @@ void mark_evasions(int* list)
 {
 	for (; T(*list); ++list)
 	{
-		register int move = (*list) & 0xFFFF;
+		int move = (*list) & 0xFFFF;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
 			if (move == Current->ref[0])
