@@ -718,6 +718,7 @@ constexpr int FutilityThreshold = 50 * CP_SEARCH;
 
 #define IncV(var, x) (me ? (var -= (x)) : (var += (x)))
 #define DecV(var, x) IncV(var, -(x))
+#define NOTICE(var, x) 
 
 constexpr sint16 KpkValue = 300 * CP_EVAL;
 constexpr sint16 EvalValue = 30000;
@@ -1502,18 +1503,21 @@ namespace Params
 	{
 		UpBlocked,
 		PasserTarget,
+		PasserTarget2,
 		ChainRoot
 	};
-	constexpr array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
-		16, 18, 20, 0,
-		-20, -12, -4, 0,
-		36, 16, -4, 0 };
+	constexpr array<int, 16> Unprotected = {  // tuner: type=array, var=26, active=0
+		18, 45, 31, -6,
+	-16, -36, -38, 22,
+	-3, -10, -39, 9,
+	7, -3, -3, -14 };
 }
 namespace Values
 {
 #define VALUE(name) constexpr packed_t name = Ca4(Params::Unprotected, Params::name)
 	VALUE(UpBlocked);
 	VALUE(PasserTarget);
+	VALUE(PasserTarget2);
 	VALUE(ChainRoot);
 #undef VALUE
 }
@@ -1663,13 +1667,13 @@ namespace Params
 		PawnChainLinear,
 		PawnChain,
 		PawnBlocked,
-		PawnFileSpan
+		PawnRestrictsK
 	};
 	constexpr array<int, 16> PawnSpecial = {  // tuner: type=array, var=26, active=0
 		44, 40, 36, 0,
 		36, 26, 16, 0,
 		0, 18, 36, 0,
-		4, 4, 4, 0,
+		23, 9, 1, 45
 	};
 }
 namespace Values
@@ -1678,7 +1682,7 @@ namespace Values
 	VALUE(PawnChainLinear);
 	VALUE(PawnChain);
 	VALUE(PawnBlocked);
-	VALUE(PawnFileSpan);
+	VALUE(PawnRestrictsK);
 #undef VALUE
 }
 
@@ -4700,7 +4704,7 @@ typedef struct
 
 template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawnEvalInfo& PEI)
 {
-	static const array<array<uint64, 2>, 2> RFileBlockMask = { array<uint64, 2>({ 0x0202000000000000, 0x8080000000000000 }), array<uint64, 2>({ 0x0202, 0x8080 }) };
+	static constexpr array<array<uint64, 2>, 2> RFileBlockMask = { array<uint64, 2>({0x0202000000000000, 0x8080000000000000}), array<uint64, 2>({0x0202, 0x8080}) };
 	POP pop;
 	int kf = FileOf(PEI.king[me]);
 	int kr = RankOf(PEI.king[me]);
@@ -4788,23 +4792,34 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 
 		if (isolated)
 		{
-			DecV(PEI.score, open ? Values::IsolatedOpen : Values::IsolatedClosed);
+			if (open)
+				DecV(PEI.score, Values::IsolatedOpen);
+			else
+				DecV(PEI.score, Values::IsolatedClosed);
 			if (F(open) && next == IPawn[opp])
 				DecV(PEI.score, Values::IsolatedBlocked);
 			if (doubled)
-				DecV(PEI.score, open ? Values::IsolatedDoubledOpen : Values::IsolatedDoubledClosed);
+			{
+				if (open)
+					DecV(PEI.score, Values::IsolatedDoubledOpen);
+				else
+					DecV(PEI.score, Values::IsolatedDoubledClosed);
+			}
 		}
 		else
 		{
 			if (doubled)
 			{
-				if (!(Pawn(me) & RO->PCone[opp][sq]))
-					DecV(PEI.score, open ? Values::IsolatedDoubledOpen : Values::IsolatedDoubledClosed);	// unsupportable trailing pawn is as bad as isolated
+				if (open)
+					DecV(PEI.score, Values::DoubledOpen);
 				else
-					DecV(PEI.score, open ? Values::DoubledOpen : Values::DoubledClosed);
+					DecV(PEI.score, Values::DoubledClosed);
 			}
 			if (rrank >= 3 && (b & (File[2] | File[3] | File[4] | File[5])) && next != IPawn[opp] && (RO->PIsolated[file] & Line[rank] & Pawn(me)))
-				IncV(PEI.score, Values::PawnChainLinear * (rrank - 3) + Values::PawnChain);
+			{
+				IncV(PEI.score, Values::PawnChainLinear * (rrank - 4));
+				IncV(PEI.score, Values::PawnChain);
+			}
 		}
 		int backward = 0;
 		if (!(RO->PSupport[me][sq] & Pawn(me)))
@@ -4816,12 +4831,19 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 					backward = 1;
 		}
 		if (backward)
-			DecV(PEI.score, open ? Values::BackwardOpen : Values::BackwardClosed);
+		{
+			if (open)
+				DecV(PEI.score, Values::BackwardOpen);
+			else
+				DecV(PEI.score, Values::BackwardClosed);
+		}
 		else
 		{
+			NOTICE(PEI.score, rrank);
 			if (open && (F(Pawn(opp) & RO->PIsolated[file]) || pop(Pawn(me) & RO->PIsolated[file]) >= pop(Pawn(opp) & RO->PIsolated[file])))
 				IncV(PEI.score, RO->PasserCandidate[rrank]);  // IDEA: more precise pawn counting for the case of, say,
-															  // white e5 candidate with black pawn on f5 or f4...
+														  // white e5 candidate with black pawn on f5 or f4...
+			NOTICE(PEI.score, NO_INFO);
 		}
 
 		if (F(PEI.patt[me] & b) && next == IPawn[opp])  // unprotected and can't advance
@@ -4833,7 +4855,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 				{
 					DecV(PEI.score, Values::PasserTarget);
 					if (rrank <= 1)
-						DecV(PEI.score, Values::PasserTarget);
+						DecV(PEI.score, Values::PasserTarget2);
 				}	// Gull 3 was thinking of removing this term, because fitted weight is negative
 
 				for (uint64 v = PAtt[me][sq] & Pawn(me); v; Cut(v)) if ((RO->PSupport[me][lsb(v)] & Pawn(me)) == b)
@@ -4846,20 +4868,44 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 		if (open && F(RO->PIsolated[file] & Forward[me][rank] & Pawn(opp)))
 		{
 			PawnEntry->passer[me] |= (uint8)(1 << file);
+			if (rrank < 3) continue;
+			//if (!(Current->material & FlagUnusualMaterial))
+			//{
+			//	int deficit = (me ? 1 : -1) * Material[Current->material].imbalance;
+			//	if (rrank <= deficit) continue;
+			//}
+			NOTICE(PEI.score, rrank);
+			IncV(PEI.score, RO->PasserGeneral[rrank]);
+			if (PEI.patt[me] & b)
+				IncV(PEI.score, RO->PasserProtected[rrank]);
+			if (F(Pawn(opp) & West[file]) || F(Pawn(opp) & East[file]))
+				IncV(PEI.score, RO->PasserOutside[rrank]);
 			if (rrank <= 2)
 				continue;
-			IncV(PEI.score, RO->PasserGeneral[rrank]);
 			// IDEA: average the distance with the distance to the promotion square? or just use the latter?
 			int dist_att = Dist(PEI.king[opp], sq + Push[me]);
 			int dist_def = Dist(PEI.king[me], sq + Push[me]);
 			int value = dist_att * RO->PasserAtt[rrank] + RO->LogDist[dist_att] * RO->PasserAttLog[rrank]
 				- dist_def * RO->PasserDef[rrank] - RO->LogDist[dist_def] * RO->PasserDefLog[rrank];  // IDEA -- incorporate side-to-move in closer-king check?
-																									  // IDEA -- scale down rook pawns?
+			// IDEA -- scale down rook pawns?
 			IncV(PEI.score, Pack2(0, value / 256));
-			if (PEI.patt[me] & b)
-				IncV(PEI.score, RO->PasserProtected[rrank]);
-			if (F(Pawn(opp) & West[file]) || F(Pawn(opp) & East[file]))
-				IncV(PEI.score, RO->PasserOutside[rrank]);
+			NOTICE(PEI.score, NO_INFO);
+		}
+	}
+	if (T(Rook(opp)) && !((kf * kr) % 7))
+	{
+		const uint64 kAdj = KAtt[PEI.king[me]];
+		// look for opp pawns restricting K mobility
+		if (PEI.patt[opp] & kAdj)
+		{
+			// find out which one it is
+			for (uint64 u = Pawn(opp); T(u); u ^= b)
+			{
+				int sq = lsb(u);
+				b = Bit(sq);
+				if ((PAtt[opp][sq] & kAdj) && HasBit(Pawn(me), sq + Push[opp]))
+					DecV(PEI.score, Values::PawnRestrictsK);
+			}
 		}
 	}
 
@@ -4867,7 +4913,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 	files |= files >> 16;
 	files = (files | (files >> 8)) & 0xFF;
 	int file_span = (files ? (msb(files) - lsb(files)) : 0);
-	IncV(PEI.score, Values::PawnFileSpan * file_span);
+
 	PawnEntry->draw[me] = (7 - file_span) * Max(5 - pop(files), 0);
 }
 
