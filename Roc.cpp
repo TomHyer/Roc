@@ -5394,19 +5394,24 @@ template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 	}
 }
 
-template<class POP> INLINE packed_t eval_threat(const uint64& threat)
+
+template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 {
 	POP pop;
+	uint64 threat = Current->att[opp] & (~Current->att[me]) & Piece(me);
+	Current->threat |= threat;
 	if (Single(threat))
-		return threat ? Values::TacticalThreat : 0;
-	// according to Gull, second threat is extra DoubleThreat, third and after are simple Threat again
-	return Values::TacticalDoubleThreat + pop(threat) * Values::TacticalThreat;
-}
-
-template<bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
-{
-	Current->threat |= Current->att[opp] & (~Current->att[me]) & Piece(me);
-	DecV(EI.score, eval_threat<POP>(Current->threat & Piece(me)));
+	{
+		if (threat)
+			DecV(EI.score, Values::TacticalThreat);
+	}
+	else
+	{
+		DecV(EI.score, Values::TacticalDoubleThreat);
+		DecV(EI.score, (pop(threat) - 2) * Values::TacticalExtraThreat);
+	}
+	if (uint64 weakThreat = Current->dbl_att[opp] & ~(Current->att[me] | threat) & Piece(me))
+		DecV(EI.score, Values::TacticalWeakThreat);
 }
 
 template<class POP> void eval_unusual_material(GEvalInfo& EI)
@@ -6572,39 +6577,44 @@ template<bool me> INLINE bool forkable(int dst)
 	return false;
 }
 
-template<bool me> int* gen_captures(int* list)
+template <bool me> int* gen_captures(int* list)
 {
 	static const int MvvLvaPromotion = RO->MvvLva[WhiteQueen][BlackQueen];
 	static const int MvvLvaPromotionKnight = RO->MvvLva[WhiteKnight][BlackKnight];
 	static const int MvvLvaPromotionBad = RO->MvvLva[WhiteKnight][BlackPawn];
 
 	uint64 u, v;
-
+	int kMe = lsb(King(me)), kOpp = lsb(King(opp));
+	auto bonus = [&](int to)
+	{
+		if (!HasBit(Current->att[opp], to))
+			return 2 << 26;
+		return T(HasBit(Current->dbl_att[me] & ~Current->dbl_att[opp], to)) << 26;
+	};
 	if (Current->ep_square)
 		for (v = PAtt[opp][Current->ep_square] & Pawn(me); T(v); Cut(v))
-			list = AddMove(list, lsb(v), Current->ep_square, FlagEP, RO->MvvLva[IPawn[me]][IPawn[opp]]);
+			list = AddMove(list, lsb(v), Current->ep_square, FlagEP, RO->MvvLva[IPawn[me]][IPawn[opp]] + bonus(lsb(v)));
 	for (u = Pawn(me) & OwnLine(me, 6); T(u); Cut(u))
-	{
-		int from = lsb(u), to = from + Push[me];
-		if (F(PieceAt(to)))
+		if (F(PieceAt(lsb(u) + Push[me])))
 		{
-			list = AddMove(list, from, to, FlagPQueen, forkable<me>(to) ? MvvLvaPromotion : MvvLvaPromotionKnight);
-			list = AddMove(list, from, to, FlagPKnight, T(NAtt[to] & King(opp)) ? MvvLvaPromotionKnight : MvvLvaPromotionBad);
-			list = AddMove(list, from, to, FlagPRook, MvvLvaPromotionBad);
-			list = AddMove(list, from, to, FlagPBishop, MvvLvaPromotionBad);
+			int from = lsb(u), to = from + Push[me];
+			list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotion);
+			if (T(NAtt[to] & King(opp)) || forkable<me>(to))	// Roc v Hannibal, 64th amateur series A round 2, proved the need for this second test
+				list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnight);
 		}
-	}
 	for (v = ShiftW<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
 	{
-		list = AddMove(list, lsb(v), lsb(v) + PushE[me], FlagPQueen, MvvLvaPromotionCap(PieceAt(lsb(v) + PushE[me])));
-		if (HasBit(NAtt[lsb(King(opp))], lsb(v) + PushE[me]))
-			list = AddMove(list, lsb(v), lsb(v) + PushE[me], FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(lsb(v) + PushE[me])));
+		int from = lsb(v), to = from + PushE[me];
+		list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotionCap(PieceAt(to)) + bonus(to));
+		if (HasBit(NAtt[kOpp], to))
+			list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(to)) + bonus(to));
 	}
 	for (v = ShiftE<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
 	{
-		list = AddMove(list, lsb(v), lsb(v) + PushW[me], FlagPQueen, MvvLvaPromotionCap(PieceAt(lsb(v) + PushW[me])));
-		if (HasBit(NAtt[lsb(King(opp))], lsb(v) + PushW[me]))
-			list = AddMove(list, lsb(v), lsb(v) + PushW[me], FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(lsb(v) + PushW[me])));
+		int from = lsb(v), to = from + PushW[me];
+		list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotionCap(PieceAt(to)) + bonus(to));
+		if (HasBit(NAtt[kOpp], to))
+			list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(to)) + bonus(to));
 	}
 	if (T(Current->att[me] & Current->mask))
 	{
@@ -6778,10 +6788,9 @@ INLINE bool can_castle(const uint64& occ, bool me, bool kingside)
 
 template<bool me> int* gen_quiet_moves(int* list)
 {
-	//	if (!endgame && F(Current->material & FlagUnusualMaterial) && Material[Current->material].phase < MIDDLE_PHASE / 2)
-	//		return gen_quiet_moves<me, true>(list);
-
 	uint64 u, v;
+	auto drop = [&](int loc) { return HasBit(Current->att[opp] & ~Current->dbl_att[me], loc) ? FlagCastling : 0; };
+	auto dropPawn = [&](int loc) { return HasBit(Current->att[opp] & ~Current->att[me], loc) ? FlagCastling : 0; };
 
 	uint64 occ = PieceAll();
 	if (me == White)
@@ -6800,15 +6809,14 @@ template<bool me> int* gen_quiet_moves(int* list)
 	}
 
 	uint64 free = ~occ;
-	auto pTarget = PawnJoins<me>(), pOpp = Pawn(opp);
-	auto pFlag = [&](int to) {return HasBit(pTarget, to) || F(RO->PCone[me][to] & pOpp) ? FlagCastling : 0; };
+	auto pTarget = PawnJoins<me>();
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
 		int passer = T(HasBit(Current->passer, to - Push[me]));
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passer ? FlagCastling : pFlag(to + Push[me]));
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to), Square(OwnRank<me>(to) + 4 * passer - 2));
+			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], dropPawn(to + Push[me]));
+		list = AddHistoryP(list, IPawn[me], to - Push[me], to, dropPawn(to), Square(OwnRank<me>(to) + 4 * passer - 2));
 	}
 
 	for (u = Knight(me); T(u); Cut(u))
@@ -6817,8 +6825,8 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & NAtt[from]; T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = NAtt[to] & Major(opp) ? FlagCastling : 0;
-			list = AddHistoryP(list, IKnight[me], from, to, flag);
+			// int floor = T(NAtt[to] & Major(opp));
+			list = AddHistoryP(list, IKnight[me], from, to, drop(to));
 		}
 	}
 
@@ -6829,8 +6837,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & BishopAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = BMask[to] & (PAtt[opp][to] & Pawn(me) ? Major(opp) : Rook(opp)) ? FlagCastling : 0;
-			list = AddHistoryP(list, which, from, to, flag);
+			list = AddHistoryP(list, which, from, to, drop(to));
 		}
 	}
 
@@ -6840,8 +6847,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & RookAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = (PAtt[opp][to] & Pawn(me)) && (RMask[to] & Queen(opp)) ? FlagCastling : 0;
-			list = AddHistoryP(list, IRook[me], from, to, flag);
+			list = AddHistoryP(list, IRook[me], from, to, drop(to));
 		}
 	}
 	for (u = Queen(me); T(u); Cut(u))
@@ -6851,11 +6857,16 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
 		{
 			int to = lsb(v);
-			list = AddHistoryP(list, IQueen[me], from, to, 0);	// KAtt[to] & qTarget ? FlagCastling : 0);
+			list = AddHistoryP(list, IQueen[me], from, to, drop(to));	// KAtt[to] & qTarget ? FlagCastling : 0);
 		}
 	}
-	for (v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
-		list = AddHistoryP(list, IKing[me], lsb(King(me)), lsb(v), 0);
+	int kLoc = lsb(King(me));
+	auto xray = [&](int loc) { return T(Current->xray[opp]) && F(Current->xray[opp] & RO->FullLine[kLoc][loc]) ? FlagCastling : 0; };
+	for (v = KAtt[kLoc] & free & (~Current->att[opp]); T(v); Cut(v))
+	{
+		int to = lsb(v);
+		list = AddHistoryP(list, IKing[me], kLoc, to, xray(to));
+	}
 
 	return NullTerminate(list);
 }
