@@ -696,7 +696,7 @@ INLINE const uint64& OwnLine(bool me, int n)
 constexpr int PliesToEvalCut = 50;	// halfway to 50-move
 constexpr int KingSafetyNoQueen = 8;	// numerator; denominator is 16
 constexpr int SeeThreshold = 40 * CP_EVAL;
-constexpr int DrawCapConstant = 100 * CP_EVAL;
+constexpr int DrawCapConstant = 110 * CP_EVAL;
 constexpr int DrawCapLinear = 0;	// numerator; denominator is 64
 constexpr int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
 constexpr int TBMinDepth = 7;
@@ -1418,37 +1418,19 @@ constexpr array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=
 	332, 624, 1752, 1284, 48
 };
 
-// type (9: general, blocked, free, supported, protected, connected, outside, candidate, clear) * phase (4)
-constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
-	76, 64, 52, 0,
-	84, 48, 12, 0,
-	-96, 204, 504, 0,
-	0, 130, 260,  0,
-	128, 176, 224,  0,
-	36, 14, -6,  0,
-	128, 32, -64, 0,
-	52, 34, 16,  0,
-	4, 4, 4, 0 };
-constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
-	164, 86, 8, 0,
-	444, 394, 344, 0,
-	712, 582, 452, 0,
-	808, 434, 60, 0,
-	-244, -80, 84, 0,
-	124, 172, 221, 0,
-	344, 356, 368, 0,
-	108, 122, 136, 0,
-	-72, -50, -28, 0 };
-constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0 };
+namespace PasserWeights
+{
+	constexpr array<array<int, 4>, 3> Candidate = { array<int, 4>({-7, -6, 3, 12}), array<int, 4>({15, 9, 19, 68}), array<int, 4>({28, 28, 17, -11}) };
+	constexpr array<array<int, 4>, 3> General = { array<int, 4>({-24, -4, 5, 31}), array<int, 4>({45, 17, 4, 10}), array<int, 4>({79, 69, 16, 4}) };
+	constexpr array<array<int, 4>, 3> Protected = { array<int, 4>({-31, -44, 0, -9}), array<int, 4>({45, 85, 87, 38}), array<int, 4>({98, 189, 258, 8}) };
+	constexpr array<array<int, 4>, 3> Outside = { array<int, 4>({-17, -4, 0, 22}), array<int, 4>({63, 38, 14, -4}), array<int, 4>({110, 91, 0, 1}) };
+	constexpr array<array<int, 4>, 3> Blocked = { array<int, 4>({-15, -9, 4, 26}), array<int, 4>({68, 52, 32, 5}), array<int, 4>({132, 127, 56, 1}) };
+	constexpr array<array<int, 4>, 3> Clear = { array<int, 4>({5, 3, 1, 1}), array<int, 4>({13, 8, 6, 1}), array<int, 4>({24, 9, 8, 1}) };
+	constexpr array<array<int, 4>, 3> Connected = { array<int, 4>({-12, -13, -9, 13}), array<int, 4>({91, 103, 102, -1}), array<int, 4>({229, 208, 132, 1}) };
+	constexpr array<array<int, 4>, 3> Free = { array<int, 4>({1, -8, 13, -1}), array<int, 4>({92, 150, 177, -1}), array<int, 4>({90, 380, 431, -1}) };
+	constexpr array<array<int, 4>, 3> Supported = { array<int, 4>({-5, -2, 4, 14}), array<int, 4>({115, 109, 89, 0}), array<int, 4>({189, 216, 231, 1}) };
+}
+
 // type (2: att, def) * scaling (2: linear, log) 
 constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
 	764, 204, 332, 76
@@ -1784,16 +1766,16 @@ namespace Values
 {
 #define VALUE(name) constexpr packed_t name = Ca4(Params::Pin, Params::name)
 	VALUE(QueenPawnPin);
-		VALUE(QueenSelfPin);
-			VALUE(QueenWeakPin);
-				VALUE(RookPawnPin);
-					VALUE(RookSelfPin);
-						VALUE(RookWeakPin);
-							VALUE(RookThreatPin);
-								VALUE(BishopPawnPin);
-									VALUE(BishopSelfPin);
-										VALUE(StrongPin);
-											VALUE(BishopThreatPin);
+	VALUE(QueenSelfPin);
+	VALUE(QueenWeakPin);
+	VALUE(RookPawnPin);
+	VALUE(RookSelfPin);
+	VALUE(RookWeakPin);
+	VALUE(RookThreatPin);
+	VALUE(BishopPawnPin);
+	VALUE(BishopSelfPin);
+	VALUE(StrongPin);
+	VALUE(BishopThreatPin);
 #undef VALUE
 }
 
@@ -3082,6 +3064,24 @@ uint64 within(int loc, int dist)
 	return retval;
 }
 
+array<sint64, 8> init_passer(const array<array<int, 4>, 3>& weights)
+{
+	constexpr double MID_SCORE = 2.5;  // rank around 4.5
+	auto loc = [&](int rank) { return rank * (rank - 1) / 15.0 - 1.0; };	// in [-1, 1]
+	auto part = [&](int rank, int which)
+	{
+		double l = loc(rank);
+		double r = weights[1][which] + abs(l) * ((l > 0 ? weights[2][which] : weights[0][which]) - weights[1][which]);
+		return static_cast<sint16>(r);
+	};
+	auto ppart = [&](int rank, int which) { return max<sint16>(0, part(rank, which)); };
+
+	array<sint64, 8> retval;
+	for (int ii = 1; ii < 7; ++ii)
+		retval[ii] = Pack4(ppart(ii, 0), ppart(ii, 1), ppart(ii, 2), part(ii, 3));	// [3] can be negative
+	return retval;
+}
+
 void init_eval(CommonData_* data)
 {
 	init_mobility(MobCoeffsKnight, &data->MobKnight);
@@ -3113,29 +3113,24 @@ void init_eval(CommonData_* data)
 		data->StormFree[i] = ((Sa(StormQuad, StormFreeMul) * i * i) + (Sa(StormLinear, StormFreeMul) * (i + 1))) / 100;
 	}
 
+	data->PasserGeneral = init_passer(PasserWeights::General);
+	data->PasserBlocked = init_passer(PasserWeights::Blocked);
+	data->PasserFree = init_passer(PasserWeights::Free);
+	data->PasserSupported = init_passer(PasserWeights::Supported);
+	data->PasserProtected = init_passer(PasserWeights::Protected);
+	data->PasserConnected = init_passer(PasserWeights::Connected);
+	data->PasserOutside = init_passer(PasserWeights::Outside);
+	data->PasserCandidate = init_passer(PasserWeights::Candidate);
+	data->PasserClear = init_passer(PasserWeights::Clear);
 	for (int i = 0; i < 8; ++i)
 	{
 		int im2 = Max(i - 2, 0);
-		auto quad1 = [&](int row, int col, int rr) { return (Av(PasserQuad, 4, row, col) * rr + Av(PasserLinear, 4, row, col)) * rr + Av(PasserConstant, 4, row, col); };
-		auto quad = [&](int row, int col) { return quad1(row, col, 5) > 0 ? Max(0, quad1(row, col, im2)) : Min(0, quad1(row, col, im2)); }; // no sign changes please
-		auto pack16ths = [&](int which) { return Pack4(quad(which, 0) / 16, quad(which, 1) / 16, quad(which, 2) / 16, quad(which, 3) / 16); };
-		data->PasserGeneral[i] = pack16ths(0);
-		data->PasserBlocked[i] = pack16ths(1);
-		data->PasserFree[i] = pack16ths(2);
-		data->PasserSupported[i] = pack16ths(3);
-		data->PasserProtected[i] = pack16ths(4);
-		data->PasserConnected[i] = pack16ths(5);
-		data->PasserOutside[i] = pack16ths(6);
-		data->PasserCandidate[i] = pack16ths(7);
-		data->PasserClear[i] = pack16ths(8);
-
 		auto attdef = [&](int k) { return PasserAttDefQuad[k] * im2*im2 + PasserAttDefLinear[k] * im2 + PasserAttDefConst[k]; };
 		data->PasserAtt[i] = attdef(0);
 		data->PasserDef[i] = attdef(2);
 		data->PasserAttLog[i] = attdef(1);
 		data->PasserDefLog[i] = attdef(3);
 	}
-
 }
 
 // all these special-purpose endgame evaluators
@@ -5508,12 +5503,6 @@ template<class POP> struct PhasedScore_
 	}
 };
 
-INLINE int king_att_depreciation(int score, int my_katt, int opp_katt)
-{
-	constexpr int threshold = 110 * CP_EVAL;
-	return max(0, min(score - threshold, my_katt) / 6) + max(0, min(score - threshold, opp_katt) / 6);
-}
-
 
 template<class POP> void evaluation()
 {
@@ -5573,11 +5562,6 @@ template<class POP> void evaluation()
 		const GMaterial& mat = *EI.material;
 		PhasedScore_<POP> value(mat);
 		Current->score = mat.score + value(EI.score);
-		// cash out king attacks
-//		if (Current->score > 0)
-//			Current->score -= king_att_depreciation(Current->score, value(EI.king_score[White]), value(EI.king_score[Black]));
-//		else
-//			Current->score += king_att_depreciation(-Current->score, value(EI.king_score[Black]), value(EI.king_score[White]));
 		
 		// apply contempt before drawishness
 		if (SETTINGS->contempt > 0)
@@ -7440,6 +7424,12 @@ struct HashResult_
 	int singular_;
 };
 
+template<int me> void check_recapture(int to, int depth, int* ext)
+{
+	if (depth < 16 && to == To(Current->move) && T(PieceAt(to)))
+		*ext = Max(*ext, 2);
+}
+
 template<bool me, bool evasion> HashResult_ try_hash(int beta, int depth, int flags)
 {
 	auto abort = [](int score) {return HashResult_({ true, score, 0, 0, }); };
@@ -7610,8 +7600,7 @@ template<bool me, bool evasion> HashResult_ try_hash(int beta, int depth, int fl
 				}
 			}
 			int to = To(move);
-			if (depth < 16 && to == To(Current->move) && T(PieceAt(to)))	// recapture extension
-				ext = Max(ext, 2);
+			check_recapture<0>(to, depth, &ext);
 			int new_depth = depth - 2 + ext;
 			do_move<me>(move);
 			if (evasion)
@@ -7955,7 +7944,8 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				send_curr_move(move, cnt);
 		}
 		ext = Max(pext, extension<me, 1>(move, depth));
-		if (depth >= 12 && hash_value > alpha && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
+		check_recapture<1>(To(move), depth, &ext);
+		if (depth >= 12 && hash_value > alpha && ext < 2 && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 		{
 			int margin_one = hash_value - ExclSingle(depth);
 			int margin_two = hash_value - ExclDouble(depth);
@@ -8049,6 +8039,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		if (IsRepetition(alpha + 1, move))
 			continue;
 		ext = Max(pext, extension<me, 1>(move, depth));
+		check_recapture<1>(To(move), depth, &ext);
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
