@@ -21,6 +21,7 @@
 #include <iostream>
 #include <fstream>
 #include <array>
+#include <algorithm>
 #include <numeric>
 #include <string>
 #include <vector>
@@ -3993,7 +3994,7 @@ uint64 make_klocus(int k_loc)
 		auto useDist = CENTER_WEIGHT * centerDist + kDist;
 		temp[ii] = { useDist, ii };
 	}
-	sort(temp.begin(), temp.end());
+	std::sort(temp.begin(), temp.end());
 	uint64 retval = 0ull;
 	int ii = N_LOCUS;
 	// include elements tied with the cutoff
@@ -6875,11 +6876,20 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 	int from = From(move);
 	if (HasBit(Current->passer, from))
 	{
-		int rank = OwnRank(me, from);
-		if (rank >= 5 && depth < 16)
-			return pv ? 2 : 1;
-		//if (2*rank + depth >= 18 && 2 * rank + depth <= 24 && F(PWay[me][from] & Piece(opp)) && F(PCone[me][from] & King(opp)))
-		//	return (pv && depth < 10) ? 2 : 1;
+		if (T(Current->material & FlagUnusualMaterial) || Current->material >= TotalMat || Material[Current->material].phase > MIDDLE_PHASE)
+		{
+			int rank = OwnRank(me, from);
+			if (rank >= 5 && depth < 16)
+				return pv ? 2 : 1;
+			//if (2*rank + depth >= 18 && 2 * rank + depth <= 24 && F(PWay[me][from] & Piece(opp)) && F(PCone[me][from] & King(opp)))
+			//	return (pv && depth < 10) ? 2 : 1;
+		}
+	}
+	if (T(PieceAt(To(move))) && depth < 13)
+	{
+		if ((T(Current->material & FlagUnusualMaterial) || Current->material >= TotalMat || Material[Current->material].phase > MIDDLE_PHASE)
+				&& HasBit(KAttAtt[lsb(King(me))] | KAttAtt[lsb(King(opp))], To(move)))
+			return 1;
 	}
 	return 0;
 }
@@ -8389,7 +8399,7 @@ INLINE score_t RazoringThreshold(score_t score, int depth, int height)
 template<int PV = 0> struct LMR_
 {
 	const double scale_;
-	LMR_(int depth) : scale_(0.118 + 0.001 * depth) {}
+	LMR_(int depth, bool no_hash) : scale_((no_hash ? 0.15 : 0.11) + 0.001 * depth) {}
 	INLINE int operator()(int cnt) const
 	{
 		return cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt)))))) - PV : 0;
@@ -8671,7 +8681,7 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 	if (depth >= SplitDepth && PrN > 1 && parent && !exclusion)
 		do_split = 1;
 
-	LMR_<0> lmr(depth);
+	LMR_<0> lmr(depth, F(hash_move));
 	while (move = get_move<me, 0>(depth))
 	{
 		if (move == hash_move)
@@ -8973,7 +8983,7 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 	Current->ref[1] = RefM(Current->move).check_ref[1];
 	mark_evasions(Current->moves);
 	Current->current = Current->moves;
-	LMR_<0> lmr(depth);
+	LMR_<0> lmr(depth, false);
 	while (move = pick_move())
 	{
 		if (move == hash_move)
@@ -9250,7 +9260,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 	if (PrN > 1 && !root && parent && depth >= SplitDepthPV)
 		do_split = 1;
 
-	LMR_<1> lmr(depth);
+	LMR_<1> lmr(depth, false);
 	while (move = get_move<me, root>(Odd(depth)))
 	{
 		if (move == hash_move)
@@ -11079,7 +11089,7 @@ int round_contrib(double contrib)
 
 pair<bool, vector<string>> parse_game(const std::string& line, std::unordered_set<uint64>& known_hashes)
 {
-	constexpr int DEPTH = 4;
+	constexpr int DEPTH = 1;
 	vector<string> retval;
 	auto say = [&](const string& s) { retval.push_back(s); };
 	bool partial = false;
