@@ -4,7 +4,7 @@
 //#define CPU_TIMING
 //#define TUNER
 //#define EXPLAIN_EVAL
-#define TUNER_DATA
+//#define TUNER_DATA
 //#define TWO_PHASE
 //#define THREE_PHASE
 #define LARGE_PAGES
@@ -758,7 +758,7 @@ general move:
 12 - 15: flags
 16 - 23: history
 24 - 25: spectial moves: killers, refutations...
-26 - 30: MvvLva
+26 - 30: MvvLvaVals
 delta move:
 0 - 11: from & to
 12 - 15: flags
@@ -778,12 +778,12 @@ const int MvvLvaAttackerKB[16] = { 0, 0, 9, 9, 7, 7, 5, 5, 5, 5, 3, 3, 1, 1, 11,
 #define MaxRookCaptureMvvLva (MaxBishopCaptureMvvLva + MvvLvaAttacker[15])  // usually 24
 #define QueenCaptureMvvLva(attacker) (MaxRookCaptureMvvLva + MvvLvaAttacker[attacker])
 
-#define MvvLvaPromotion (MvvLva[WhiteQueen][BlackQueen])
-#define MvvLvaPromotionKnight (MvvLva[WhiteKnight][BlackKnight])
-#define MvvLvaPromotionCap(capture) (MvvLva[((capture) < WhiteRook) ? WhiteRook : ((capture) >= WhiteQueen ? WhiteKing : WhiteKnight)][BlackQueen])
-#define MvvLvaPromotionKnightCap(capture) (MvvLva[WhiteKing][capture])
-#define MvvLvaXray (MvvLva[WhiteQueen][WhitePawn])
-#define MvvLvaXrayCap(capture) (MvvLva[WhiteKing][capture])
+#define MvvLvaPromotion (MvvLvaVals[WhiteQueen][BlackQueen])
+#define MvvLvaPromotionKnight (MvvLvaVals[WhiteKnight][BlackKnight])
+#define MvvLvaPromotionCap(capture) (MvvLvaVals[((capture) < WhiteRook) ? WhiteRook : ((capture) >= WhiteQueen ? WhiteKing : WhiteKnight)][BlackQueen])
+#define MvvLvaPromotionKnightCap(capture) (MvvLvaVals[WhiteKing][capture])
+#define MvvLvaXray (MvvLvaVals[WhiteQueen][WhitePawn])
+#define MvvLvaXrayCap(capture) (MvvLvaVals[WhiteKing][capture])
 static const int RefOneScore = (0xFF << 16) | (3 << 24);
 static const int RefTwoScore = (0xFF << 16) | (2 << 24);
 
@@ -1136,7 +1136,12 @@ sint64& Pst(int piece, int sq)
 	return PstVals[(piece << 6) | sq];
 };
 // #define Pst(piece,sq) PstVals[((piece) << 6) | (sq)]
-int MvvLva[16][16];  // [piece][capture]
+int MvvLvaVals[16][16];  // [piece][capture]
+INLINE int MvvLva(int att, int vic, bool from_threat)
+{
+	return MvvLvaVals[att][vic] + (from_threat ? 1 << 26 : 0);
+}
+
 uint64 TurnKey;
 uint64 PieceKey[16][64];
 uint64 CastleKey[16];
@@ -1160,7 +1165,7 @@ INLINE int* AddMove(int* list, int from, int to, int flags, int score)
 }
 INLINE int* AddCapturePP(int* list, int att, int vic, int from, int to, int flags)
 {
-	return AddMove(list, from, to, flags, MvvLva[att][vic]);
+	return AddMove(list, from, to, flags, MvvLva(att, vic, HasBit(Current->threat, from)));
 }
 INLINE int* AddCaptureP(int* list, int piece, int from, int to, int flags)
 {
@@ -1407,22 +1412,22 @@ template<class C_> INLINE sint64 Ca4(const C_& x, int y)
 
 // EVAL WEIGHTS
 
-constexpr array<int, 6> MatLinear = { 27, -7, -1, 86, -16, -7 };
+constexpr array<int, 6> MatLinear = { 27, -7, -3, 87, -17, -8 };
 // pawn, knight, bishop, rook, queen, pair
 constexpr array<int, 14> MatQuadMe = { // tuner: type=array, var=1000, active=0
-	-23, 21, -1, -145, -238,
-	20, 280, -106, -85,
-	-142, 311, 303,
-	-856, -1008
+	-25, 22, -4, -146, -239,
+	21, 277, -105, -86,
+	-145, 308, 294,
+	-847, -998
 };
 constexpr array<int, 10> MatQuadOpp = { // tuner: type=array, var=1000, active=0
-	-4, 65, -20, -280,
-	48, 45, 54,
-	-2, -4,
-	76
+	-4, 67, -21, -277,
+	50, 45, 53,
+	-4, -6,
+	77
 };
 constexpr array<int, 9> BishopPairQuad = { // tuner: type=array, var=1000, active=0
-	-16, 150, 78, 229, -62, -39, -173, 68, -171
+	-13, 148, 78, 225, -63, -39, -173, 68, -171
 };
 constexpr array<int, 6> MatClosed = { 1, -1, 1, -1, 1, -1 };
 
@@ -1524,10 +1529,10 @@ constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256,
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1241, 840, 616, -1, 2100, 891, 89, -155, 246, 272, -57, 185 };
-constexpr array<int, 12> MobCoeffsBishop = { 1444, 732, 548, -1, 1787, 1684, 1594, -440, -118, 415, 126, 536 };
-constexpr array<int, 12> MobCoeffsRook = { 1054, 842, 638, 42, -565, 248, 1351, 7, 55, 40, 57, -9 };
-constexpr array<int, 12> MobCoeffsQueen = { 597, 786, 1117, 36, 1578, 324, -1091, 28, 43, 67, 15, -4 };
+constexpr array<int, 12> MobCoeffsKnight = { 1241, 840, 616, -1, 2100, 891, 89, -155, 241, 277, -57, 200 };
+constexpr array<int, 12> MobCoeffsBishop = { 1444, 732, 548, -1, 1787, 1684, 1594, -440, 1, 423, 124, 598 };
+constexpr array<int, 12> MobCoeffsRook = { 1054, 842, 638, 42, -565, 248, 1351, 7, 57, 42, 59, -9 };
+constexpr array<int, 12> MobCoeffsQueen = { 597, 786, 1117, 36, 1578, 324, -1091, 28, 44, 69, 11, 1 };
 
 constexpr int N_LOCUS = 22;
 
@@ -1606,10 +1611,10 @@ constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, act
 	14, 9, -21, 1 };
 // type (2: att, def) * scaling (2: linear, log) 
 constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
-	842, 226, 367, 86
+	808, 217, 352, 82
 };
 constexpr array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
-	2792, 20, 1027, 292
+	2680, 19, 986, 280
 };
 constexpr array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=0
 	0, 0, 0, 0
@@ -1620,7 +1625,7 @@ constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active
 	1, 1, 1,
 	1, 1, 1,
 	1, 1, 1,
-	25, 54, 1
+	27, 61, 1
 };
 namespace Values
 {
@@ -1652,11 +1657,11 @@ enum
 	IsolatedDoubledClosed
 };
 constexpr array<int, 20> Isolated = {	
-	24, 27, 11, 2,
-	35, 13, 11, 22,
-	-26, -13, 5, -1,
-	3, 18, 45, 1,
-	31, 30, 52, 5 };
+	27, 29, 13, 2,
+	34, 13, 12, 22,
+	-26, -12, 5, -1,
+	5, 20, 42, 1,
+	33, 29, 49, 4 };
 
 enum
 {
@@ -1666,26 +1671,26 @@ enum
 	ChainRoot
 };
 constexpr array<int, 16> Unprotected = {  // tuner: type=array, var=26, active=0
-	42, 32, 23, -1,
-	-13, -20, -17, 3,
-	-7, -15, -19, 4,
-	16, 1, -12, -4 };
+	37, 33, 24, -1,
+	-11, -18, -17, 5,
+	-2, -10, -19, 6,
+	14, 1, -12, -5 };
 enum
 {
 	BackwardOpen,
 	BackwardClosed
 };
 constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
-	66, 66, 31, 1,
-	30, 7, 15, -1 };
+	73, 70, 35, 1,
+	31, 8, 16, -1 };
 enum
 {
 	DoubledOpen,
 	DoubledClosed
 };
 constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-	34, 21, 2, -15,
-	26, 16, 9, -2 };
+	47, 20, -1, -23,
+	26, 12, 6, -3 };
 
 enum
 {
@@ -1700,15 +1705,15 @@ enum
 	Rook7thDoubled
 };
 constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
-	25, 9, 2, 1,
-	9, 8, 6, 3,
-	22, 13, 38, 7,
-	-9, -3, 11, 5,
-	43, 20, -5, 2,
-	18, 1, -20, 2,
-	-35, -29, -2, 8,
-	-43, -5, 29, 8,
-	-32, 33, 88, 6 };
+	27, 11, 2, 2,
+	12, 11, 8, 4,
+	23, 16, 41, 8,
+	-8, -2, 12, 6,
+	43, 23, -6, 3,
+	20, 1, -20, 5,
+	-28, -23, 1, 9,
+	-36, 1, 33, 9,
+	-28, 36, 91, 7 };
 
 enum
 {
@@ -1725,17 +1730,17 @@ enum
 	TacticalDoubleThreat
 };
 constexpr array<int, 44> Tactical = {  // tuner: type=array, var=51, active=0
-	-10, -4, 7, 12, 
-	1, 15, 30, 1,
-	-2, 9, 24, 1, 
-	2, 2, 7, -1,	
-	36, 48, 93, 2, 
-	38, 64, 106, 2,
-	63, 75, 89, 47, 
-	85, 90, 97, 10,
-	79, 46, 49, 4, 
-	67, 42, 51, 4,
-	153, 85, 54, 4
+	1, 1, 6, 12, 
+	3, 17, 34, 2,
+	-2, 11, 24, 2, 
+	2, 3, 8, -2,	
+	37, 45, 87, 2, 
+	39, 64, 103, 3,	// TacticalRookMinor
+	52, 72, 84, 55, 
+	81, 91, 95, 16,
+	57, 42, 47, 16, 
+	56, 38, 53, 4,
+	136, 81, 54, 5
 };
 
 enum
@@ -1746,10 +1751,10 @@ enum
 	KingDefQueen
 };
 constexpr array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
-	33, 18, 1, -7,
+	35, 17, 1, -8,
 	-4, -1, 5, 4,
 	0, 1, 1, 1,
-	17, 1, -3, 1 };
+	16, 2, -5, 1 };
 
 enum
 {
@@ -1760,17 +1765,17 @@ enum
 	PawnRestrictsK
 };
 constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
-	38, 38, 78, 7, 
-	3, -1, 23, 9, 
-	11, 27, 31, -6, 
-	1, 2, 13, 2, 
-	11, 7, 1, 8
+	46, 46, 78, 11, 
+	-5, 1, 27, 24, 
+	12, 27, 31, -6, 
+	-1, 3, 12, 2, 
+	18, 12, 3, 14
 };
 
 enum { BishopPawnBlock, BishopOutpostNoMinor };
 constexpr array<int, 8> BishopSpecial = { // tuner: type=array, var=20, active=0
-	-7, 13, 14, 1,
-	50, 53, 36, 3
+	2, 17, 16, 2,
+	52, 56, 31, 7
 };
 
 constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
@@ -1782,10 +1787,10 @@ enum
 	KnightOutpostNoMinor
 };
 constexpr array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
-	25, 22, 17, 12,
-	39, 37, 3, 3,
-	28, 29, 26, 1,
-	34, 36, 3, 6 };
+	30, 26, 18, 13,
+	47, 40, 5, 4,
+	34, 32, 29, 5,
+	39, 41, 6, 7 };
 
 enum
 {
@@ -1802,17 +1807,17 @@ enum
 	BishopSelfPin
 };
 constexpr array<int, 44> Pin = {  // tuner: type=array, var=51, active=0
-	58, 84, 124, 11, 
-	70, 124, 155, 5,
-	-2, 131, 291, 11,
-	231, 203, 168, -4, 
-	231, 203, 168, -4,
-	31, 32, 36, 5, 
-	38, 31, 31, 4, 
-	30, 36, 39, 5,
-	150, 150, 108, 8,	
-	149, 143, 100, 8,	
-	172, 149, 113, 4 };
+	63, 85, 119, 11, 
+	72, 127, 155, 6,
+	-5, 134, 285, 15,
+	259, 250, 189, 1, 
+	259, 239, 197, -3,
+	33, 35, 35, 5,	// QueenPawnPin 
+	41, 28, 28, 5, 
+	33, 32, 40, 6,
+	144, 151, 104, 12,	
+	141, 144, 99, 11,
+	168, 155, 111, 3 };
 
 enum
 {
@@ -1822,8 +1827,8 @@ enum
 };
 constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
 	15, 24, 31, 1,
-	-2, 25, 49, -2,
-	17, 19, -4, 4 };
+	1, 27, 48, 1,
+	13, 22, 3, 7 };
 
 constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
@@ -3695,17 +3700,17 @@ void init_misc()
 		for (int j = 0; j < 16; ++j)
 		{
 			if (j < WhitePawn)
-				MvvLva[i][j] = 0;
+				MvvLvaVals[i][j] = 0;
 			else if (j < WhiteKnight)
-				MvvLva[i][j] = PawnCaptureMvvLva(i) << 26;
+				MvvLvaVals[i][j] = PawnCaptureMvvLva(i) << 26;
 			else if (j < WhiteLight)
-				MvvLva[i][j] = KnightCaptureMvvLva(i) << 26;
+				MvvLvaVals[i][j] = KnightCaptureMvvLva(i) << 26;
 			else if (j < WhiteRook)
-				MvvLva[i][j] = BishopCaptureMvvLva(i) << 26;
+				MvvLvaVals[i][j] = BishopCaptureMvvLva(i) << 26;
 			else if (j < WhiteQueen)
-				MvvLva[i][j] = RookCaptureMvvLva(i) << 26;
+				MvvLvaVals[i][j] = RookCaptureMvvLva(i) << 26;
 			else
-				MvvLva[i][j] = QueenCaptureMvvLva(i) << 26;
+				MvvLvaVals[i][j] = QueenCaptureMvvLva(i) << 26;
 		}
 
 	for (int i = 0; i < 256; ++i) 
@@ -6233,7 +6238,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 20, 16, 3, 1 };
+	static constexpr array<int, 4> PHASE = { 21, 17, 2, 1 };
 	int op = ((PHASE[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 32;
 	int md = (PHASE[1] * adjusted) / 32;
 	int eg = (PHASE[2] * adjusted) / 32;
@@ -6330,7 +6335,7 @@ template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 		POP pop;
 		// according to Gull, second threat is extra DoubleThreat, third and after are simple Threat again
 		DecV(EI.score, Ca4(Tactical, TacticalDoubleThreat));
-		DecV(EI.score, pop(threat) * Ca4(Tactical, TacticalThreat));
+		DecV(EI.score, pop(threat) * Ca4(Tactical, TacticalExtraThreat));
 	}
 }
 
@@ -6497,7 +6502,7 @@ template<class POP> void evaluation()
 			if (mat && mat->eval[White] && !eval_stalemate<White>(EI))
 				mat->eval[White](EI, pop.Imp());
 			int me = White;
-			DecV(Current->score, (Min<int>(+Current->score, drawCap) * EI.PawnEntry->draw[White]) / 68);
+			DecV(Current->score, (Min<int>(+Current->score, drawCap) * EI.PawnEntry->draw[White]) / 72);
 		}
 		else if (Current->score < 0)
 		{
@@ -6505,7 +6510,7 @@ template<class POP> void evaluation()
 			if (mat->eval[Black] && !eval_stalemate<Black>(EI))
 				mat->eval[Black](EI, pop.Imp());
 			int me = Black;
-			DecV(Current->score, (Min<int>(-+Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 68);
+			DecV(Current->score, (Min<int>(-+Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 72);
 		}
 		else
 			EI.mul = Min(mat->mul[White], mat->mul[Black]);
@@ -7373,7 +7378,7 @@ template <bool me> int* gen_captures(int* list)
 
 	if (Current->ep_square)
 		for (v = PAtt[opp][Current->ep_square] & Pawn(me); T(v); Cut(v)) 
-			list = AddMove(list, lsb(v), Current->ep_square, FlagEP, MvvLva[IPawn[me]][IPawn[opp]]);
+			list = AddMove(list, lsb(v), Current->ep_square, FlagEP, MvvLvaVals[IPawn[me]][IPawn[opp]]);
 	for (u = Pawn(me) & OwnLine(me, 6); T(u); Cut(u))
 		if (F(PieceAt(lsb(u) + Push[me])))
 		{
@@ -7476,7 +7481,7 @@ template <bool me> int* gen_evasions(int* list)
 	if (T(Current->ep_square) && Current->ep_square == att_sq + Push[me] && HasBit(Current->mask, att_sq))
 	{
 		for (u = PAtt[opp][Current->ep_square] & Pawn(me); T(u); Cut(u)) 
-			list = AddMove(list, lsb(u), att_sq + Push[me], FlagEP, MvvLva[IPawn[me]][IPawn[opp]]);
+			list = AddMove(list, lsb(u), att_sq + Push[me], FlagEP, MvvLvaVals[IPawn[me]][IPawn[opp]]);
 	}
 	for (u = PAtt[opp][att_sq] & Pawn(me); T(u); Cut(u))
 	{
@@ -11087,35 +11092,94 @@ int round_contrib(double contrib)
 	return int(32 * contrib);	// contrib is already in quarter-centipawns
 }
 
+vector<pair<string, string>> game_moves(const string& line)
+{
+	vector<pair<string, string>> retval;
+	// split a game into (move, eval) pairs
+	for (size_t start = 0, plies = 0, stop; plies <= 200; start = stop, ++plies)
+	{
+		if (!(plies & 1))
+		{	// White move -- find "37. " or similar
+			size_t dot = line.find('.', start);
+			if (dot == string::npos)
+				break;
+			start = dot + 1;
+		}
+		else
+		{	// Black move -- check for "37..." or similar
+			size_t dots = line.find("...", start);
+			if (dots != string::npos)
+				start = dots + 3;
+		}
+		size_t open = line.find('{', start);
+		size_t close = line.find('}', start);
+		if (open == string::npos || close == string::npos || close < open)
+			break;
+		string move(line.begin() + start, line.begin() + open);
+		string eval(line.begin() + open + 1, line.begin() + close);
+		stop = close + 1;
+		retval.emplace_back(move, eval);
+	}
+	return retval;
+}
+
+constexpr double INVALID_EVAL = -135.79;
+double parse_eval(const string& eval)
+{
+	// might be +0.03/22
+	size_t slash = eval.find('/'), sign = eval.find_first_of("+-");
+	if (slash != string::npos && sign != string::npos && sign < slash)
+		return std::stod(string(eval.begin() + sign, eval.begin() + slash));
+	// might be [%eval -2.3]
+	size_t e_loc = eval.find("eval"), close = eval.find(']');
+	if (e_loc != string::npos && close != string::npos && e_loc < close)
+		return std::stod(string(eval.begin() + e_loc + 5, eval.begin() + close));
+	return INVALID_EVAL;
+}
+
+double parse_outcome(const string& line)
+{
+	size_t w = line.find("1-0"), b = line.find("0-1"), d = line.find("1/2-1/2"), back = line.find_last_not_of(" \n");
+	if (d != string::npos)
+		return 0.0;
+	if (w != string::npos && w + 3 > back)
+		return 1.0;
+	if (b != string::npos && b + 3 > back)
+		return -1.0;
+	return INVALID_EVAL;
+}
+
+
 pair<bool, vector<string>> parse_game(const std::string& line, std::unordered_set<uint64>& known_hashes)
 {
 	constexpr int DEPTH = 1;
 	vector<string> retval;
 	auto say = [&](const string& s) { retval.push_back(s); };
+	double outcome = parse_outcome(line);
 	bool partial = false;
+	auto moves = game_moves(line);
+	if (moves.size() < 50)
+		return make_pair(true, retval);
+	else if (moves.size() > 200)
+		moves.resize(200);
 	try
 	{
 		init_search(1);	// each line is a game
 		Print = false;
 		get_board("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 		double se2 = 0.0;
-		for (size_t start = 0, plies = 0, stop; ++plies <= 200; start = stop)	// stop after 100 moves
+		for (auto m_e: moves)
 		{
-			size_t e_loc = line.find("eval", start);
-			if (e_loc == std::string::npos)
+			string s_move = m_e.first, eval = m_e.second;
+			double e_val = outcome; // parse_eval(eval);
+			if (e_val == INVALID_EVAL)
 				break;
-			stop = line.find('}', e_loc) + 1;
-			size_t e_end = line.find(']', e_loc);
-			string e_str(line.begin() + e_loc + 5, line.begin() + e_end);
-			if (e_str.find('#') != string::npos)
-				break;	// eval is mate
-			double e_val = std::stod(e_str);
 			// now parse the move
-			size_t m_loc = line.find_first_not_of("0123456789. ", start + 2);
-			int move = parse_move(line.begin() + m_loc);
+			size_t m_loc = s_move.find_first_not_of(" ");
+			int move = parse_move(s_move.begin() + m_loc);
 			if (move == MOVE_AMBIGUOUS)
 			{
-				std::cerr << "Ambiguous move at " << line.substr(start, stop - start) << "\n";
+				std::cerr << "Ambiguous move " << move << "\n";
 				break;
 			}
 			do_move(Current->turn, move);
@@ -11130,8 +11194,8 @@ pair<bool, vector<string>> parse_game(const std::string& line, std::unordered_se
 			{
 				evaluate();
 				auto score = Current->turn
-					? (gen_root_moves<1>(), -pv_search<true, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch))
-					: (gen_root_moves<0>(), pv_search<false, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch));
+						? (gen_root_moves<1>(), -pv_search<true, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch))
+						: (gen_root_moves<0>(), pv_search<false, true>(-MateValue, MateValue, DEPTH, FlagNeatSearch));
 
 				say("OURS " + to_string(+score) + "\n");
 				if (!score.why)
