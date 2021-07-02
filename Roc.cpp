@@ -11,7 +11,7 @@
 #define MP_NPS
 //#define TIME_TO_DEPTH
 #define TB 1
-//#define HNI
+#define HNI
 
 #ifdef W32_BUILD
 #define NTDDI_VERSION 0x05010200
@@ -693,41 +693,44 @@ template<class POP> score_t score_from_material(sint16 val)
 		IncV(retval, q[me] - q[opp]);
 		IncV(retval, (b[me] > 1 ? 1 : 0) - (b[opp] > 1 ? 1 : 0));
 		// MatQuadMe
-		IncV(retval, p[me] * p[me] - p[opp] * p[opp]);
-		IncV(retval, p[me] * n[me] - p[opp] * p[opp]);
-		IncV(retval, p[me] * b[me] - p[opp] * p[opp]);
-		IncV(retval, p[me] * r[me] - p[opp] * p[opp]);
-		IncV(retval, p[me] * q[me] - p[opp] * p[opp]);
-		IncV(retval, n[me] * n[me] - p[opp] * p[opp]);
-		IncV(retval, n[me] * b[me] - p[opp] * p[opp]);
-		IncV(retval, n[me] * r[me] - p[opp] * p[opp]);
-		IncV(retval, n[me] * q[me] - p[opp] * p[opp]);
-		IncV(retval, b[me] * b[me] - p[opp] * p[opp]);
-		IncV(retval, b[me] * r[me] - p[opp] * p[opp]);
-		IncV(retval, b[me] * q[me] - p[opp] * p[opp]);
-		IncV(retval, r[me] * r[me] - p[opp] * p[opp]);
-		IncV(retval, r[me] * q[me] - p[opp] * p[opp]);
+		auto quadMe = [=](const array<int, 2>& p1, const array<int, 2>& p2) { return p1[me] * p2[me] - p1[opp] * p2[opp]; };
+		IncV(retval, quadMe(p, p));
+		IncV(retval, quadMe(p, n));
+		IncV(retval, quadMe(p, b));
+		IncV(retval, quadMe(p, r));
+		IncV(retval, quadMe(p, q));
+		IncV(retval, quadMe(n, n));
+		IncV(retval, quadMe(n, b));
+		IncV(retval, quadMe(n, r));
+		IncV(retval, quadMe(n, q));
+		IncV(retval, quadMe(b, r));
+		IncV(retval, quadMe(b, q));
+		IncV(retval, quadMe(r, r));
+		IncV(retval, quadMe(r, q));
 		// MatQuadOpp
-		IncV(retval, p[me] * n[opp] - p[opp] * n[me]);
-		IncV(retval, p[me] * b[opp] - p[opp] * n[me]);
-		IncV(retval, p[me] * r[opp] - p[opp] * n[me]);
-		IncV(retval, p[me] * q[opp] - p[opp] * n[me]);
-		IncV(retval, n[me] * b[opp] - p[opp] * n[me]);
-		IncV(retval, n[me] * r[opp] - p[opp] * n[me]);
-		IncV(retval, n[me] * q[opp] - p[opp] * n[me]);
-		IncV(retval, b[me] * r[opp] - p[opp] * n[me]);
-		IncV(retval, b[me] * q[opp] - p[opp] * n[me]);
-		IncV(retval, r[me] * q[opp] - p[opp] * n[me]);
+		auto quadOpp = [=](const array<int, 2>& p1, const array<int, 2>& p2) { return p1[me] * p2[opp] - p1[opp] * p2[me]; };
+		IncV(retval, quadOpp(p, n));
+		IncV(retval, quadOpp(p, b));
+		IncV(retval, quadOpp(p, r));
+		IncV(retval, quadOpp(p, q));
+		IncV(retval, quadOpp(n, b));
+		IncV(retval, quadOpp(n, r));
+		IncV(retval, quadOpp(n, q));
+		IncV(retval, quadOpp(b, r));
+		IncV(retval, quadOpp(b, q));
+		IncV(retval, quadOpp(r, q));
+
 		// BishopPairQuad
-		IncV(retval, (b[me] > 1 ? p[me] : 0) - (b[opp] > 1 ? p[opp] : 0));
-		IncV(retval, (b[me] > 1 ? n[me] : 0) - (b[opp] > 1 ? n[opp] : 0));
-		IncV(retval, (b[me] > 1 ? r[me] : 0) - (b[opp] > 1 ? r[opp] : 0));
-		IncV(retval, (b[me] > 1 ? q[me] : 0) - (b[opp] > 1 ? q[opp] : 0));
-		IncV(retval, (b[me] > 1 ? p[opp] : 0) - (b[opp] > 1 ? p[me] : 0));
-		IncV(retval, (b[me] > 1 ? n[opp] : 0) - (b[opp] > 1 ? n[me] : 0));
-		IncV(retval, (b[me] > 1 ? b[opp] : 0) - (b[opp] > 1 ? b[me] : 0));
-		IncV(retval, (b[me] > 1 ? r[opp] : 0) - (b[opp] > 1 ? r[me] : 0));
-		IncV(retval, (b[me] > 1 ? q[opp] : 0) - (b[opp] > 1 ? q[me] : 0));
+		auto quadPair = [&](const array<int, 2>& p1, int own) { return (b[own] > 1 ? p1[own] : 0) - (b[1 - own] > 1 ? p1[1 - own] : 0); };
+		IncV(retval, quadPair(p, me));
+		IncV(retval, quadPair(n, me));
+		IncV(retval, quadPair(r, me));
+		IncV(retval, quadPair(q, me));
+		IncV(retval, quadPair(p, opp));
+		IncV(retval, quadPair(n, opp));
+		IncV(retval, quadPair(b, opp));
+		IncV(retval, quadPair(r, opp));
+		IncV(retval, quadPair(q, opp));
 	}
 	retval.val = val;
 	return retval;
@@ -1406,22 +1409,22 @@ template<class C_> INLINE sint64 Ca4(const C_& x, int y)
 
 // EVAL WEIGHTS
 
-constexpr array<int, 6> MatLinear = { 27, -7, -3, 87, -17, -8 };
+constexpr array<int, 6> MatLinear = { 6, -3, -7, 66, -10, -24 };
 // pawn, knight, bishop, rook, queen, pair
 constexpr array<int, 14> MatQuadMe = { // tuner: type=array, var=1000, active=0
-	-23, 22, -4, -146, -239,
-	21, 277, -105, -86,
-	-145, 308, 294,
-	-847, -998
+	-30, 26, -10, -170, -270,
+	33, 304, -94, -49,
+	0, 291, 257,
+	-875, -1125
 };
 constexpr array<int, 10> MatQuadOpp = { // tuner: type=array, var=1000, active=0
-	-4, 67, -21, -277,
-	50, 45, 53,
-	-4, -6,
-	77
+	-12, 70, -27, -305,
+	66, 60, 89,
+	-14, -43,
+	-4
 };
 constexpr array<int, 9> BishopPairQuad = { // tuner: type=array, var=1000, active=0
-	-13, 148, 78, 225, -63, -39, -173, 68, -171
+	-27, 48, 32, 125, -54, 36, -125, 97, -72
 };
 constexpr array<int, 6> MatClosed = { 1, -1, 1, -1, 1, -1 };
 
@@ -1523,10 +1526,10 @@ constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256,
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1241, 840, 616, -1, 2100, 891, 89, -155, 241, 282, -57, 200 };
-constexpr array<int, 12> MobCoeffsBishop = { 1444, 732, 548, -1, 1787, 1684, 1594, -440, 1, 440, 122, 646 };
-constexpr array<int, 12> MobCoeffsRook = { 1054, 842, 638, 42, -565, 248, 1351, 7, 65, 50, 63, -9 };
-constexpr array<int, 12> MobCoeffsQueen = { 597, 786, 1117, 36, 1578, 324, -1091, 28, 44, 73, 3, 1 };
+constexpr array<int, 12> MobCoeffsKnight = { 1241, 840, 616, -1, 2100, 891, 89, -155, 105, 275, -68, 268 };
+constexpr array<int, 12> MobCoeffsBishop = { 1444, 732, 548, -1, 1787, 1684, 1594, -440, -1, 209, -1, 800 };
+constexpr array<int, 12> MobCoeffsRook = { 1054, 842, 638, 42, -565, 248, 1351, 7, -1, -1, -1, 55 };
+constexpr array<int, 12> MobCoeffsQueen = { 597, 786, 1117, 36, 1578, 324, -1091, 28, -1, -1, -1, 38 };
 
 constexpr int N_LOCUS = 22;
 
@@ -1605,10 +1608,10 @@ constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, act
 	14, 9, -21, 1 };
 // type (2: att, def) * scaling (2: linear, log) 
 constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
-	768, 206, 334, 78
+	742, 199, 309, 72
 };
 constexpr array<int, 4> PasserAttDefLinear = { // tuner: type=array, var=500, active=0
-	2546, 18, 937, 266
+	2356, 17, 867, 246
 };
 constexpr array<int, 4> PasserAttDefConst = { // tuner: type=array, var=500, active=0
 	0, 0, 0, 0
@@ -1619,7 +1622,7 @@ constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active
 	1, 1, 1,
 	1, 1, 1,
 	1, 1, 1,
-	27, 61, 1
+	27, 141, 1
 };
 namespace Values
 {
@@ -1645,17 +1648,51 @@ array<sint16, 8> PasserDefLog;
 enum
 {
 	IsolatedOpen,
-	IsolatedClosed,
-	IsolatedBlocked,
 	IsolatedDoubledOpen,
-	IsolatedDoubledClosed
+	IsolatedClosed,
+	IsolatedDoubledClosed,
+	IsolatedBlocked
 };
 constexpr array<int, 20> Isolated = {	
-	31, 29, 13, 2,
-	36, 17, 16, 26,
-	-26, -10, 7, -1,
-	9, 20, 38, 1,
-	37, 29, 51, 4 };
+	27, 25, 22, -11,
+	6, 20, 40, -20,
+	29, 15, 11, 20,
+	39, 33, 25, 16,
+	-27, -12, 2, -4};
+
+enum
+{
+	DoubledOpen,
+	DoubledClosed
+};
+constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
+	65, 17, 5, -45,
+	22, 3, 4, 2 };
+
+enum
+{
+	PawnChainLinear,
+	PawnChain,
+	PawnBlocked,
+	PawnFileSpan,
+	PawnRestrictsK
+};
+constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
+	60, 67, 75, 33, 
+	-1, 7, 25, 50, 
+	17, 25, 31, -14, 
+	-5, -2, 8, -4, 
+	30, 19, 6, 27
+};
+
+enum
+{
+	BackwardOpen,
+	BackwardClosed
+};
+constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
+	79, 72, 42, 1,
+	29, 7, 17, 1 };
 
 enum
 {
@@ -1665,26 +1702,89 @@ enum
 	ChainRoot
 };
 constexpr array<int, 16> Unprotected = {  // tuner: type=array, var=26, active=0
-	35, 35, 26, 1,
-	-7, -16, -17, 9,
-	4, 2, -15, 14,
-	14, 1, -10, -5 };
+	29, 39, 21, -8,
+	-2, -21, -19, 15,
+	1, 6, -20, 13,
+	9, -6, -1, 6 };
+
 enum
 {
-	BackwardOpen,
-	BackwardClosed
+	QueenPawnPin,
+	QueenSelfPin,
+	QueenWeakPin,
+	RookPawnPin,
+	RookSelfPin,
+	RookWeakPin,
+	RookThreatPin,
+	BishopPawnPin,
+	BishopSelfPin,
+	StrongPin,
+	BishopThreatPin
 };
-constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
-	79, 72, 33, 2,
-	33, 10, 20, 1 };
+constexpr array<int, 44> Pin = {  // tuner: type=array, var=51, active=0
+	38, 30, 44, 11,	
+	132, 184, 63, 68,
+	72, 93, 100, 37,
+	62, 32, 13, 30,
+	96, 149, 93, 40,
+	75, 132, 151, 28,
+	344, 417, 303, -26,
+	46, 70, 55, -25,
+	184, 200, 128, 15,
+	-6, 133, 272, -2,
+	292, 368, 355, 13 };
+
 enum
 {
-	DoubledOpen,
-	DoubledClosed
+	TacticalQueenPawn,
+	TacticalQueenMinor,
+	TacticalRookPawn,
+	TacticalRookMinor,
+	TacticalBishopPawn,
+	TacticalB2N,
+	TacticalKnightPawn,
+	TacticalN2B,
+	TacticalThreat,
+	TacticalExtraThreat,
+	TacticalDoubleThreat
 };
-constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-	61, 22, -3, -39,
-	24, 10, 4, -3 };
+constexpr array<int, 44> Tactical = {  // tuner: type=array, var=51, active=0
+	1, -4, 11, 25,
+	38, 38, 81, -1,
+	5, 18, 38, 12,
+	41, 63, 93, 8,	// TacticalRookMinor
+	-5, 15, 24, -3,
+	45, 74, 74, 48,
+	-1, -1, 10, -7,
+	83, 93, 87, 22,
+	40, 40, 47, 24,
+	51, 37, 55, -5,
+	226, 151, 169, -21
+};
+
+enum
+{
+	KingDefKnight,
+	KingDefBishop,
+	KingDefRook,
+	KingDefQueen
+};
+constexpr array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
+	40, 13, 4, -13,
+	2, 8, 9, 12,
+	-1, -1, 3, -1,
+	1, 1, 3, 9 };
+
+enum
+{
+	QKingRay,
+	RKingRay,
+	BKingRay
+};
+constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
+	15, 24, 31, 1,
+	20, 44, 11, 58,
+	8, 78, 21, 43 };
 
 enum
 {
@@ -1699,77 +1799,21 @@ enum
 	Rook7thDoubled
 };
 constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
-	31, 15, 2, 2,
-	18, 15, 6, 8,
-	27, 22, 45, 8,
-	1, 1, 16, 6,
-	47, 27, 1, 3,
-	20, 1, -20, 9,
-	1, 1, 5, 13,
-	1, 9, 43, 9,
-	1, 40, 109, 11 };
+	28, 10, -3, 5,
+	15, 13, 13, 12,
+	22, 16, 39, 9,
+	-8, -7, 8, 13,
+	40, 20, -9, 6,
+	29, 5, -27, 56,
+	-18, -13, -4, 26,
+	-19, -13, 10, 26,
+	-12, 40, 93, 45 };
 
-enum
-{
-	TacticalQueenPawn, 
-	TacticalRookPawn,
-	TacticalBishopPawn, 
-	TacticalKnightPawn,
-	TacticalQueenMinor, 
-	TacticalRookMinor,
-	TacticalB2N, 
-	TacticalN2B,
-	TacticalThreat, 
-	TacticalExtraThreat,
-	TacticalDoubleThreat
-};
-constexpr array<int, 44> Tactical = {  // tuner: type=array, var=51, active=0
-	1, 1, 6, 16, 
-	5, 21, 36, 6,
-	-2, 13, 24, 2, 
-	4, 5, 10, -2,	
-	39, 47, 87, 2, 
-	43, 70, 105, 3,	// TacticalRookMinor
-	48, 78, 82, 59, 
-	81, 93, 97, 20,
-	47, 42, 49, 24, 
-	54, 38, 55, 4,
-	133, 81, 56, 5
-};
-
-enum
-{
-	KingDefKnight,
-	KingDefBishop,
-	KingDefRook,
-	KingDefQueen
-};
-constexpr array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
-	35, 15, 1, -8,
-	-4, -1, 5, 4,
-	0, 1, 1, 1,
-	16, 2, -9, 1 };
-
-enum
-{
-	PawnChainLinear,
-	PawnChain,
-	PawnBlocked,
-	PawnFileSpan,
-	PawnRestrictsK
-};
-constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
-	56, 56, 86, 19, 
-	-9, 3, 29, 44, 
-	14, 27, 29, -6, 
-	-1, 3, 14, 2, 
-	30, 18, 5, 22
-};
 
 enum { BishopPawnBlock, BishopOutpostNoMinor };
 constexpr array<int, 8> BishopSpecial = { // tuner: type=array, var=20, active=0
-	2, 21, 20, 6,
-	56, 56, 29, 7
+	-1, 18, 18, 8,
+	68, 52, 17, 1
 };
 
 constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
@@ -1781,48 +1825,10 @@ enum
 	KnightOutpostNoMinor
 };
 constexpr array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
-	34, 32, 20, 13,
-	53, 46, 7, 4,
-	42, 38, 35, 9,
-	49, 49, 10, 7 };
-
-enum
-{
-	QueenWeakPin, 
-	RookWeakPin,
-	StrongPin,
-	RookThreatPin, 
-	BishopThreatPin,
-	QueenPawnPin, 
-	RookPawnPin, 
-	BishopPawnPin,
-	QueenSelfPin,
-	RookSelfPin,
-	BishopSelfPin
-};
-constexpr array<int, 44> Pin = {  // tuner: type=array, var=51, active=0
-	69, 91, 121, 11, 
-	74, 130, 155, 10,
-	1, 137, 291, 23,
-	285, 310, 219, 1, 
-	274, 267, 213, 1,
-	35, 35, 33, 9,	// QueenPawnPin 
-	43, 26, 24, -1, 
-	35, 38, 42, 10,
-	144, 157, 106, 20,	
-	141, 147, 99, 11,
-	171, 164, 115, 3 };
-
-enum
-{
-	QKingRay,
-	RKingRay,
-	BKingRay
-};
-constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
-	15, 24, 31, 1,
-	1, 29, 46, 5,
-	13, 22, 5, 7 };
+	36, 30, 17, -3,
+	56, 43, 7, -3,
+	35, 27, 34, 12,
+	56, 42, 10, 29 };
 
 constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
@@ -6032,6 +6038,8 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 			IncV(EI.score, Ca4(Tactical, TacticalRookPawn));
 		if (control & Minor(opp))
 			IncV(EI.score, Ca4(Tactical, TacticalRookMinor));
+		if (att & EI.area[me])
+			IncV(EI.score, Ca4(KingDefence, KingDefRook));
 		if (!(PWay[me][sq] & Pawn(me)))
 		{
 			IncV(EI.score, Ca4(RookSpecial, RookHof));
@@ -6232,7 +6240,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 21, 17, 2, 1 };
+	static constexpr array<int, 4> PHASE = { 20, 16, 2, -3 };
 	int op = ((PHASE[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 32;
 	int md = (PHASE[1] * adjusted) / 32;
 	int eg = (PHASE[2] * adjusted) / 32;
@@ -6319,8 +6327,9 @@ template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 	{
 		POP pop;
 		// according to Gull, second threat is extra DoubleThreat, third and after are simple Threat again
+		// we change this so second threat is entirely DoubleThreat, third and after are ExtraThreat
+		DecV(EI.score, (pop(threat) - 2) * Ca4(Tactical, TacticalExtraThreat));
 		DecV(EI.score, Ca4(Tactical, TacticalDoubleThreat));
-		DecV(EI.score, pop(threat) * Ca4(Tactical, TacticalExtraThreat));
 	}
 }
 
@@ -6384,14 +6393,25 @@ template<bool me> void eval_xray(GEvalInfo& EI)
 
 template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 {
+	POP pop;
 	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
-	DecV(EI.score, POP()(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
+	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Ca4(PawnSpecial, PawnBlocked));
 	eval_queens<me, POP>(EI);
 	EI.free[me] |= Rook(opp);
 	eval_rooks<me, POP>(EI);
 	EI.free[me] |= Minor(opp);
 	eval_bishops<me, POP>(EI);
 	eval_knights<me, POP>(EI);
+
+#ifdef TUNER_DATA
+	// MatClosed
+	constexpr sint16 ZERO = 0;
+	IncV(EI.score, Pack4(ZERO, ZERO, ZERO, static_cast<sint16>(pop(Pawn(me)))));
+	IncV(EI.score, Pack4(ZERO, ZERO, ZERO, static_cast<sint16>(pop(Knight(me)))));
+	IncV(EI.score, Pack4(ZERO, ZERO, ZERO, static_cast<sint16>(pop(Bishop(me)))));
+	IncV(EI.score, Pack4(ZERO, ZERO, ZERO, static_cast<sint16>(pop(Rook(me)))));
+	IncV(EI.score, Pack4(ZERO, ZERO, ZERO, static_cast<sint16>(pop(Queen(me)))));
+#endif
 }
 
 template<class POP> void evaluation()
@@ -6480,14 +6500,14 @@ template<class POP> void evaluation()
 	const int drawCap = DrawCapConstant + (DrawCapLinear * abs(+Current->score)) / 64;  // drawishness of positions can cancel this much of the score
 	if (mat)
 	{
-
+		constexpr uint8 DRAW_DENOM = 64;
 		if (Current->score > 0)
 		{
 			EI.mul = mat->mul[White];
 			if (mat && mat->eval[White] && !eval_stalemate<White>(EI))
 				mat->eval[White](EI, pop.Imp());
 			int me = White;
-			DecV(Current->score, (Min<int>(+Current->score, drawCap) * EI.PawnEntry->draw[White]) / 70);
+			DecV(Current->score, (Min<int>(+Current->score, drawCap) * Min(DRAW_DENOM, EI.PawnEntry->draw[White])) / DRAW_DENOM);
 		}
 		else if (Current->score < 0)
 		{
@@ -6495,7 +6515,7 @@ template<class POP> void evaluation()
 			if (mat->eval[Black] && !eval_stalemate<Black>(EI))
 				mat->eval[Black](EI, pop.Imp());
 			int me = Black;
-			DecV(Current->score, (Min<int>(-+Current->score, drawCap) * EI.PawnEntry->draw[Black]) / 70);
+			DecV(Current->score, (Min<int>(-+Current->score, drawCap) * Min(DRAW_DENOM, EI.PawnEntry->draw[Black])) / DRAW_DENOM);
 		}
 		else
 			EI.mul = Min(mat->mul[White], mat->mul[Black]);
@@ -11111,6 +11131,8 @@ vector<pair<string, string>> game_moves(const string& line)
 constexpr double INVALID_EVAL = -135.79;
 double parse_eval(const string& eval)
 {
+	if (eval.find("#") != string::npos)
+		return INVALID_EVAL;
 	// might be +0.03/22
 	size_t slash = eval.find('/'), sign = eval.find_first_of("+-");
 	if (slash != string::npos && sign != string::npos && sign < slash)
@@ -11156,7 +11178,8 @@ pair<bool, vector<string>> parse_game(const std::string& line, std::unordered_se
 		for (auto m_e: moves)
 		{
 			string s_move = m_e.first, eval = m_e.second;
-			double e_val = outcome; // parse_eval(eval);
+			double e_val = parse_eval(eval);
+			//double e_val = outcome;
 			if (e_val == INVALID_EVAL)
 				break;
 			// now parse the move
@@ -11164,7 +11187,8 @@ pair<bool, vector<string>> parse_game(const std::string& line, std::unordered_se
 			int move = parse_move(s_move.begin() + m_loc);
 			if (move == MOVE_AMBIGUOUS)
 			{
-				std::cerr << "Ambiguous move " << move << "\n";
+				std::cerr << "Ambiguous move " << move;
+				std::cerr << " at ply " << &m_e - &moves[0] << "\n";
 				break;
 			}
 			do_move(Current->turn, move);
