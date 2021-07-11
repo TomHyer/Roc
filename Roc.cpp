@@ -333,7 +333,6 @@ INLINE uint16 UUnpack2(uint32 x)
 	return static_cast<sint16>(x >> 16);
 }
 
-
 INLINE int FileOf(int loc)
 {
 	return loc & 7;
@@ -625,7 +624,6 @@ constexpr int InitiativeConst = 2 * CP_SEARCH;
 constexpr int InitiativePhase = 2 * CP_SEARCH;
 constexpr sint16 FutilityThreshold = 50 * CP_SEARCH;
 
-
 #ifdef EXPLAIN_EVAL
 FILE* fexplain;
 int explain = 0, cpp_length;
@@ -668,6 +666,8 @@ void Do_Notice(packed_t& dst, sint64 inc, int line)
 	Provenance::Entry next = { line, ZERO, inc, true };
 	if (!dst.why)
 		dst.why = NoProvenance();
+	if (!dst.why->vals.empty() && dst.why->vals.back().line == line)
+		dst.why->vals.pop_back();	// overwrite immediate prior NOTICE
 	dst.why->vals.push_back(next);
 }
 
@@ -1409,24 +1409,24 @@ template<class C_> INLINE sint64 Ca4(const C_& x, int y)
 
 // EVAL WEIGHTS
 
-constexpr array<int, 6> MatLinear = { 6, -3, -7, 66, -10, -24 };
+constexpr array<int, 6> MatLinear = { 3, -6, -8, 68, -8, -37 };
 // pawn, knight, bishop, rook, queen, pair
 constexpr array<int, 14> MatQuadMe = { // tuner: type=array, var=1000, active=0
-	-30, 26, -10, -170, -270,
-	33, 304, -94, -49,
-	0, 291, 257,
-	-875, -1125
+	-32, 26, -16, -186, -286,
+	25, 312, -110, -57,
+	0, 271, 210,
+	-897, -1288
 };
 constexpr array<int, 10> MatQuadOpp = { // tuner: type=array, var=1000, active=0
-	-12, 70, -27, -305,
-	66, 60, 89,
-	-14, -43,
-	-4
+	-11, 74, -31, -328,
+	81, 52, 77,
+	-24, -92,
+	-70
 };
 constexpr array<int, 9> BishopPairQuad = { // tuner: type=array, var=1000, active=0
-	-27, 48, 32, 125, -54, 36, -125, 97, -72
+	-50, -136, -55, -52, -31, 240, -49, 184, 103
 };
-constexpr array<int, 6> MatClosed = { 1, -1, 1, -1, 1, -1 };
+constexpr array<int, 6> MatClosed = { 12, 34, -32, -245, -155, -22 };
 
 enum
 {
@@ -1526,10 +1526,10 @@ constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256,
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1241, 840, 616, -1, 2100, 891, 89, -155, 105, 275, -68, 268 };
-constexpr array<int, 12> MobCoeffsBishop = { 1444, 732, 548, -1, 1787, 1684, 1594, -440, -1, 209, -1, 800 };
-constexpr array<int, 12> MobCoeffsRook = { 1054, 842, 638, 42, -565, 248, 1351, 7, -1, -1, -1, 55 };
-constexpr array<int, 12> MobCoeffsQueen = { 597, 786, 1117, 36, 1578, 324, -1091, 28, -1, -1, -1, 38 };
+constexpr array<int, 12> MobCoeffsKnight = { 1241, 840, 616, -1, 2100, 891, 89, -155, 23, 251, -128, 320 };
+constexpr array<int, 12> MobCoeffsBishop = { 1444, 732, 548, -1, 1787, 1684, 1594, -440, -55, 133, -32, 1023 };
+constexpr array<int, 12> MobCoeffsRook = { 1054, 842, 638, 42, -565, 248, 1351, 7, -13, -4, -2, 173 };
+constexpr array<int, 12> MobCoeffsQueen = { 597, 786, 1117, 36, 1578, 324, -1091, 28, 2, -44, -40, 252 };
 
 constexpr int N_LOCUS = 22;
 
@@ -1622,7 +1622,7 @@ constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active
 	1, 1, 1,
 	1, 1, 1,
 	1, 1, 1,
-	27, 141, 1
+	1, 200, 1
 };
 namespace Values
 {
@@ -1654,11 +1654,11 @@ enum
 	IsolatedBlocked
 };
 constexpr array<int, 20> Isolated = {	
-	27, 25, 22, -11,
-	6, 20, 40, -20,
-	29, 15, 11, 20,
-	39, 33, 25, 16,
-	-27, -12, 2, -4};
+	20, 17, 23, -50,
+	2, 16, 45, -38,
+	24, 16, 7, 5,
+	36, 30, 22, -6,
+	-25, -9, -7, -17};
 
 enum
 {
@@ -1666,23 +1666,23 @@ enum
 	DoubledClosed
 };
 constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-	65, 17, 5, -45,
-	22, 3, 4, 2 };
+	65, 18, 11, -58,
+	17, -2, 9, 12 };
 
 enum
 {
-	PawnChainLinear,
 	PawnChain,
+	PawnChainLinear,
 	PawnBlocked,
 	PawnFileSpan,
 	PawnRestrictsK
 };
 constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
-	60, 67, 75, 33, 
-	-1, 7, 25, 50, 
-	17, 25, 31, -14, 
-	-5, -2, 8, -4, 
-	30, 19, 6, 27
+	2, 4, 22, 69, 
+	65, 71, 54, 50,
+	21, 21, 34, -14,
+	-9, -6, 1, -11, 
+	38, 28, 11, 35
 };
 
 enum
@@ -1691,8 +1691,8 @@ enum
 	BackwardClosed
 };
 constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
-	79, 72, 42, 1,
-	29, 7, 17, 1 };
+	83, 70, 47, -11,
+	26, 8, 20, -3 };
 
 enum
 {
@@ -1702,10 +1702,10 @@ enum
 	ChainRoot
 };
 constexpr array<int, 16> Unprotected = {  // tuner: type=array, var=26, active=0
-	29, 39, 21, -8,
-	-2, -21, -19, 15,
-	1, 6, -20, 13,
-	9, -6, -1, 6 };
+	20, 47, 19, -15,
+	-6, -27, -25, 26,
+	-3, 14, -27, 11,
+	-1, -9, 10, 1 };
 
 enum
 {
@@ -1722,17 +1722,17 @@ enum
 	BishopThreatPin
 };
 constexpr array<int, 44> Pin = {  // tuner: type=array, var=51, active=0
-	38, 30, 44, 11,	
-	132, 184, 63, 68,
-	72, 93, 100, 37,
-	62, 32, 13, 30,
-	96, 149, 93, 40,
-	75, 132, 151, 28,
-	344, 417, 303, -26,
-	46, 70, 55, -25,
-	184, 200, 128, 15,
-	-6, 133, 272, -2,
-	292, 368, 355, 13 };
+	36, 41, 33, 42,	
+	96, 214, -13, 105,
+	78, 106, 79, 50,
+	102, 37, 6, 40,
+	38, 158, 77, 112,
+	69, 147, 147, 82,
+	500, 584, 529, -91,
+	59, 112, 88, -4,
+	201, 237, 118, 42,
+	-15, 136, 263, -24,
+	298, 481, 558, -69 };
 
 enum
 {
@@ -1749,17 +1749,17 @@ enum
 	TacticalDoubleThreat
 };
 constexpr array<int, 44> Tactical = {  // tuner: type=array, var=51, active=0
-	1, -4, 11, 25,
-	38, 38, 81, -1,
-	5, 18, 38, 12,
-	41, 63, 93, 8,	// TacticalRookMinor
-	-5, 15, 24, -3,
-	45, 74, 74, 48,
-	-1, -1, 10, -7,
-	83, 93, 87, 22,
-	40, 40, 47, 24,
-	51, 37, 55, -5,
-	226, 151, 169, -21
+	1, -11, 3, 43,
+	35, 28, 77, -1,
+	3, 15, 41, 18,
+	39, 58, 84, 5,	// TacticalRookMinor
+	-7, 19, 24, 4,
+	39, 70, 65, 40,
+	-8, -7, 3, -13,
+	90, 94, 71, 30,
+	28, 36, 43, 30,
+	67, 42, 66, -83,
+	206, 145, 162, -31
 };
 
 enum
@@ -1770,10 +1770,10 @@ enum
 	KingDefQueen
 };
 constexpr array<int, 16> KingDefence = {  // tuner: type=array, var=13, active=0
-	40, 13, 4, -13,
-	2, 8, 9, 12,
-	-1, -1, 3, -1,
-	1, 1, 3, 9 };
+	45, 9, 1, -21,
+	4, 15, 11, 19,
+	-8, -5, 9, -2,
+	-1, -1, -3, 20 };
 
 enum
 {
@@ -1782,9 +1782,9 @@ enum
 	BKingRay
 };
 constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
-	15, 24, 31, 1,
-	20, 44, 11, 58,
-	8, 78, 21, 43 };
+	15, 33, 1, -5,
+	6, 111, -1, 106,
+	-3, 251, -8, 72 };
 
 enum
 {
@@ -1799,21 +1799,21 @@ enum
 	Rook7thDoubled
 };
 constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
-	28, 10, -3, 5,
-	15, 13, 13, 12,
-	22, 16, 39, 9,
-	-8, -7, 8, 13,
-	40, 20, -9, 6,
-	29, 5, -27, 56,
-	-18, -13, -4, 26,
-	-19, -13, 10, 26,
-	-12, 40, 93, 45 };
+	22, 6, -6, 6,
+	9, 13, 13, 7,
+	17, 14, 37, 4,
+	-19, -9, 6, 20,
+	35, 14, -15, -1,
+	35, 32, -16, 140,
+	-38, -18, -8, 27,
+	-43, -16, 10, 37,
+	-5, 53, 77, 33 };
 
 
 enum { BishopPawnBlock, BishopOutpostNoMinor };
 constexpr array<int, 8> BishopSpecial = { // tuner: type=array, var=20, active=0
-	-1, 18, 18, 8,
-	68, 52, 17, 1
+	-1, 13, 13, 10,
+	99, 43, 4, -4
 };
 
 constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
@@ -1825,10 +1825,10 @@ enum
 	KnightOutpostNoMinor
 };
 constexpr array<int, 16> KnightSpecial = {  // tuner: type=array, var=26, active=0
-	36, 30, 17, -3,
-	56, 43, 7, -3,
-	35, 27, 34, 12,
-	56, 42, 10, 29 };
+	41, 30, 9, -15,
+	60, 43, 2, -22,
+	31, 15, 27, 3,
+	58, 19, 10, 81 };
 
 constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
 	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
@@ -5927,7 +5927,7 @@ template <bool me> INLINE void eval_queens_xray(GEvalInfo& EI)
 				}
 				else
 				{
-					uint64 pinnable = Knight(opp) & (BMask[sq] & King(opp) ? Rook(opp) : Bishop(opp));
+					uint64 pinnable = Knight(opp) | (BMask[sq] & King(opp) ? Rook(opp) : Bishop(opp));
 					if (F(v & ~pinnable))
 						IncV(EI.score, Ca4(KingRay, QKingRay));
 				}
@@ -6240,7 +6240,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 20, 16, 2, -3 };
+	static constexpr array<int, 4> PHASE = { 19, 15, 2, -5 };
 	int op = ((PHASE[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 32;
 	int md = (PHASE[1] * adjusted) / 32;
 	int eg = (PHASE[2] * adjusted) / 32;
@@ -6411,6 +6411,7 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 	IncV(EI.score, Pack4(ZERO, ZERO, ZERO, static_cast<sint16>(pop(Bishop(me)))));
 	IncV(EI.score, Pack4(ZERO, ZERO, ZERO, static_cast<sint16>(pop(Rook(me)))));
 	IncV(EI.score, Pack4(ZERO, ZERO, ZERO, static_cast<sint16>(pop(Queen(me)))));
+	IncV(EI.score, Pack4(ZERO, ZERO, ZERO, static_cast<sint16>(Multiple(Bishop(me)))));
 #endif
 }
 
@@ -6500,7 +6501,7 @@ template<class POP> void evaluation()
 	const int drawCap = DrawCapConstant + (DrawCapLinear * abs(+Current->score)) / 64;  // drawishness of positions can cancel this much of the score
 	if (mat)
 	{
-		constexpr uint8 DRAW_DENOM = 64;
+		constexpr uint8 DRAW_DENOM = 60;
 		if (Current->score > 0)
 		{
 			EI.mul = mat->mul[White];
