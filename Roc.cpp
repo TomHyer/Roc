@@ -842,12 +842,12 @@ typedef struct
 	array<uint64, 2> att, patt, xray;
 	uint64 key, pawn_key, eval_key, passer, threat, mask;
 	sint64 pst;	// postponed -- provenance of PST?
-	int material;
 	int *start, *current;
 	int best;
 	score_t score;
 	array<uint16, N_KILLER + 1> killer;
 	array<uint16, 2> ref;
+	uint32 material;
 	uint16 move;
 	uint8 turn, castle_flags, ply, ep_square, capture, gen_flags, piece, stage, mul, dummy;
 	sint32 moves[230];
@@ -1095,9 +1095,9 @@ sint64& Pst(int piece, int sq)
 };
 // #define Pst(piece,sq) PstVals[((piece) << 6) | (sq)]
 int MvvLvaVals[16][16];  // [piece][capture]
-INLINE int MvvLva(int att, int vic, bool from_threat)
+INLINE int MvvLva(int att, int vic)
 {
-	return MvvLvaVals[att][vic] + (from_threat ? 1 << 26 : 0);
+	return MvvLvaVals[att][vic];
 }
 
 uint64 TurnKey;
@@ -1117,7 +1117,7 @@ INLINE int* AddMove(int* list, int from, int to, int flags, int score)
 }
 INLINE int* AddCapturePP(int* list, int att, int vic, int from, int to, int flags)
 {
-	return AddMove(list, from, to, flags, MvvLva(att, vic, HasBit(Current->threat, from)));
+	return AddMove(list, from, to, flags, MvvLva(att, vic));
 }
 INLINE int* AddCaptureP(int* list, int piece, int from, int to, int flags)
 {
@@ -4820,7 +4820,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 19, 15, 2, -5 };
+	static constexpr array<int, 4> PHASE = { 24, 20, 3, -5 };
 	int op = ((PHASE[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 32;
 	int md = (PHASE[1] * adjusted) / 32;
 	int eg = (PHASE[2] * adjusted) / 32;
@@ -5470,20 +5470,9 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 	int from = From(move);
 	if (HasBit(Current->passer, from))
 	{
-		if (T(Current->material & FlagUnusualMaterial) || Current->material >= TotalMat || Material[Current->material].phase > MIDDLE_PHASE)
-		{
-			int rank = OwnRank(me, from);
-			if (rank >= 5 && depth < 16)
-				return pv ? 2 : 1;
-			//if (2*rank + depth >= 18 && 2 * rank + depth <= 24 && F(PWay[me][from] & Piece(opp)) && F(PCone[me][from] & King(opp)))
-			//	return (pv && depth < 10) ? 2 : 1;
-		}
-	}
-	if (T(PieceAt(To(move))) && depth < 13)
-	{
-		if ((T(Current->material & FlagUnusualMaterial) || Current->material >= TotalMat || Material[Current->material].phase > MIDDLE_PHASE)
-				&& HasBit(KAttAtt[lsb(King(me))] | KAttAtt[lsb(King(opp))], To(move)))
-			return 1;
+		int rank = OwnRank(me, from);
+		if (rank >= 5 && depth < 16)
+			return pv ? 2 : 1;
 	}
 	return 0;
 }
@@ -6198,7 +6187,7 @@ template<bool me> int* gen_quiet_moves(int* list)
 		int to = lsb(v);
 		int passer = T(HasBit(Current->passer, to - Push[me]));
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], FlagCastling);
+			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passer ? FlagCastling : pFlag(to + Push[me]));
 		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to), Square(OwnRank<me>(to) + 4 * passer - 2));
 	}
 
@@ -6208,9 +6197,8 @@ template<bool me> int* gen_quiet_moves(int* list)
 		for (v = free & NAtt[from]; T(v); Cut(v))
 		{
 			int to = lsb(v);
-			int flag = NAtt[to] & Current->patt[opp] ? FlagCastling : 0;
-			// int floor = T(NAtt[to] & Major(opp));
-			list = AddHistoryP(list, IKnight[me], from, to, flag);
+			bool dt = !!(NAtt[to] & Major(opp)) ^ !!(NAtt[from] & Major(opp)) ^ HasBit(Current->patt[opp], to) ^ HasBit(Current->patt[opp], from);
+			list = AddHistoryP(list, IKnight[me], from, to, dt ? FlagCastling : 0);
 		}
 	}
 
@@ -6998,15 +6986,7 @@ template<int PV = 0> struct LMR_
 
 template<bool me> inline int MinZugzwangDepth()
 {
-	if (uint64 pieces = NonPawnKing(me))
-	{
-		if (pieces != Knight(me))
-			return Major(me) ? 96 : 32;
-		if (Multiple(Knight(me)))
-			return 16;
-	}
-	uint64 pushable = Pawn(me) & ~Shift<opp>(PieceAll() | Current->att[opp]);
-	return 4 * pop0(Knight(me) | pushable) - 1;
+	return 16;	// below this depth, no point checking for Zugzwang
 }
 
 template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int flags)
