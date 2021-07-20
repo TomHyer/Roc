@@ -3,7 +3,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 //#define CPU_TIMING
 //#define EXPLAIN_EVAL
-#define TUNER_DATA
+//#define TUNER_DATA
 //#define TWO_PHASE
 //#define THREE_PHASE
 #define LARGE_PAGES
@@ -31,16 +31,6 @@
 #include <windows.h>
 #include <intrin.h>
 #include <assert.h>
-
-//#include "TunerParams.inc"
-#ifdef TUNER
-#include "time.h"
-//#define PGN
-#define RANDOM_SPHERICAL
-//#define WIN_PR
-//#define TIMING
-//#define RECORD_GAMES
-#endif
 
 using namespace std;
 #define INLINE __forceinline
@@ -899,13 +889,7 @@ typedef struct
 	uint8 low_depth, high_depth;
 } GEntry;
 static GEntry NullEntry = { 0, 1, 0, 0, 0, 0, 0, 0 };
-#ifndef TUNER
 static const int initial_hash_size = 1024 * 1024;
-#else
-static const int initial_hash_size = 64 * 1024;
-GEntry HashOne[initial_hash_size];
-GEntry HashTwo[initial_hash_size];
-#endif
 sint64 hash_size = initial_hash_size;
 uint64 hash_mask = (initial_hash_size - 4);
 GEntry* Hash;
@@ -918,15 +902,8 @@ struct GPawnEntry
 	array<uint8, 2> passer, draw;
 };
 static const GPawnEntry NullPawnEntry = { 0, packed_t(0), {0, 0}, {0, 0}, {0, 0} };
-#ifndef TUNER
 static const int pawn_hash_size = 1 << 20;
 __declspec(align(64)) array<GPawnEntry, pawn_hash_size> PawnHash;
-#else
-static const int pawn_hash_size = 1 << 15;
-__declspec(align(64)) GPawnEntry PawnHashOne[pawn_hash_size];
-__declspec(align(64)) GPawnEntry PawnHashTwo[pawn_hash_size];
-GPawnEntry* PawnHash = PawnHashOne;
-#endif
 static const int pawn_hash_mask = pawn_hash_size - 1;
 
 typedef struct
@@ -940,13 +917,7 @@ typedef struct
 	uint8 depth, ex_depth;
 } GPVEntry;
 static const GPVEntry NullPVEntry = { 0, 0, 0, 1, 0, 0, 0, 0, 0 };
-#ifndef TUNER
 static const int pv_hash_size = 1 << 20;
-#else
-static const int pv_hash_size = 1 << 14;
-GPVEntry PVHashOne[pv_hash_size];
-GPVEntry PVHashTwo[pv_hash_size];
-#endif
 static const int pv_cluster_size = 1 << 2;
 static const int pv_hash_mask = pv_hash_size - pv_cluster_size;
 GPVEntry* PVHash = nullptr;
@@ -1113,20 +1084,11 @@ struct GMaterial
 	array<eval_special_t, 2> eval;
 	array<uint8, 2> mul;
 	uint8 phase;
-#ifdef TUNER
-	uint32 generation;
-#endif
 };
 GMaterial* Material;
 static const int FlagSingleBishop[2] = { 1, 2 };
 static const int FlagCallEvalEndgame[2] = { 4, 8 };
-#ifndef TUNER
 array<sint64, 16 * 64> PstVals;
-#else
-packed_t PstOne[16 * 64];
-packed_t PstTwo[16 * 64];
-packed_t* PstVals = PstOne;
-#endif
 sint64& Pst(int piece, int sq)
 {
 	return PstVals[(piece << 6) | sq];
@@ -1146,13 +1108,7 @@ uint16 date;
 
 uint64 Kpk[2][64][64];
 
-#ifndef TUNER
 uint16 HistoryVals[2 * 16 * 64];
-#else
-uint16 HistoryOne[2 * 16 * 64];
-uint16 HistoryTwo[2 * 16 * 64];
-uint16* HistoryVals = HistoryOne;
-#endif
 
 INLINE int* AddMove(int* list, int from, int to, int flags, int score)
 {
@@ -1234,13 +1190,7 @@ INLINE int* AddHistoryP(int* list, int piece, int from, int to, int flags, uint8
 	return AddMove(list, from, to, flags, max(int(p_min) << 16, HistoryP(JoinFlag(flags), piece, from, to)));
 }
 
-#ifndef TUNER
 sint16 DeltaVals[16 * 4096];
-#else
-sint16 DeltaOne[16 * 4096];
-sint16 DeltaTwo[16 * 4096];
-sint16* DeltaVals = DeltaOne;
-#endif
 INLINE sint16& DeltaScore(int piece, int from, int to)
 {
 	return DeltaVals[(piece << 12) | (from << 6) | to];
@@ -1265,13 +1215,7 @@ typedef struct
 	uint16 ref[2];
 	uint16 check_ref[2];
 } GRef;
-#ifndef TUNER
 GRef Ref[16 * 64];
-#else
-GRef RefOne[16 * 64];
-GRef RefTwo[16 * 64];
-GRef* Ref = RefOne;
-#endif
 INLINE GRef& RefPointer(int piece, int from, int to)
 {
 	return Ref[((piece) << 6) | (to)];
@@ -1370,34 +1314,8 @@ constexpr array<int, 5> Phase = { 0, SeeValue[4], SeeValue[6], SeeValue[10], See
 constexpr int PhaseMin = 2 * Phase[3] + Phase[1] + Phase[2];
 constexpr int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 * Phase[3] + 2 * Phase[4];
 
-#ifndef TUNER
-#define V(x) (x)
-#else
-static const int MaxVariables = 1024;
-int var_number, active_vars;
-typedef struct
-{
-	char line[256];
-} GString;
-GString SourceFile[1000], VarName[1000];
-int VarIndex[1000];
-int src_str_num = 0, var_name_num = 0;
-int Variables[MaxVariables];
-uint8 Active[MaxVariables];
-double Var[MaxVariables], Base[MaxVariables], FE[MaxVariables], SE[MaxVariables], Grad[MaxVariables];
-#define V(x) Variables[x]
-double EvalOne[MaxVariables], EvalTwo[MaxVariables];
-int RecordGames = 0;
-char RecordString[65536], PosStr[256], *Buffer;
-FILE* frec;
-#endif
-
 #define ArrayIndex(width, row, column) (((row) * (width)) + (column))
-#ifndef TUNER
 #define Av(x, width, row, column) (x)[ArrayIndex(width, row, column)]
-#else
-#define Av(x, width, row, column) V((I##x) + ArrayIndex(width, row, column))
-#endif
 #define TrAv(x, w, r, c) Av(x, 0, 0, (((r) * (2 * (w) - (r) + 1)) / 2) + (c))
 
 #define Sa(x, y) Av(x, 0, 0, y)
@@ -1508,7 +1426,7 @@ constexpr array<int, 96> PstLinearWeights = {  // tuner: type=array, var=1280, a
 	8, -426, -860,  1,
 	-176, 600, 1376, 0 };
 
-// piece type (6) * type (2: h * v, h * rank) * phase (3)
+// piece type (6) * type (2: h * v, h * rank) * phase (4)
 constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256, active=0
 	56, 16, -24,  1,
 	4, -6, -16,  1,
@@ -1840,8 +1758,6 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 6, 8, 10, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
-constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 
 // tuner: stop
 
@@ -1851,13 +1767,11 @@ constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 
 #define MaxPrN 1
 #ifndef DEBUG
-#ifndef TUNER
 #undef MaxPrN
 #ifndef W32_BUILD
 #define MaxPrN 64  // mustn't exceed 64
 #else
 #define MaxPrN 32  // mustn't exceed 32
-#endif
 #endif
 #endif
 
@@ -2360,9 +2274,6 @@ void init_misc()
 
 void init_magic()
 {
-#ifdef TUNER
-	MagicAttacks = (uint64*)malloc(MAGIC_SIZE * sizeof(uint64));
-#endif
 	for (int i = 0; i < 64; ++i)
 	{
 		int bits = 64 - BShift[i];
@@ -3292,9 +3203,6 @@ void calc_material(int index)
 {
 	array<int, 2> pawns, knights, light, dark, rooks, queens, bishops, major, minor, tot, count, mat, mul, closed;
 	int i = index;
-#ifdef TUNER
-	Material[index].generation = generation;
-#endif
 	queens[White] = i % 3;
 	i /= 3;
 	queens[Black] = i % 3;
@@ -3564,9 +3472,6 @@ void calc_material(int index)
 
 void init_material()
 {
-#ifdef TUNER
-	Material = (GMaterial*)malloc(TotalMat * sizeof(GMaterial));
-#endif
 	memset(Material, 0, TotalMat * sizeof(GMaterial));
 	for (int index = 0; index < TotalMat; ++index) 
 		calc_material(index);
@@ -3575,9 +3480,6 @@ void init_material()
 
 void init_hash()
 {
-#ifdef TUNER
-	return;
-#endif
 	string name = "ROC_HASH_" + to_string(WinParId);
 	sint64 size = hash_size * sizeof(GEntry);
 	int initialized = 0;
@@ -3633,9 +3535,6 @@ void init_hash()
 
 void init_shared()
 {
-#ifdef TUNER
-	return;
-#endif
 	char name[256];
 	DWORD size = SharedPVHashOffset + pv_hash_size * sizeof(GPVEntry);
 	sprintf_s(name, "ROC_SHARED_%d", WinParId);
@@ -4825,7 +4724,7 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		if (int f = FileOf(sq);  T(b & BOutpost[me])
 			&& F(Knight(opp))
 			&& T(Current->patt[me] & b)
-			&& F(Pawn(opp) & PIsolated[f] & Forward[me][RankOf(sq)])
+			&& F((Pawn(opp) | (Pawn(me) & Current->patt[opp])) & PIsolated[f] & Forward[me][RankOf(sq)])
 			&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
 		{
 			uint64 central = FileOf(sq) < 4 ? West[sq] : East[sq];
@@ -4868,7 +4767,7 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 			IncV(EI.score, Ca4(Tactical, TacticalN2B));
 		if (att & EI.area[me])
 			IncV(EI.score, Ca4(KingDefence, KingDefKnight));
-		if (T(b & NOutpost[me]) && F(Pawn(opp) & PIsolated[FileOf(sq)] & Forward[me][RankOf(sq)]))
+		if (T(b & NOutpost[me]) && F((Pawn(opp) | (Pawn(me) & Current->patt[opp])) & PIsolated[FileOf(sq)] & Forward[me][RankOf(sq)]))
 		{
 			IncV(EI.score, Ca4(KnightSpecial, KnightOutpost));
 			if (Current->patt[me] & b)
@@ -4883,10 +4782,13 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 	}
 }
 
+constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 6, 8, 10, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
+constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
+
 template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	POP pop;
-	uint16 cnt = Min<uint16>(10, UUnpack1(EI.king_att[me]));
+	uint16 cnt = Min<uint16>(15, UUnpack1(EI.king_att[me]));
 	NOTICE(EI.score, cnt);
 	uint16 score = UUnpack2(EI.king_att[me]);
 	if (cnt >= 2 && T(Queen(me)))
@@ -4923,7 +4825,7 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	int md = (PHASE[1] * adjusted) / 32;
 	int eg = (PHASE[2] * adjusted) / 32;
 	int cl = (PHASE[3] * adjusted) / 32;
-	IncV(EI.score, Pack4(op, md, eg, cl));
+	IncV(EI.score, 0 * cnt + Pack4(op, md, eg, cl));
 }
 
 template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
@@ -5115,7 +5017,7 @@ template<class POP> void evaluation()
 	Current->threat = (Current->patt[White] & NonPawn(Black)) | (Current->patt[Black] & NonPawn(White));
 	EI.score = Current->pst;
 #ifdef TUNER_DATA
-	explain_pst(EI.score);
+	//explain_pst(EI.score);
 #endif
 	if (F(Current->material & FlagUnusualMaterial))
 		EI.material = &Material[Current->material];
@@ -6581,10 +6483,6 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 		if (LastDepth >= 6)
 #endif
 			check_time(nullptr, 1);
-#ifdef TUNER
-		if (nodes > 64 * 1024 * 1024)
-			longjmp(Jump, 1);
-#endif
 	}
 #endif
 	if (flags & FlagCallEvaluation)
@@ -7119,7 +7017,6 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 	int height = (int)(Current - Data);
 	GSP* Sp = nullptr;
 
-#ifndef TUNER
 	if (nodes > check_node_smp + 0x10)
 	{
 #ifndef W32_BUILD
@@ -7143,7 +7040,6 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 				SET_BIT_64(Smpi->searching, Id);  // BUG, don't know why this is necessary
 		}
 	}
-#endif
 
 	if (depth <= 1)
 		return q_search<me, 0>(init_score(+beta - 1), beta, 1, flags);
@@ -7863,9 +7759,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 		++cnt;
 		if (root)
 		{
-#ifndef TUNER
 			memset(Data + 1, 0, 127 * sizeof(GData));
-#endif
 			move_to_string(move, score_string);
 			if (Print)
 				sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt);
@@ -7962,9 +7856,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 		++cnt;
 		if (root)
 		{
-#ifndef TUNER
 			memset(Data + 1, 0, 127 * sizeof(GData));
-#endif
 			move_to_string(move, score_string);
 			if (Print)
 				sprintf_s(info_string, "info currmove %s currmovenumber %d\n", score_string, cnt);
@@ -8096,10 +7988,8 @@ template <bool me> void root()
 
 	++date;
 	nodes = check_node = check_node_smp = 0;
-#ifndef TUNER
 	if (parent)
 		Smpi->nodes = 0;
-#endif
 	memcpy(Data, Current, sizeof(GData));
 	Current = Data;
 
@@ -8264,9 +8154,7 @@ template <bool me> void root()
 	}
 	for (depth = start_depth; depth < DepthLimit; depth += 2)
 	{
-#ifndef TUNER
 		memset(Data + 1, 0, 127 * sizeof(GData));
-#endif
 		CurrentSI->Early = 1;
 		CurrentSI->Change = CurrentSI->FailHigh = CurrentSI->FailLow = CurrentSI->Singular = 0;
 		if (PVN > 1)
@@ -8319,9 +8207,7 @@ template <bool me> void root()
 					if (depth >= 6)
 #endif
 						check_time(&LastTime, 0);
-#ifndef TUNER
 					memset(Data + 1, 0, 127 * sizeof(GData));
-#endif
 					LastValue = +value;
 					memcpy(BaseSI, CurrentSI, sizeof(GSearchInfo));
 					continue;
@@ -8918,13 +8804,7 @@ void check_time(const int* time, int searching)
 #ifdef TUNER_DATA
 	return;
 #endif
-#ifdef TUNER
-#ifndef TIMING
-	return;
-#endif
-#else
 	while (!Stop && input()) uci();
-#endif
 	if (!Stop)
 	{
 		CurrTime = get_time();
@@ -9558,7 +9438,6 @@ void main(int argc, char* argv[])
 	fprintf(stdout, "Roc\n");
 
 reset_jump:
-#ifndef TUNER
 	if (parent)
 	{
 		if (setjmp(ResetJump))
@@ -9585,7 +9464,6 @@ reset_jump:
 		hash_size = Smpi->hash_size;
 		PrN = Smpi->PrN;
 	}
-#endif
 	if (ResetHash)
 		init_hash();
 	init_search(0);
@@ -9608,71 +9486,6 @@ reset_jump:
 	getchar();
 	exit(0);
 #endif
-
-#ifdef TUNER
-	if (argc >= 2)
-	{
-		if (!memcmp(argv[1], "client", 6))
-			Client = 1;
-		else if (!memcmp(argv[1], "server", 6))
-			Server = 1;
-		if (Client || Server)
-			Local = 0;
-	}
-	fprintf(stdout, Client ? "Client\n" : (Server ? "Server\n" : "Local\n"));
-
-	uint64 ctime;
-	QueryProcessCycleTime(GetCurrentProcess(), &ctime);
-	srand(time(nullptr) + 123 * GetProcessId(GetCurrentProcess()) + ctime);
-	QueryProcessCycleTime(GetCurrentProcess(), &ctime);
-	seed = (uint64)(time(nullptr) + 345 * GetProcessId(GetCurrentProcess()) + ctime);
-	init_openings();
-	init_variables();
-
-	if (Client)
-	{
-#ifdef RECORD_GAMES
-		RecordGames = 1;
-		Buffer = (char*)malloc(16 * 1024 * 1024);
-#endif
-		while (true) get_command();
-	}
-
-	init_pst();
-	init_eval();
-	print_eval();
-
-	// read_list("(-0.24,0.69,-3.56,14.38,-18.97,-9.43,31.93,-42.58,-84.76,-239.60,62.93,83.44,-124.95,25.59,-22.50,152.24,472.44,-652.13,-903.63,-16.63,11.50,-0.02,-202.44,29.65,-2.27,-62.69,-81.95,61.32,-492.11,-51.01,-23.03,-15.79,283.90,-116.64,-4.38,-92.49,-30.59,-48.53,-35.85,15.25,-83.44,-32.20,33.31,-14.71,27.13,215.48,-48.91,-107.82,5.28,-59.32,-9.16,-16.93,-21.26,-21.12,-35.52,-41.67,-35.52,-16.59,21.48,-1.20,-26.27,-23.81,-58.82,-9.36,38.87,-34.02,-10.33,0.07,101.64,11.30,-66.04,-4.39,10.43,-60.66,-6.41,0.68,-15.18,-69.89,-41.54,-84.48,-143.38,-46.16,-3.12,-13.96,31.00,-16.14,-89.96,100.44,-137.64,97.51,-85.03,62.93,78.39,444.37,-143.70,25.65,-74.57,-143.94,-106.03,-128.86,285.08,111.90,-24.94,-104.36,-142.29,-59.11,-92.95,-32.91,-153.55,15.40,-181.39,-35.76,14.98,-5.08,76.49,-80.38,177.51,132.39,-134.36,-6.67,49.81,-260.99,101.53,-41.31,-26.30,418.42,220.09,-127.18,762.99,-117.88,246.62,-203.99,18.52,266.32,290.73,112.16,292.84,127.11,277.25,189.46,214.95,304.06,399.54,-195.77,280.34,351.89,-485.96,-2.82,251.09,38.25,82.39,152.04,53.11,8.04,7.61,-21.45,10.43,-0.53,4.19,-9.26,13.89,14.56,19.18,7.64,-2.16,138.97,6.71,57.43,0.28,56.89,0.92,-9.14,35.31,1.05,8.57,10.12,34.71,0.23,71.71,76.05,153.65,114.23,85.39,1.34,-12.79,26.11,48.42,125.83,147.73,148.27,41.60,42.53,-14.37,6.87,-6.88,-2.23,130.20,22.09,45.46,15.40,13.11,8.80,2.28,2.99,-0.83,-3.11,-0.81,4.40,6.09,6.27,5.79,5.24,-2.88,-0.26,16.45,-2.67,11.20,7.72,6.17,1.23,3.61,0.08,-0.51,-0.25,9.09,2.08,0.69,0.35,13.18,6.69,0.52,1.58,1.56,-0.95,11.40,0.81,-6.78,3.32,-4.89,8.87,-5.50,31.67,0.30,2.94,0.18,5.42,14.11,33.51,28.03,32.65,21.20,11.16,48.32,14.90,4.31,2.41,2.18,2.69,0.78,0.05,4.27,1.51,17.77,7.82,5.21,1.29,0.15,4.35,-0.12,-0.06,-0.25,3.24,5.37,5.85,14.36,-1.62,9.45,0.47,4.07,5.19,26.33,2.20,20.31,37.81,1.02,82.85,56.61,23.77,19.82,-3.83,47.50,25.50)",
-	// Base, active_vars);
-	// eval_to_cpp("gd.cpp", Base);
-
-	save_list(Base);
-
-	// pgn_stat();
-#ifdef RECORD_GAMES
-	match_los(Base, Base, 4 * 64 * 1024, 512, 7, 0.0, 0.0, 0.0, 0.0, MatchInfo, 1);
-#endif
-
-	double NormalizedVar[MaxVariables];
-	NormalizeVar(Base, Var, 2, 256, 10.0, 20.0, NormalizedVar);
-	double_to_double(Var, NormalizedVar, active_vars);
-	// read_list("(4.10,3.41,7.24,11.13,44.59,41.51,67.17,126.38,183.25,328.40,95.55,442.95,110.04,439.85,199.82,506.49,1000.00,531.27,1000.00,94.70,40.64,96.88,182.65,154.15,152.52,490.96,231.09,605.53,1000.00,36.49,55.68,30.62,35.70,21.40,18.08,38.61,48.23,17.96,33.78,25.56,31.86,16.40,22.84,18.78,35.36,26.99,27.03,27.50,41.10,24.01,21.96,28.26,24.41,19.37,21.28,49.80,30.27,10.66,12.25,43.65,28.65,35.98,75.89,26.88,47.37,8.62,37.29,22.31,60.45,28.59,18.53,100.00,54.22,9.86,10.63,83.68,25.20,124.05,121.47,93.76,81.23,48.30,56.78,56.15,67.16,78.24,169.91,68.80,114.34,43.30,55.89,95.85,122.56,102.36,77.96,112.11,88.70,53.74,76.44,47.93,46.64,70.83,57.70,137.88,108.52,125.92,79.97,33.71,49.84,44.58,192.99,129.64,271.09,79.00,145.01,69.40,193.09,156.78,186.59,391.22,150.93,346.72,80.75,230.85,128.81,46.74,49.53,19.18,39.71,27.84,39.56,60.18,55.76,40.46,31.10,34.48,41.23,25.69,22.04,14.65,27.90,31.79,85.75,49.45,100.00,48.27,25.91,60.07,62.46)",
-	// Var, active_vars);
-
-	GD(Base, Var, 7, 5.0, 1.0, 50.0, 16 * 1024, 16 * 1024, 3.0, 2.0, 2.0, 0.0);
-
-	double New[1024];
-	read_list(
-		"(5.07,27.02,27.37,15.16,28.60,14.62,40.93,8.61,14.02,172.58,178.09,180.83,457.03,128.24,172.66,178.21,343."
-		"44,1281.53,45.85)",
-		New, active_vars);
-	for (i = 7; i < 64; ++i)
-	{
-		fprintf(stdout, "\ndepth = %d/%d: \n", i, i + 1);
-		match_los(New, Base, 4 * 1024, 128, i, 3.0, 3.0, 0.0, 0.0, MatchInfo, 1);
-	}
-#endif
-
 	while (true) uci();
 }
 #else
