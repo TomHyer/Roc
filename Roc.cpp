@@ -1495,14 +1495,14 @@ array<sint16, 4> StormFree;
 constexpr array<int, 3> PasserOffset = { -2, 2, 4 };
 namespace PasserWeights
 {
-	constexpr array<int, 12> General = { -5,73,3, 14,19,61, 17,-9,40, -5,27,-16 };
-	constexpr array<int, 12> Blocked = { -1,140,18, 30,79,117, 14,87,15, 19,57,-50 };
-	constexpr array<int, 12> Free = { 29,239,-126, 67,130,269, 110,179,397, 3,1,13 };
-	constexpr array<int, 12> Supported = { -2,188,-17, 27,110,103, 53,65,187, -4,18,-16 };
-	constexpr array<int, 12> Protected = { 69,-113,223, 53,-24,196, 37,52,118, -55,157,-176 };
-	constexpr array<int, 12> Connected = { 11,134,48, 66,-28,219, 37,97,101, 107,-256,366 };
-	constexpr array<int, 12> Outside = { -18,169,-37, 11,87,45, 0,75,-40, 13,-61,44 };
-	constexpr array<int, 12> Candidate = { -22,75,-5, 0,29,42, 27,12,25, -8,78,-26 };
+	constexpr array<int, 12> General = { -5,73,17, 14,19,91, 17,-9,60, -5,27,-16 };
+	constexpr array<int, 12> Blocked = { -1,140,49, 30,79,175, 14,87,38, 19,57,-50 };
+	constexpr array<int, 12> Free = { 29,239,-100, 67,130,403, 110,179,594, 3,1,13 };
+	constexpr array<int, 12> Supported = { -2,188,17, 27,110,154, 53,65,280, -4,18,-16 };
+	constexpr array<int, 12> Protected = { 69,-113,334, 53,-24,294, 37,52,177, -55,157,-176 };
+	constexpr array<int, 12> Connected = { 11,134,76, 66,-28,328, 37,97,151, 107,-256,366 };
+	constexpr array<int, 12> Outside = { -18,169,-14, 11,87,73, 0,75,-33, 13,-61,44 };
+	constexpr array<int, 12> Candidate = { -22,75,5, 0,29,63, 27,12,38, -8,78,-26 };
 	constexpr array<int, 12> Clear = { -3,-13,-12, 5,-30,13, -2,-10,-2, -1,-1,-1 };
 }
 
@@ -4787,6 +4787,7 @@ constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 
 template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
+	static constexpr array<int, 4> PHASE = { 24, 20, 3, -5 };
 	POP pop;
 	uint16 cnt = Min<uint16>(15, UUnpack1(EI.king_att[me]));
 	NOTICE(EI.score, cnt);
@@ -4820,7 +4821,6 @@ template <bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	static constexpr array<int, 4> PHASE = { 24, 20, 3, -5 };
 	int op = ((PHASE[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 32;
 	int md = (PHASE[1] * adjusted) / 32;
 	int eg = (PHASE[2] * adjusted) / 32;
@@ -6641,7 +6641,7 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 
 template <bool me, bool pv> score_t q_evasion(score_t alpha, score_t beta, int depth, int flags)
 {
-	int i, pext, move, cnt, hash_move, hash_depth;
+	int i, move, cnt, hash_move, hash_depth;
 	score_t value, score;
 	int* p;
 	GEntry* Entry;
@@ -6688,11 +6688,9 @@ template <bool me, bool pv> score_t q_evasion(score_t alpha, score_t beta, int d
 	Current->current = Current->moves;
 	if (F(Current->moves[0]))
 		return score;
-	if (F(Current->moves[1]))
-		pext = 1;
-	else
+	int pext = F(Current->moves[1]);
+	if (!pext)
 	{
-		pext = 0;
 		Current->ref[0] = RefM(Current->move).check_ref[0];
 		Current->ref[1] = RefM(Current->move).check_ref[1];
 		mark_evasions(Current->moves);
@@ -7389,7 +7387,7 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 
 template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth, int flags)
 {
-	int pext, move, cnt, hash_depth, hash_move, new_depth, ext, moves_to_play;
+	int move, cnt, hash_depth, hash_move, new_depth, ext, moves_to_play;
 	score_t value, score, hash_value = -MateValue;
 	int height = (int)(Current - Data);
 
@@ -7419,9 +7417,10 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 
 	hash_depth = -1;
 	hash_move = flags & 0xFFFF;
+	int pext = 0;
 	if (exclusion)
 	{
-		cnt = pext = 0;
+		cnt = 0;
 		score = beta - 1;
 		(void)gen_evasions<me>(Current->moves);
 		if (F(Current->moves[0]))
@@ -7501,9 +7500,10 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 		(void)gen_evasions<me>(Current->moves);
 		if (F(Current->moves[0]))
 			return score;
-		pext = 0;
 		if (F(Current->moves[1]))
 			pext = 2;
+		else if (F(Current->moves[2]))
+			pext = 1;
 
 		if (T(hash_move))
 		{
@@ -7607,7 +7607,7 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 
 template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int depth, int flags)
 {
-	int move, cnt, pext = 0, ext, do_split = 0, sp_init = 0, singular = 0, played = 0, new_depth, hash_move,
+	int move, cnt, ext, do_split = 0, sp_init = 0, singular = 0, played = 0, new_depth, hash_move,
 		hash_depth, old_best, ex_depth = 0, start_knodes = (int)(nodes >> 10);
 	score_t value, margin, hash_value = -MateValue, old_alpha = alpha, ex_value(EvalValue);
 	GSP* Sp = nullptr;
@@ -7721,6 +7721,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 			hash_value = value;
 		}
 	}
+	int pext = 0;
 	if (F(root) && IsCheck(me))
 	{
 		Current->mask = Filled;
@@ -7731,6 +7732,8 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 		alpha = max(alpha, mated);
 		if (F(Current->moves[1]))
 			pext = 2;
+		else if (F(Current->moves[2]))
+			pext = 1;
 	}
 
 	cnt = 0;
