@@ -1443,15 +1443,16 @@ constexpr array<int, 48> PstQuadMixedWeights = {  // tuner: type=array, var=256,
 };
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1241, 840, 616, -1, 2100, 891, 89, -155, 23, 251, -128, 320 };
-constexpr array<int, 12> MobCoeffsBishop = { 1444, 732, 548, -1, 1787, 1684, 1594, -440, -55, 133, -32, 1023 };
-constexpr array<int, 12> MobCoeffsRook = { 1054, 842, 638, 42, -565, 248, 1351, 7, -13, -4, -2, 173 };
-constexpr array<int, 12> MobCoeffsQueen = { 597, 786, 1117, 36, 1578, 324, -1091, 28, 2, -44, -40, 252 };
+constexpr array<int, 12> MobCoeffsKnight = { 108, 57, 26, -5, 57, 36, 24, -1, 1, 10, -5, 12 };
+constexpr array<int, 12> MobCoeffsBishop = { 106, 76, 67, -15, 59, 32, 25, -2, 1, 5, -1, 40 };
+constexpr array<int, 12> MobCoeffsRook = { 28, 39, 61, 2, 41, 33, 28, 2, -1, 1, -1, 7 };
+constexpr array<int, 12> MobCoeffsQueen = { 66, 38, 24, 2, 24, 31, 45, 1, 1, 1, -1, 10 };
 
 constexpr int N_LOCUS = 22;
 
 array<array<sint64, 9>, 2> MobKnight;
-array<array<sint64, 15>, 2> MobBishop, MobRook;
+array<array<sint64, 14>, 2> MobBishop;
+array<array<sint64, 15>, 2> MobRook;
 array<array<sint64, 28>, 2> MobQueen;
 array<uint64, 64> KingLocus;
 
@@ -1717,8 +1718,8 @@ enum
 };
 constexpr array<int, 12> BishopSpecial = { // tuner: type=array, var=20, active=0
 	-1, 12, 12, 12,
-	115, 37, 1, -9,
-	117, 40, -1, -25
+	100, 33, 1, -25,
+	130, 44, 1, -25
 };
 
 constexpr array<uint64, 2> NOutpost = { 0x00187E7E3C000000ull, 0x0000003C7E7E1800ull };
@@ -2592,11 +2593,16 @@ template<class T_> void init_mobility
 	(const array<int, 12>& coeffs,
 	 T_* mob)
 {
-	// ordering of coeffs is (linear*4, log*4, locus*4)
+	const size_t n = (*mob)[1].size() - 1;
+	const double c1 = n * log(n) - (n - 1) * log(n - 1);
+	const double c2 = 1.0 - 1.0 / c1;
+	// ordering of coeffs is (d(first)*4, d(last)*4, locus*4)
 	auto m1 = [&](int phase, int pop)->sint16
 	{
-		double val = pop * (coeffs[phase] - coeffs[phase + 8]) + log(1.0 + pop) * coeffs[phase + 4];
-		return static_cast<sint16>(val / 64.0);
+		double d1 = coeffs[phase], d2 = coeffs[phase + 4], dLocus = coeffs[phase + 8];
+		double p = pow(1 + log(d2 / d1) / (c1 * c2), c2);	// reproduces the desired ratio
+		double val = d1 * pow(pop, p) - N_LOCUS * pop * dLocus / 64;
+		return static_cast<sint16>(0.4 * val);	// coeffs are in millipawns
 	};
 	auto m2 = [&](int pop)->sint64
 	{
@@ -2604,7 +2610,7 @@ template<class T_> void init_mobility
 	};
 	auto l1 = [&](int phase, int pop)->sint16
 	{
-		return static_cast<sint16>(pop * coeffs[phase + 8] / double(N_LOCUS));
+		return static_cast<sint16>(0.4 * pop * coeffs[phase + 8]);	// coeffs are in millipawns
 	};
 	auto l2 = [&](int pop)->sint64
 	{
@@ -6186,9 +6192,10 @@ template<bool me> int* gen_quiet_moves(int* list)
 	{
 		int to = lsb(v);
 		int passer = T(HasBit(Current->passer, to - Push[me]));
+		int leading = passer && F(Current->passer & Pawn(me) & Forward[me][RankOf(to - Push[me])]);
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
 			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passer ? FlagCastling : pFlag(to + Push[me]));
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to), Square(OwnRank<me>(to) + 4 * passer - 2));
+		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to), leading ? 128 : 0);
 	}
 
 	for (u = Knight(me); T(u); Cut(u))
