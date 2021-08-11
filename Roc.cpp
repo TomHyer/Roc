@@ -1277,7 +1277,7 @@ static const int TimeNoPVSCOMargin = 60;
 static const int TimeNoChangeMargin = 70;
 static const int TimeRatio = 120;
 static const int PonderRatio = 120;
-static const int MovesTg = 30;
+static const int MovesTg = 36;
 static const int InfoLag = 5000;
 static const int InfoDelay = 1000;
 sint64 StartTime, InfoTime, CurrTime;
@@ -1505,6 +1505,7 @@ namespace PasserWeights
 	constexpr array<int, 12> Outside = { -18,169,-14, 11,87,73, 0,75,-33, 13,-61,44 };
 	constexpr array<int, 12> Candidate = { -22,75,5, 0,29,63, 27,12,38, -8,78,-26 };
 	constexpr array<int, 12> Clear = { -3,-13,-12, 5,-30,13, -2,-10,-2, -1,-1,-1 };
+	constexpr array<int, 12> QPGame = { 0,0,0, 0,0,0, -40,60,-20, 0,0,0 };
 }
 
 
@@ -1533,15 +1534,10 @@ namespace Values
 }
 
 array<uint8, 16> LogDist;
-array<sint64, 8> PasserGeneral;
-array<sint64, 8> PasserBlocked;
-array<sint64, 8> PasserFree;
-array<sint64, 8> PasserSupported;
-array<sint64, 8> PasserProtected;
-array<sint64, 8> PasserConnected;
-array<sint64, 8> PasserOutside;
-array<sint64, 8> PasserCandidate;
-array<sint64, 8> PasserClear;
+namespace Passer
+{
+	array<sint64, 8> General, Blocked, Free, Supported, Protected, Connected, Outside, Candidate, Clear, QPGame;
+}
 array<sint16, 8> PasserAtt;
 array<sint16, 8> PasserDef;
 array<sint16, 8> PasserAttLog;
@@ -2677,15 +2673,16 @@ void init_eval()
 		StormFree[i] = ((Sa(StormQuad, StormFreeMul) * i * i) + (Sa(StormLinear, StormFreeMul) * (i + 1))) / 100;
 	}
 
-	PasserGeneral = init_passer(PasserWeights::General);
-	PasserBlocked = init_passer(PasserWeights::Blocked);
-	PasserFree = init_passer(PasserWeights::Free);
-	PasserSupported = init_passer(PasserWeights::Supported);
-	PasserProtected = init_passer(PasserWeights::Protected);
-	PasserConnected = init_passer(PasserWeights::Connected);
-	PasserOutside = init_passer(PasserWeights::Outside);
-	PasserCandidate = init_passer(PasserWeights::Candidate);
-	PasserClear = init_passer(PasserWeights::Clear);
+	Passer::General = init_passer(PasserWeights::General);
+	Passer::Blocked = init_passer(PasserWeights::Blocked);
+	Passer::Free = init_passer(PasserWeights::Free);
+	Passer::Supported = init_passer(PasserWeights::Supported);
+	Passer::Protected = init_passer(PasserWeights::Protected);
+	Passer::Connected = init_passer(PasserWeights::Connected);
+	Passer::Outside = init_passer(PasserWeights::Outside);
+	Passer::Candidate = init_passer(PasserWeights::Candidate);
+	Passer::Clear = init_passer(PasserWeights::Clear);
+	Passer::QPGame = init_passer(PasserWeights::QPGame);
 }
 
 // all these special-purpose endgame evaluators
@@ -4381,7 +4378,7 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 		else
 		{
 			if (open && (F(Pawn(opp) & PIsolated[file]) || pop(Pawn(me) & PIsolated[file]) >= pop(Pawn(opp) & PIsolated[file])))
-				IncV(PEI.score, PasserCandidate[rrank]);  // IDEA: more precise pawn counting for the case of, say,
+				IncV(PEI.score, Passer::Candidate[rrank]);  // IDEA: more precise pawn counting for the case of, say,
 														  // white e5 candidate with black pawn on f5 or f4...
 		}
 
@@ -4407,20 +4404,25 @@ template <bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPaw
 		if (open && F(PIsolated[file] & Forward[me][rank] & Pawn(opp)))
 		{
 			PawnEntry->passer[me] |= (uint8)(1 << file);
-			if (rrank <= 2)
-				continue;
-			IncV(PEI.score, PasserGeneral[rrank]);
-			// IDEA: average the distance with the distance to the promotion square? or just use the latter?
-			int dist_att = Dist(PEI.king[opp], sq + Push[me]);
-			int dist_def = Dist(PEI.king[me], sq + Push[me]);
-			int value = dist_att * PasserAtt[rrank] + LogDist[dist_att] * PasserAttLog[rrank]
-				- dist_def * PasserDef[rrank] - LogDist[dist_def] * PasserDefLog[rrank];  // IDEA -- incorporate side-to-move in closer-king check?
-			// IDEA -- scale down rook pawns?
-			IncV(PEI.score, Pack2(0, value / 256));
+			if (Queen(me))
+				if (uint64 nonQ = NonPawnKing(me) ^ Queen(me); !Multiple(nonQ) && Multiple(Pawn(opp) | Queen(opp)))
+					IncV(PEI.score, (nonQ ? 1 : 2) * Passer::QPGame[rrank]);
+			IncV(PEI.score, Passer::General[rrank]);
 			if (PEI.patt[me] & b)
-				IncV(PEI.score, PasserProtected[rrank]);
+				IncV(PEI.score, Passer::Protected[rrank]);
 			if (F(Pawn(opp) & West[file]) || F(Pawn(opp) & East[file]))
-				IncV(PEI.score, PasserOutside[rrank]);
+				IncV(PEI.score, Passer::Outside[rrank]);
+
+			if (rrank > 2)
+			{
+				// IDEA: average the distance with the distance to the promotion square? or just use the latter?
+				int dist_att = Dist(PEI.king[opp], sq + Push[me]);
+				int dist_def = Dist(PEI.king[me], sq + Push[me]);
+				int value = dist_att * PasserAtt[rrank] + LogDist[dist_att] * PasserAttLog[rrank]
+					- dist_def * PasserDef[rrank] - LogDist[dist_def] * PasserDefLog[rrank];  // IDEA -- incorporate side-to-move in closer-king check?
+				// IDEA -- scale down rook pawns?
+				IncV(PEI.score, Pack2(0, value / 256));
+			}
 		}
 	}
 	if (!((kf * kr) % 7))
@@ -4851,12 +4853,12 @@ template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 		NOTICE(EI.score, rank);
 
 		if (!PieceAt(sq + Push[me]))
-			IncV(EI.score, PasserBlocked[rank]);
+			IncV(EI.score, Passer::Blocked[rank]);
 		uint64 way = PWay[me][sq];
 		int connected = 0, supported = 0, hooked = 0, unsupported = 0, free = 0;
 		if (!(way & Piece(opp)))
 		{
-			IncV(EI.score, PasserClear[rank]);
+			IncV(EI.score, Passer::Clear[rank]);
 			if (PWay[opp][sq] & Major(me))
 			{
 				int square = NB<opp>(PWay[opp][sq] & Major(me));
@@ -4876,17 +4878,17 @@ template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 					++connected;
 			}
 			if (connected)
-				IncV(EI.score, PasserConnected[rank]);
+				IncV(EI.score, Passer::Connected[rank]);
 			if (!hooked && !(Current->att[opp] & way))
 			{
-				IncV(EI.score, PasserFree[rank]);
+				IncV(EI.score, Passer::Free[rank]);
 				free = 1;
 			}
 			else
 			{
 				uint64 attacked = Current->att[opp] | (hooked ? way : 0);
 				if (supported || (!hooked && connected) || (!(Major(me) & way) && !(attacked & (~Current->att[me]))))
-					IncV(EI.score, PasserSupported[rank]);
+					IncV(EI.score, Passer::Supported[rank]);
 				else
 					unsupported = 1;
 			}
@@ -8577,7 +8579,7 @@ void get_time_limit(char string[])
 {
 	const char* ptr;
 	int i, time, inc, wtime, btime, winc, binc, moves, pondering, movetime = 0;
-	double exp_moves = MovesTg - 1;
+	double t_ratio;
 	char* strtok_context = nullptr;
 
 	Infinite = 1;
@@ -8677,11 +8679,13 @@ void get_time_limit(char string[])
 	{
 		time = wtime;
 		inc = winc;
+		t_ratio = (wtime + 5 * winc + 1) / (btime + 5 * binc + 1);
 	}
 	else
 	{
 		time = btime;
 		inc = binc;
+		t_ratio = (btime + 5 * binc + 1) / (wtime + 5 * winc + 1);
 	}
 #ifdef CPU_TIMING
 	if (CpuTiming)
@@ -8695,18 +8699,19 @@ void get_time_limit(char string[])
 	if (moves)
 		moves = Max(moves - 1, 1);
 	int time_max = Max(time - Min(1000, time / 2), 0);
-	double nmoves;
+	double nmoves = MovesTg - 1;
 	if (moves)
-		nmoves = moves;
+		nmoves = min<double>(nmoves, moves);
 	else
 	{
-		nmoves = (MovesTg - 1);
 		if (Current->ply > 40)
 			nmoves += Min(Current->ply - 40, (100 - Current->ply) / 2);
-		exp_moves = nmoves;
 	}
-	TimeLimit1 = Min(time_max, static_cast<int>((time_max + (Min(exp_moves, nmoves) * inc)) / Min(exp_moves, nmoves)));
-	TimeLimit2 = Min(time_max, static_cast<int>((time_max + (Min(exp_moves, nmoves) * inc)) / Min(3.0, Min(exp_moves, nmoves))));
+	if (t_ratio > 1.0)	// opponent had a long think
+		nmoves *= 1.0 - 0.5 * Square((t_ratio - 1.0) / t_ratio);
+
+	TimeLimit1 = Min(time_max, static_cast<int>((time_max + (nmoves * inc)) / max<double>(moves, nmoves)));
+	TimeLimit2 = Min(time_max, static_cast<int>((time_max + (nmoves * inc)) / min(3.0, nmoves)));
 	TimeLimit1 = Min(time_max, (TimeLimit1 * TimeRatio) / 100);
 	if (Ponder)
 		TimeLimit1 = (TimeLimit1 * PonderRatio) / 100;
