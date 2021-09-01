@@ -6984,7 +6984,7 @@ INLINE score_t RazoringThreshold(score_t score, int depth, int height)
 template<int PV = 0> struct LMR_
 {
 	const double scale_;
-	LMR_(int depth, bool no_hash) : scale_((no_hash ? 0.15 : 0.11) + 0.001 * depth) {}
+	LMR_(int depth, bool no_hash) : scale_((no_hash ? 0.135 : 0.095) + 0.0015 * depth) {}
 	INLINE int operator()(int cnt) const
 	{
 		return cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt)))))) - PV : 0;
