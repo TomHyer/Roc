@@ -611,7 +611,6 @@ constexpr sint16 FailLoDelta = 27;
 constexpr sint16 FailHiDelta = 24;
 constexpr int InitiativeConst = 2 * CP_SEARCH;
 constexpr int InitiativePhase = 2 * CP_SEARCH;
-constexpr sint16 FutilityThreshold = 50 * CP_SEARCH;
 
 #ifdef EXPLAIN_EVAL
 FILE* fexplain;
@@ -1951,7 +1950,6 @@ template <bool me> void gen_root_moves();
 template <bool me> int* gen_captures(int* list);
 template <bool me> int* gen_evasions(int* list);
 void mark_evasions(int* list);
-template <bool me> int* gen_quiet_moves(int* list);
 template <bool me> int* gen_checks(int* list);
 template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int depth, int flags);
 template <bool me, bool pv> score_t q_evasion(score_t alpha, score_t beta, int depth, int flags);
@@ -3799,16 +3797,21 @@ void get_board(const char fen[])
 	setup_board();
 }
 
-INLINE GEntry* probe_hash()
+INLINE GEntry* probe_hash(uint64 key)
 {
-	GEntry* start = Hash + (High32(Current->key) & hash_mask);
+	GEntry* start = Hash + (High32(key) & hash_mask);
 	for (GEntry* Entry = start; Entry < start + 4; ++Entry)
-		if (Low32(Current->key) == Entry->key)
+		if (Low32(key) == Entry->key)
 		{
 			Entry->date = date;
 			return Entry;
 		}
 	return nullptr;
+}
+
+INLINE GEntry* probe_hash()
+{
+	return probe_hash(Current->key);
 }
 
 INLINE GPVEntry* probe_pv_hash()
@@ -3957,33 +3960,67 @@ template <bool me> bool draw_in_pv()
 	return false;
 }
 
+// clang-format off
+static constexpr array<uint8, 64> UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
+	0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	0xFF ^ CanCastle_ooo, 0xFF, 0xFF, 0xFF,
+	0xFF ^ (CanCastle_oo | CanCastle_ooo), 0xFF, 0xFF, 0xFF ^ CanCastle_oo };
+// clang-format on
+
+template<bool me> uint64 NextKey(int move)
+{
+	int to = To(move);
+	int capture = PieceAt(to);
+	int from = From(move);
+	int piece = PieceAt(from);
+	const auto& pKey = PieceKey[piece];
+	auto nextCastle = Current->castle_flags & UpdateCastling[to] & UpdateCastling[from];
+	uint64 retval = Current->key ^ pKey[to] ^ pKey[from] ^ CastleKey[Current->castle_flags] ^ CastleKey[nextCastle];
+	if (piece == IPawn[me] && IsPromotion(move))
+		retval ^= pKey[to] ^ PieceKey[Promotion<me>(move)][to];
+	if (Current->ep_square)
+		retval ^= EPKey[FileOf(Current->ep_square)];
+	if (T(capture))
+	{
+		retval ^= PieceKey[capture][to];
+	}
+	else if (piece == IPawn[me])
+	{
+		if (IsEP(move))
+			retval ^= PieceKey[IPawn[opp]][to ^ 8];
+		else if ((to ^ from) == 16 && T(PAtt[me][(to + from) >> 1] & Pawn(opp)))
+			retval ^= EPKey[FileOf(to)];
+	}
+	else if (IsCastling(piece, move))
+	{
+		int rold = to + ((to & 4) ? 1 : -2);
+		int rnew = to + ((to & 4) ? -1 : 1);
+		retval ^= PieceKey[IRook[me]][rnew] ^ PieceKey[IRook[me]][rold];
+	}
+
+	retval ^= TurnKey;
+	return retval;
+}
+
 template <bool me> void do_move(int move)
 {MOVING 
-	// clang-format off
-	static constexpr array<uint8, 64> UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
-		0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF ^ CanCastle_ooo, 0xFF, 0xFF, 0xFF,
-		0xFF ^ (CanCastle_oo | CanCastle_ooo), 0xFF, 0xFF, 0xFF ^ CanCastle_oo };
-	// clang-format on
-
 	GEntry* Entry;
 	GPawnEntry* PawnEntry;
-	int from, to, piece, capture;
 	GData* Next;
 	uint64 u, mask_from, mask_to;
 
-	to = To(move);
+	int to = To(move);
 	Next = Current + 1;
 	Next->ep_square = 0;
-	capture = PieceAt(to);
-	from = From(move);
-	piece = PieceAt(from);
+	int capture = PieceAt(to);
+	int from = From(move);
+	int piece = PieceAt(from);
 	PieceAt(from) = 0;
 	PieceAt(to) = piece;
 	Next->piece = piece;
@@ -4229,6 +4266,12 @@ void undo_null()
 {
 	--Current;
 	--sp;
+}
+
+template<bool me> inline GEntry* peek_hash(int move)
+{
+	uint64 nextKey = NextKey<me>(move);
+	return probe_hash(nextKey);
 }
 
 typedef struct
@@ -5479,7 +5522,7 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 	if (HasBit(Current->passer, from))
 	{
 		int rank = OwnRank(me, from);
-		if (rank >= 5 && depth < 16)
+		if (rank >= 4 && depth < 12)
 			return pv ? 2 : 1;
 	}
 	return 0;
@@ -5545,7 +5588,129 @@ INLINE bool is_killer(uint16 move)
 	return false;
 }
 
-template <bool me> void gen_next_moves(int depth)
+struct HistScorer_
+{
+	INLINE int* AddP(int* list, int piece, int from, int to, int flags)
+	{
+		return AddHistoryP(list, piece, from, to, flags);
+	}
+};
+
+struct HashScorer_
+{
+	score_t beta_;
+	int depth_, histWidth_;
+	HashScorer_(score_t beta, int depth) : beta_(beta), depth_(depth), histWidth_(depth * CP_SEARCH) {}
+
+	inline int* AddP(int* list, int piece, int from, int to, int flags)
+	{
+		constexpr int PER_DEPTH = 5 * CP_SEARCH;
+		constexpr int WIDTH = 200 * CP_SEARCH;
+		int move = (from << 6) | to | flags;
+		int score = HistoryMerit(HistoryScore(JoinFlag(flags), piece, from, to));
+		if (GEntry* hash = Current->turn ? peek_hash<Black>(move) : peek_hash<White>(move))
+		{
+			double high = hash && T(hash->high_depth) ? hash->high + PER_DEPTH * max(0, depth_ - hash->high_depth) : +beta_ + WIDTH;
+			double low = hash && T(hash->low_depth) ? hash->low - PER_DEPTH * max(0, depth_ - hash->low_depth) : +beta_ - WIDTH;
+			if (low >= beta_)
+				score = max(score, min(127, 64 + hash->low_depth));
+			else if (high <= beta_)
+				score = min(score, min(63, hash->high_depth));
+			else
+			{
+				double hashScore = (beta_ - low) * 127.0 / (high - low);
+				score = static_cast<int>(((histWidth_ * hashScore + (high - low) * score)) / (histWidth_ + high - low));
+			}
+		}
+		return AddMove(list, from, to, flags, score << 16);
+	}
+};
+
+template<bool me, class SCORE> int* gen_quiet_moves(int* list, SCORE score)
+{
+	uint64 u, v;
+	auto safe3 = [&](int loc) { return HasBit(Current->att[opp] & ~Current->att[me], loc) ? 0 : FlagCastling; };
+
+	uint64 occ = PieceAll();
+	if (me == White)
+	{
+		if (can_castle(occ, me, true))
+			list = score.AddP(list, IKing[White], 4, 6, FlagCastling);
+		if (can_castle(occ, me, false))
+			list = score.AddP(list, IKing[White], 4, 2, FlagCastling);
+	}
+	else
+	{
+		if (can_castle(occ, me, true))
+			list = score.AddP(list, IKing[Black], 60, 62, FlagCastling);
+		if (can_castle(occ, me, false))
+			list = score.AddP(list, IKing[Black], 60, 58, FlagCastling);
+	}
+
+	uint64 free = ~occ;
+	auto pTarget = PawnJoins<me>();
+	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
+	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
+	{
+		int to = lsb(v);
+		int passer = T(HasBit(Current->passer, to - Push[me]));
+		int leading = passer && F(Current->passer & Pawn(me) & Forward[me][RankOf(to - Push[me])]);
+		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
+			list = score.AddP(list, IPawn[me], to - Push[me], to + Push[me], passer ? FlagCastling : pFlag(to + Push[me]));
+		list = score.AddP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to));
+	}
+
+	for (u = Knight(me); T(u); Cut(u))
+	{
+		int from = lsb(u);
+		for (v = free & NAtt[from]; T(v); Cut(v))
+		{
+			int to = lsb(v);
+			bool dt = !!(NAtt[to] & Major(opp)) ^ !!(NAtt[from] & Major(opp)) ^ HasBit(Current->patt[opp], to) ^ HasBit(Current->patt[opp], from);
+			list = score.AddP(list, IKnight[me], from, to, dt ? FlagCastling : 0);
+		}
+	}
+
+	for (u = Bishop(me); T(u); Cut(u))
+	{
+		int from = lsb(u);
+		int which = HasBit(LightArea, from) ? ILight[me] : IDark[me];
+		for (v = free & BishopAttacks(from, occ); T(v); Cut(v))
+		{
+			int to = lsb(v);
+			int flag = BMask[to] & (PAtt[opp][to] & Pawn(me) ? Major(opp) : Rook(opp)) ? FlagCastling : 0;
+			list = score.AddP(list, which, from, to, flag);
+		}
+	}
+
+	for (u = Rook(me); T(u); Cut(u))
+	{
+		int from = lsb(u);
+		for (v = free & RookAttacks(from, occ); T(v); Cut(v))
+		{
+			int to = lsb(v);
+			int flag = (PAtt[opp][to] & Pawn(me)) && (RMask[to] & Queen(opp)) ? FlagCastling : 0;
+			list = score.AddP(list, IRook[me], from, to, flag);
+		}
+	}
+	for (u = Queen(me); T(u); Cut(u))
+	{
+		//uint64 qTarget = NAtt[lsb(King(opp))];	// try to get next to this
+		int from = lsb(u);
+		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
+		{
+			int to = lsb(v);
+			list = score.AddP(list, IQueen[me], from, to, 0);	// KAtt[to] & qTarget ? FlagCastling : 0);
+		}
+	}
+	int kFlag = T(Current->xray[opp]) ? FlagCastling : 0;
+	for (v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v))
+		list = score.AddP(list, IKing[me], lsb(King(me)), lsb(v), kFlag);
+
+	return NullTerminate(list);
+}
+
+template <bool me> void gen_next_moves(int depth, score_t beta)
 {
 	int* p, *q, *r;
 	Current->gen_flags &= ~FlagSort;
@@ -5564,15 +5729,16 @@ template <bool me> void gen_next_moves(int depth)
 		for (q = r - 1, p = Current->moves; q >= p;)
 		{
 			int move = (*q) & 0xFFFF;
-			if (!see<me>(move, 0, SeeValue))
+			bool isGood = see<me>(move, 0, SeeValue);
+			if (isGood)
+				--q;
+			else
 			{
 				int next = *p;
 				*p = *q;
 				*q = next;
 				++p;
 			}
-			else
-				--q;
 		}
 		Current->start = p;
 		Current->current = p;
@@ -5592,7 +5758,7 @@ template <bool me> void gen_next_moves(int depth)
 		*p = 0;
 		return;
 	case s_quiet:
-		p = gen_quiet_moves<me>(Current->start);
+		p = gen_quiet_moves<me>(Current->start, HistScorer_());
 		Current->gen_flags |= FlagSort;
 		Current->current = Current->start;
 		for (auto q = Current->start; *q; ++q)
@@ -5624,7 +5790,7 @@ template <bool me> void gen_next_moves(int depth)
 	}
 }
 
-template <bool me, bool root> int get_move(int depth)
+template <bool me, bool root> int get_move(int depth, score_t beta)
 {
 	int move;
 
@@ -5641,7 +5807,7 @@ template <bool me, bool root> int get_move(int depth)
 			Current->stage++;
 			if ((1 << Current->stage) & StageNone)
 				return 0;
-			gen_next_moves<me>(depth);
+			gen_next_moves<me>(depth, beta);
 			continue;
 		}
 		if (Current->gen_flags & FlagSort)
@@ -5927,7 +6093,7 @@ template <bool me> void gen_root_moves()
 	p = &RootList[0];
 	Current->current = Current->moves;
 	Current->moves[0] = 0;
-	while (int move = get_move<me, 0>(0))
+	while (int move = get_move<me, 0>(0, MateValue))
 	{
 		if (IsIllegal(me, move))
 			continue;
@@ -6166,89 +6332,6 @@ INLINE bool can_castle(const uint64& occ, bool me, bool kingside)
 			: T(Current->castle_flags & CanCastle_ooo) && F(occ & 0x0E00000000000000) && F(Current->att[White] & 0x1C00000000000000);
 	}
 }
-template<bool me> int* gen_quiet_moves(int* list)
-{
-	uint64 u, v;
-	auto safe3 = [&](int loc) { return HasBit(Current->att[opp] & ~Current->att[me], loc) ? 0 : FlagCastling; };
-
-	uint64 occ = PieceAll();
-	if (me == White)
-	{
-		if (can_castle(occ, me, true))
-			list = AddHistoryP(list, IKing[White], 4, 6, FlagCastling);
-		if (can_castle(occ, me, false))
-			list = AddHistoryP(list, IKing[White], 4, 2, FlagCastling);
-	}
-	else
-	{
-		if (can_castle(occ, me, true))
-			list = AddHistoryP(list, IKing[Black], 60, 62, FlagCastling);
-		if (can_castle(occ, me, false))
-			list = AddHistoryP(list, IKing[Black], 60, 58, FlagCastling);
-	}
-
-	uint64 free = ~occ;
-	auto pTarget = PawnJoins<me>();
-	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagCastling : 0; };
-	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
-	{
-		int to = lsb(v);
-		int passer = T(HasBit(Current->passer, to - Push[me]));
-		int leading = passer && F(Current->passer & Pawn(me) & Forward[me][RankOf(to - Push[me])]);
-		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passer ? FlagCastling : pFlag(to + Push[me]));
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagCastling : pFlag(to), leading ? 128 : 0);
-	}
-
-	for (u = Knight(me); T(u); Cut(u))
-	{
-		int from = lsb(u);
-		for (v = free & NAtt[from]; T(v); Cut(v))
-		{
-			int to = lsb(v);
-			bool dt = !!(NAtt[to] & Major(opp)) ^ !!(NAtt[from] & Major(opp)) ^ HasBit(Current->patt[opp], to) ^ HasBit(Current->patt[opp], from);
-			list = AddHistoryP(list, IKnight[me], from, to, dt ? FlagCastling : 0);
-		}
-	}
-
-	for (u = Bishop(me); T(u); Cut(u))
-	{
-		int from = lsb(u);
-		int which = HasBit(LightArea, from) ? ILight[me] : IDark[me];
-		for (v = free & BishopAttacks(from, occ); T(v); Cut(v))
-		{
-			int to = lsb(v);
-			int flag = BMask[to] & (PAtt[opp][to] & Pawn(me) ? Major(opp) : Rook(opp)) ? FlagCastling : 0;
-			list = AddHistoryP(list, which, from, to, flag);
-		}
-	}
-
-	for (u = Rook(me); T(u); Cut(u))
-	{
-		int from = lsb(u);
-		for (v = free & RookAttacks(from, occ); T(v); Cut(v))
-		{
-			int to = lsb(v);
-			int flag = (PAtt[opp][to] & Pawn(me)) && (RMask[to] & Queen(opp)) ? FlagCastling : 0;
-			list = AddHistoryP(list, IRook[me], from, to, flag);
-		}
-	}
-	for (u = Queen(me); T(u); Cut(u))
-	{
-		//uint64 qTarget = NAtt[lsb(King(opp))];	// try to get next to this
-		int from = lsb(u);
-		for (v = free & QueenAttacks(from, occ); T(v); Cut(v))
-		{
-			int to = lsb(v);
-			list = AddHistoryP(list, IQueen[me], from, to, 0);	// KAtt[to] & qTarget ? FlagCastling : 0);
-		}
-	}
-	int kFlag = T(Current->xray[opp]) ? FlagCastling : 0;
-	for (v = KAtt[lsb(King(me))] & free & (~Current->att[opp]); T(v); Cut(v)) 
-		list = AddHistoryP(list, IKing[me], lsb(King(me)), lsb(v), kFlag);
-
-	return NullTerminate(list);
-}
 
 template <bool me> int* gen_checks(int* list)
 {
@@ -6453,15 +6536,52 @@ template<bool me> INLINE uint64 capture_margin_mask(const score_t& alpha, score_
 	return retval;
 }
 
+namespace Futility
+{
+	constexpr array<sint16, 10> PieceThreshold = { 12, 18, 22, 24, 25, 26, 27, 26, 40, 40 };	// in CP
+	constexpr array<sint16, 8> PasserThreshold = { 0, 0, 0, 0, 0, 20, 40, 0 };
+
+	template<bool me> inline sint16 x()
+	{
+		sint16 retval = PieceThreshold[pop0(NonPawnKing(me))];
+		if (uint64 passer = Current->passer & Pawn(me))
+			retval = Max(retval, PasserThreshold[OwnRank<me>(NB<opp>(passer))]);
+		return retval;
+	}
+
+	template<bool me> inline sint16 HashCut(bool did_delta_moves)
+	{
+		return (did_delta_moves ? 3 : 6) * x<me>();
+	}
+	template<bool me> inline sint16 CheckCut()
+	{
+		return 11 * x<me>();
+	}
+	template<bool me> inline sint16 DeltaCut()
+	{
+		return HashCut<me>(false);
+	}
+	template<bool me> inline sint16 ScoutCut(int depth)
+	{
+		return (depth > 3 ? 4 : 7) * x<me>();
+	}
+};
+
+
 template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int depth, int flags)
 {
 	int i, move, hash_move, hash_depth, cnt;
 	score_t value, score;
 	GEntry* Entry;
-	auto finish = [&](const score_t& score)
+	auto finish = [&](const score_t& score, bool did_delta_moves)
 	{
-		if (depth >= -2 && (depth >= 0 || Current->score + FutilityThreshold >= alpha))
+		if (depth >= 0)
 			hash_high(score, 1);
+		else if (depth >= -2)
+		{
+			if (auto fut = Futility::HashCut<me>(did_delta_moves); Current->score + fut >= alpha)
+				hash_high(alpha, 1);
+		}
 		return score;
 	};
 
@@ -6552,10 +6672,11 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 					}
 				}
 				if (F(Bit(To(hash_move)) & Current->mask) 
-					&& F(hash_move & 0xE000) 
-					&& !pv
-					&& alpha >= beta - 1
-					&& (depth < -2 || depth <= -1 && Current->score + FutilityThreshold < alpha))
+							&& F(hash_move & 0xE000) 
+							&& !pv
+							&& alpha >= beta - 1
+							&& (depth < -2 
+									|| depth <= -1 && Current->score + Futility::HashCut<me>(false) < alpha))
 					return alpha;
 			}
 		}
@@ -6586,8 +6707,8 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 		}
 	}
 
-	if (depth < -2 || (depth <= -1 && Current->score + FutilityThreshold < alpha))
-		return finish(score);
+	if (depth < -2 || (depth < 0 && Current->score + Futility::CheckCut<me>() < alpha))
+		return score;	// never hash this
 	gen_checks<me>(Current->moves);
 	Current->current = Current->moves;
 	while (move = pick_move())
@@ -6610,9 +6731,9 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 		}
 	}
 
-	if (T(cnt) || Current->score + 30 * CP_SEARCH < alpha || T(Current->threat & Piece(me)) || T(Current->xray[opp] & NonPawn(opp)) ||
+	if (T(cnt) || Current->score + Futility::DeltaCut<me>() < alpha || T(Current->threat & Piece(me)) || T(Current->xray[opp] & NonPawn(opp)) ||
 		T(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())))
-		return finish(score);
+		return finish(score, false);
 	sint16 margin = +alpha - +Current->score + 6 * CP_SEARCH;
 	gen_delta_moves<me>(margin, Current->moves);
 	Current->current = Current->moves;
@@ -6645,7 +6766,7 @@ template <bool me, bool pv> score_t q_search(score_t alpha, score_t beta, int de
 				break;
 		}
 	}
-	return finish(score);
+	return finish(score, true);
 }
 
 template <bool me, bool pv> score_t q_evasion(score_t alpha, score_t beta, int depth, int flags)
@@ -7076,8 +7197,8 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 				return value;
 		}
 
-		value = Current->score + FutilityThreshold;
-		if (value < beta && depth <= 3)
+		value = Current->score + Futility::ScoutCut<me>(depth);
+		if (depth <= 3 && value < beta)
 			return Max(value, q_search<me, 0>(beta - 1, beta, 1, FlagHashCheck | (flags & 0xFFFF)));
 
 		high_depth = 0;
@@ -7257,7 +7378,7 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 		do_split = 1;
 
 	LMR_<0> lmr(depth, F(hash_move));
-	while (move = get_move<me, 0>(depth))
+	while (move = get_move<me, 0>(depth, beta))
 	{
 		if (move == hash_move)
 			continue;
@@ -7839,7 +7960,7 @@ template <bool me, bool root> score_t pv_search(score_t alpha, score_t beta, int
 		do_split = 1;
 
 	LMR_<1> lmr(depth, false);
-	while (move = get_move<me, root>(Odd(depth)))
+	while (move = get_move<me, root>(depth, beta))
 	{
 		if (move == hash_move)
 			continue;
