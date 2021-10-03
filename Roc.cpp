@@ -680,6 +680,9 @@ template<class POP> score_t score_from_material(sint16 val)
 		IncV(retval, r[me] - r[opp]);
 		IncV(retval, q[me] - q[opp]);
 		IncV(retval, (b[me] > 1 ? 1 : 0) - (b[opp] > 1 ? 1 : 0));
+		// PawnNonlinear
+		if (int dp = p[White] - p[Black]; abs(dp) > 2)
+			IncV(retval, dp);
 		// MatQuadMe
 		auto quadMe = [=](const array<int, 2>& p1, const array<int, 2>& p2) { return p1[me] * p2[me] - p1[opp] * p2[opp]; };
 		IncV(retval, quadMe(p, p));
@@ -1325,7 +1328,8 @@ template<class C_> INLINE sint64 Ca4(const C_& x, int y)
 
 // EVAL WEIGHTS
 
-constexpr array<int, 6> MatLinear = { -4, -9, -10, 65, -18, -46 };
+constexpr array<int, 6> MatLinear = { -4, -6, -13, 65, -18, -46 };
+constexpr array<int, 9> PawnNonlinear = { 0, 0, 35, 114, 150, 188, 213, 225, 230 };
 // pawn, knight, bishop, rook, queen, pair
 constexpr array<int, 14> MatQuadMe = { // tuner: type=array, var=1000, active=0
 	-38, 22, -21, -221, -273,
@@ -1552,9 +1556,9 @@ enum
 };
 constexpr array<int, 20> Isolated = {	
 	16, 13, 24, -57,
-	2, 14, 44, -37,
+	1, 17, 46, -37,
 	21, 16, 5, 1,
-	35, 27, 21, -14,
+	33, 27, 23, -14,
 	-24, -8, -8, -16};
 
 enum
@@ -1563,7 +1567,7 @@ enum
 	DoubledClosed
 };
 constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-	64, 19, 14, -65,
+	63, 22, 18, -68,
 	17, -5, 10, 12 };
 
 enum
@@ -3242,6 +3246,10 @@ void calc_material(int index)
 			+ (SeeValue[WhiteRook] + Av(MatLinear, 0, 0, 3)) * (rooks[White] - rooks[Black])
 			+ (SeeValue[WhiteQueen] + Av(MatLinear, 0, 0, 4)) * (queens[White] - queens[Black]) 
 			+ (50 * CP_EVAL + Av(MatLinear, 0, 0, 5)) * ((bishops[White] / 2) - (bishops[Black] / 2));
+	if (pawns[White] > pawns[Black])
+		score += PawnNonlinear[pawns[White] - pawns[Black]];
+	else
+		score -= PawnNonlinear[pawns[Black] - pawns[White]];
 
 	int phase = Phase[PieceType[WhitePawn]] * (pawns[White] + pawns[Black]) 
 			+ Phase[PieceType[WhiteKnight]] * (knights[White] + knights[Black]) 
@@ -5612,13 +5620,13 @@ struct HashScorer_
 		{
 			double high = hash && T(hash->high_depth) ? hash->high + PER_DEPTH * max(0, depth_ - hash->high_depth) : +beta_ + WIDTH;
 			double low = hash && T(hash->low_depth) ? hash->low - PER_DEPTH * max(0, depth_ - hash->low_depth) : +beta_ - WIDTH;
-			if (low >= beta_)
+			if (low >= +beta_)
 				score = max(score, min(127, 64 + hash->low_depth));
-			else if (high <= beta_)
+			else if (high <= +beta_)
 				score = min(score, min(63, hash->high_depth));
 			else
 			{
-				double hashScore = (beta_ - low) * 127.0 / (high - low);
+				double hashScore = (+beta_ - low) * 127.0 / (high - low);
 				score = static_cast<int>(((histWidth_ * hashScore + (high - low) * score)) / (histWidth_ + high - low));
 			}
 		}
@@ -6551,7 +6559,7 @@ namespace Futility
 
 	template<bool me> inline sint16 HashCut(bool did_delta_moves)
 	{
-		return (did_delta_moves ? 3 : 6) * x<me>();
+		return (did_delta_moves ? 4 : 8) * x<me>();
 	}
 	template<bool me> inline sint16 CheckCut()
 	{
