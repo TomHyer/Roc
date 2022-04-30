@@ -4956,6 +4956,7 @@ template <bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 {
 	uint64 threat = Current->att[opp] & (~Current->att[me]) & Piece(me);
+
 	if (F(threat))
 		return;
 	Current->threat |= threat;
@@ -7124,6 +7125,13 @@ template<bool me> inline int MinZugzwangDepth()
 {
 	return 16;	// below this depth, no point checking for Zugzwang
 }
+inline int SingularPenalty(int singular, int depth)
+{
+	if (!singular)
+		return 0;
+	int phase = Current->material & FlagUnusualMaterial ? 64 : Material[Current->material].phase;
+	return Max(0, 18 * (128 + phase) - depth * (256 + phase)) / 230;
+}
 
 template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int flags)
 {
@@ -7334,8 +7342,8 @@ template <bool me, bool exclusion> score_t scout(score_t beta, int depth, int fl
 					ext = Max(ext, 2);
 				new_depth = depth - 2 + ext;
 				do_move<me>(move);
-				value = -scout<opp, 0>(1 - beta, new_depth,
-					FlagNeatSearch | ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0) | ExtToFlag(ext));
+				int flags = FlagNeatSearch | ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0) | ExtToFlag(ext);
+				value = -scout<opp, 0>(1 - beta, new_depth, flags) - SingularPenalty(singular, depth);
 				undo_move<me>(move);
 				++played;
 				if (value > score)
@@ -7650,13 +7658,13 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 			{
 				++cnt;
 				ext = is_check<me>(move) ? Max(pext, 1 + (depth < 16)) : Max(pext, extension<me, 0>(move, depth));
+				int singular = 0;
 				if (depth >= 16 && hash_value >= beta && hash_depth >= (new_depth = depth - Min(12, depth / 2)))
 				{
 					score_t margin_one = beta - ExclSingle(depth);
 					score_t margin_two = beta - ExclDouble(depth);
 					int prev_ext = ExtFromFlag(flags);
-					int singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move);
-					if (singular)
+					if (singular = singular_extension<me>(ext, prev_ext, margin_one, margin_two, new_depth, hash_move))
 						ext = Max(ext, singular + (prev_ext < 1) - (singular >= 2 && prev_ext >= 2));
 				}
 				new_depth = depth - 2 + ext;
@@ -7669,8 +7677,8 @@ template<bool me, bool exclusion> score_t scout_evasion(score_t beta, int depth,
 				}
 				else
 				{
-					value = -scout<opp, 0>(1 - beta, new_depth,
-						FlagHaltCheck | FlagHashCheck | ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0) | ExtToFlag(ext));
+					int flags = FlagHaltCheck | FlagHashCheck | ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0) | ExtToFlag(ext);
+					value = -scout<opp, 0>(1 - beta, new_depth, flags) - SingularPenalty(singular, depth);
 					undo_move<me>(move);
 					if (value > score)
 					{
@@ -8107,7 +8115,8 @@ template <bool me> void root()
 	sint64 time;
 	GPVEntry* PVEntry;
 
-	++date;
+	if (Current->capture || PieceAt(To(PrevMove)) < WhiteKnight || F(To(PrevMove) % 5))
+		++date;
 	nodes = check_node = check_node_smp = 0;
 	if (parent)
 		Smpi->nodes = 0;
