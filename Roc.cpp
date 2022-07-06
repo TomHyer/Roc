@@ -413,7 +413,7 @@ struct GMaterial
 	array<eval_special_t, 2> eval;
 	array<uint8, 2> mul;
 	uint8 phase;
-	bitset<2> pawnsForPiece;
+	bitset<2> pawnsForPiece, contempt;
 };
 
 static const int MAGIC_SIZE = 107648;
@@ -1238,37 +1238,21 @@ constexpr array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=
 	332, 624, 1752, 1284, 48
 };
 
-// type (9: general, blocked, free, supported, protected, connected, outside, candidate, clear) * phase (4)
-constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
-	76, 64, 52, 0,
-	84, 48, 12, 0,
-	-96, 204, 504, 0,
-	0, 130, 260,  0,
-	128, 176, 224,  0,
-	108, 44, -20,  0,
-	128, 32, -64, 0,
-	52, 34, 16,  0,
-	4, 4, 4, 0 };
-constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
-	164, 86, 8, 0,
-	444, 394, 344, 0,
-	712, 582, 452, 0,
-	808, 434, 60, 0,
-	-244, -80, 84, 0,
-	372, 518, 664, 0,
-	344, 356, 368, 0,
-	108, 122, 136, 0,
-	-72, -50, -28, 0 };
-constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0,
-	0, 0, 0, 0 };
+constexpr array<int, 3> PasserOffset = { -2, 2, 4 };
+namespace PasserWeights
+{
+	constexpr array<int, 12> General = { -5,73,17, 14,19,91, 17,-9,60, -5,27,-16 };
+	constexpr array<int, 12> Blocked = { -1,140,49, 30,79,175, 14,87,38, 19,57,-50 };
+	constexpr array<int, 12> Free = { 29,239,-100, 67,130,403, 110,179,594, 3,1,13 };
+	constexpr array<int, 12> Supported = { -2,188,17, 27,110,154, 53,65,280, -4,18,-16 };
+	constexpr array<int, 12> Protected = { 69,-113,334, 53,-24,294, 37,52,177, -55,157,-176 };
+	constexpr array<int, 12> Connected = { 11,134,76, 66,-28,328, 37,97,151, 107,-256,366 };
+	constexpr array<int, 12> Outside = { -18,169,-14, 11,87,73, 0,75,-33, 13,-61,44 };
+	constexpr array<int, 12> Candidate = { -22,75,5, 0,29,63, 27,12,38, -8,78,-26 };
+	constexpr array<int, 12> Clear = { -3,-13,-12, 5,-30,13, -2,-10,-2, -1,-1,-1 };
+	constexpr array<int, 12> QPGame = { 0,0,0, 0,0,0, -40,60,-20, 0,0,0 };
+}
+
 // type (2: att, def) * scaling (2: linear, log) 
 constexpr array<int, 4> PasserAttDefQuad = { // tuner: type=array, var=500, active=0
 	764, 204, 332, 76
@@ -2498,6 +2482,30 @@ template<int N> array<packed_t, N / 4> PackAll(const array<int, N>& src)
 	return dst;
 }
 
+double passer_basis(int excess)
+{
+	return sqrt(Square(excess) + 0.5) + excess - 0.5;
+}
+double passer_basis(int rank, int offset)
+{
+	return passer_basis(rank - offset) / passer_basis(6 - offset);
+}
+sint16 passer_val(const int* weight, int rank)
+{
+	double retval = *weight * passer_basis(rank, PasserOffset[0])
+		+ *(weight + 1) * passer_basis(rank, PasserOffset[1])
+		+ *(weight + 2) * passer_basis(rank, PasserOffset[2]);
+	return static_cast<sint16>(retval);
+}
+array<sint64, 8> init_passer(const array<int, 12>& weights)
+{
+	array<sint64, 8> retval = { 0ll,0ll,0ll,0ll,0ll,0ll,0ll,0ll };
+	auto phased = [&](int which, int rank) { return passer_val(&weights[3 * which], rank); };
+	for (int rank = 1; rank < 7; ++rank)
+		retval[rank] = Pack4(phased(0, rank), phased(1, rank), phased(2, rank), phased(3, rank));
+	return retval;
+}
+
 void init_eval(CommonData_* data)
 {
 	init_mobility(MobCoeffsKnight, &data->MobKnight);
@@ -2529,22 +2537,20 @@ void init_eval(CommonData_* data)
 		data->StormFree[i] = ((Sa(StormQuad, StormFreeMul) * i * i) + (Sa(StormLinear, StormFreeMul) * (i + 1))) / 100;
 	}
 
+	data->PasserGeneral = init_passer(PasserWeights::General);
+	data->PasserBlocked = init_passer(PasserWeights::Blocked);
+	data->PasserFree = init_passer(PasserWeights::Free);
+	data->PasserSupported = init_passer(PasserWeights::Supported);
+	data->PasserProtected = init_passer(PasserWeights::Protected);
+	data->PasserConnected = init_passer(PasserWeights::Connected);
+	data->PasserOutside = init_passer(PasserWeights::Outside);
+	data->PasserCandidate = init_passer(PasserWeights::Candidate);
+	data->PasserClear = init_passer(PasserWeights::Clear);
+	//data->PasserQPGame = init_passer(PasserWeights::QPGame);
+
 	for (int i = 0; i < 8; ++i)
 	{
 		int im2 = Max(i - 2, 0);
-		auto quad1 = [&](int row, int col, int rr) { return (Av(PasserQuad, 4, row, col) * rr + Av(PasserLinear, 4, row, col)) * rr + Av(PasserConstant, 4, row, col); };
-		auto quad = [&](int row, int col) { return quad1(row, col, 5) > 0 ? Max(0, quad1(row, col, im2)) : Min(0, quad1(row, col, im2)); }; // no sign changes please
-		auto pack16ths = [&](int which) { return Pack4(quad(which, 0) / 16, quad(which, 1) / 16, quad(which, 2) / 16, quad(which, 3) / 16); };
-		data->PasserGeneral[i] = pack16ths(0);
-		data->PasserBlocked[i] = pack16ths(1);
-		data->PasserFree[i] = pack16ths(2);
-		data->PasserSupported[i] = pack16ths(3);
-		data->PasserProtected[i] = pack16ths(4);
-		data->PasserConnected[i] = pack16ths(5);
-		data->PasserOutside[i] = pack16ths(6);
-		data->PasserCandidate[i] = pack16ths(7);
-		data->PasserClear[i] = pack16ths(8);
-
 		auto attdef = [&](int k) { return PasserAttDefQuad[k] * im2*im2 + PasserAttDefLinear[k] * im2 + PasserAttDefConst[k]; };
 		data->PasserAtt[i] = attdef(0);
 		data->PasserDef[i] = attdef(2);
@@ -2748,7 +2754,8 @@ template<bool me> int krppkrpx()
 				}
 			}
 		}
-		return 32;
+		if (Current->passer & 0x8e8e8e8e8e8e8e8e)
+			return 32;
 	}
 	if (F((~(RO->PWay[opp][lsb(King(opp))] | RO->PSupport[me][lsb(King(opp))])) & Pawn(me)))
 		return 0;
@@ -3128,6 +3135,7 @@ void calc_material(int index, GMaterial& material)
 		+ Phase[PieceType[WhiteRook]] * (rooks[White] + rooks[Black])
 		+ Phase[PieceType[WhiteQueen]] * (queens[White] + queens[Black]);
 	material.phase = Min((Max(phase - PhaseMin, 0) * MAX_PHASE) / (PhaseMax - PhaseMin), MAX_PHASE);
+	material.contempt[White] = material.contempt[Black] = true;
 
 	packed_t special = 0;
 	for (int me = 0; me < 2; ++me)
@@ -3146,6 +3154,7 @@ void calc_material(int index, GMaterial& material)
 					DecV(special, Values::MatNNR);
 				else if (bishops[opp] - bishops[me] == 1 && knights[opp] - knights[me] == 1)
 					DecV(special, Values::MatBNR);
+
 			}
 			else if (rooks[me] == rooks[opp])
 			{
@@ -3154,6 +3163,9 @@ void calc_material(int index, GMaterial& material)
 				else if (minor[me] == minor[opp] && pawns[me] > pawns[opp])
 					IncV(special, Values::MatPawnOnly);
 			}
+			if (pawns[me] > pawns[opp] && 2 * rooks[me] + minor[me] == 2 * rooks[opp] + minor[opp] + 1 && rooks[opp] + minor[opp] > 1)
+				material.contempt[me] = false;	// don't avoid trading down to a won position
+
 		}
 		else if (queens[me] - queens[opp] == 1)
 		{
@@ -4811,10 +4823,10 @@ template<class POP> void evaluation()
 	UnpackScore_<POP> value(EI.material);
 	Current->score = value.mat_ + value(EI.score);
 	// apply contempt before drawishness
-	if (Contempt > 0)
+	if (Contempt > 0 && (!EI.material || EI.material->contempt[Data->turn]))
 	{
-		int maxContempt = (value.phase_ * Contempt * CP_EVAL) / 64;
 		int mySign = F(Data->turn) ? 1 : -1;
+		int maxContempt = (value.phase_ * Contempt * CP_EVAL) / 64;
 		if (Current->score * mySign > 2 * maxContempt)
 			Current->score += mySign * maxContempt;
 		else if (Current->score * mySign > 0)
@@ -6817,10 +6829,15 @@ INLINE int RazoringThreshold(int score, int depth, int height)
 	return score + shift + FutilityThreshold;
 }
 
-INLINE int reduction_n(int depth, int n)
+template<int PV = 0> struct LMR_
 {
-	return msb(Square(Square(Square(uint64(n))))) / (5 + depth / 8);
-}
+	const double scale_;
+	LMR_(int depth, bool no_hash) : scale_((no_hash ? 0.135 : 0.095) + 0.0015 * depth) {}
+	INLINE int operator()(int cnt) const
+	{
+		return cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt)))))) - PV : 0;
+	}
+};
 
 template<int principal> INLINE void check_recapture(int to, int depth, int* ext)
 {
@@ -7078,6 +7095,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 	if (depth >= SplitDepth && PrN > 1 && parent && !exclusion)
 		do_split = 1;
 
+	LMR_<0> lmr(depth, F(hash_move));
 	while (move = get_move<me, 0>(Odd(depth)))
 	{
 		if (move == hash_move)
@@ -7106,7 +7124,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				}
 				if (depth >= 6)
 				{
-					int reduction = reduction_n(depth, cnt);
+					int reduction = lmr(cnt);
 					if (move == Current->ref[0] || move == Current->ref[1])
 						reduction = Max(0, reduction - 1);
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
@@ -7377,6 +7395,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 	Current->ref[1] = RefM(Current->move).check_ref[1];
 	mark_evasions(Current->moves);
 	Current->current = Current->moves;
+	LMR_<0> lmr(depth, false);
 	while (move = pick_move())
 	{
 		if (move == hash_move)
@@ -7407,7 +7426,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			}
 			if (depth >= 6 && cnt > 3)
 			{
-				int reduction = reduction_n(depth, cnt);
+				int reduction = lmr(cnt);
 				if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 					reduction += reduction / 2;
 				new_depth = Max(3, new_depth - reduction);
@@ -7648,6 +7667,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 	if (PrN > 1 && !root && parent && depth >= SplitDepthPV)
 		do_split = 1;
 
+	LMR_<1> lmr(depth, false);
 	while (move = get_move<me, root>(Odd(depth)))
 	{
 		if (move == hash_move)
@@ -7670,7 +7690,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
-			int reduction = reduction_n(depth, cnt) - 1;
+			int reduction = lmr(cnt);
 			if (move == Current->ref[0] || move == Current->ref[1])
 				reduction = Max(0, reduction - 1);
 			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
