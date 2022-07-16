@@ -4,6 +4,8 @@
 *.vspx
 *.psess
 *.zip
+*.7z
+*.exe
 /RocTuning.csv
 /TunerParams.inc
 /RocTuning.txt

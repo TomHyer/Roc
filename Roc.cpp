@@ -1280,19 +1280,19 @@ namespace Params
 	enum
 	{
 		IsolatedOpen,
-		IsolatedClosed,
-		IsolatedBlocked,
 		IsolatedDoubledOpen,
+		IsolatedClosed,
 		IsolatedDoubledClosed,
+		IsolatedBlocked,
 		IsolatedForPiece,
 		JoinedForPiece
 	};
 	constexpr array<int, 28> Isolated = {
-		36, 28, 19, 1,
-		40, 21, 1, 12,
-		-40, -20, -3, -3,
-		0, 10, 45, 3,
-		27, 27, 36, 8,
+		16, 13, 24, -57,
+		1, 17, 46, -37,
+		21, 16, 5, 1,
+		33, 27, 23, -14,
+		-24, -8, -8, -16,
 		40, 40, 40, 10,
 		5, 20, 40, 0
 	};
@@ -1301,14 +1301,34 @@ namespace Values
 {
 #define VALUE(name) constexpr packed_t name = Ca4(Params::Isolated, Params::name)
 	VALUE(IsolatedOpen);
-	VALUE(IsolatedClosed);
-	VALUE(IsolatedBlocked);
 	VALUE(IsolatedDoubledOpen);
+	VALUE(IsolatedClosed);
 	VALUE(IsolatedDoubledClosed);
+	VALUE(IsolatedBlocked);
 	VALUE(IsolatedForPiece);
 	VALUE(JoinedForPiece);
 #undef VALUE
 }
+
+namespace Params
+{
+	enum
+	{
+		DoubledOpen,
+		DoubledClosed
+	};
+	constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
+		63, 22, 18, -68,
+		17, -5, 10, 12 };
+}
+namespace Values
+{
+#define VALUE(name) constexpr packed_t name = Ca4(Params::Doubled, Params::name)
+	VALUE(DoubledOpen);
+	VALUE(DoubledClosed);
+#undef VALUE
+}
+
 
 namespace Params
 {
@@ -1319,9 +1339,9 @@ namespace Params
 		ChainRoot
 	};
 	constexpr array<int, 12> Unprotected = {  // tuner: type=array, var=26, active=0
-		16, 18, 20, 0,
-		-20, -12, -4, 0,
-		36, 16, -4, 0 };
+		20, 50, 19, -19,
+		-9, 0, -30, 23,
+		-5, -11, 10, -1 };
 }
 namespace Values
 {
@@ -1348,25 +1368,6 @@ namespace Values
 #define VALUE(name) constexpr packed_t name = Ca4(Params::Backward, Params::name)
 	VALUE(BackwardOpen);
 	VALUE(BackwardClosed);
-#undef VALUE
-}
-
-namespace Params
-{
-	enum
-	{
-		DoubledOpen,
-		DoubledClosed
-	};
-	constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-		12, 6, 0, 0,
-		4, 2, 0, 0 };
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Doubled, Params::name)
-	VALUE(DoubledOpen);
-	VALUE(DoubledClosed);
 #undef VALUE
 }
 
@@ -1629,8 +1630,6 @@ template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 		retval[ii] = static_cast<uint16>(max(0, src[ii]));
 	return retval;
 }
-constexpr array<uint16, 16> XKingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
-constexpr array<int, 4> XKingCenterScale = { 51, 50, 58, 55 };
 
 // tuner: stop
 
@@ -4173,9 +4172,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 			{
 				if (rrank <= 2)
 				{
-					DecV(PEI.score, Values::PasserTarget);
-					if (rrank <= 1) 
-						DecV(PEI.score, Values::PasserTarget);
+					DecV(PEI.score, Values::PasserTarget * (3 - rrank));
 				}	// Gull 3 was thinking of removing this term, because fitted weight is negative
 
 				for (uint64 v = RO->PAtt[me][sq] & Pawn(me); v; Cut(v)) if ((RO->PSupport[me][lsb(v)] & Pawn(me)) == b)
