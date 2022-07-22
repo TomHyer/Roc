@@ -6303,10 +6303,15 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 {
 	int i, value, score, move, hash_move, hash_depth;
 	GEntry* Entry;
-	auto finish = [&](int score)
+	auto finish = [&](const score_t& score, bool did_delta_moves)
 	{
-		if (depth >= -2 && (depth >= 0 || Current->score + FutilityThreshold >= alpha))
+		if (depth >= 0)
 			hash_high(score, 1);
+		else if (depth >= -2)
+		{
+			if (auto fut = Futility::HashCut<me>(did_delta_moves); Current->score + fut >= alpha)
+				hash_high(alpha, 1);
+		}
 		return score;
 	};
 
@@ -6398,11 +6403,12 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 						alpha = value;
 					}
 				}
-				if (F(Bit(To(hash_move)) & Current->mask) 
-					&& F(hash_move & 0xE000) 
+				if (F(Bit(To(hash_move)) & Current->mask)
+					&& F(hash_move & 0xE000)
 					&& !pv
 					&& alpha >= beta - 1
-					&& (depth < -2 || depth <= -1 && Current->score + FutilityThreshold < alpha))
+					&& (depth < -2
+						|| depth <= -1 && Current->score + Futility::HashCut<me>(false) < alpha))
 					return alpha;
 			}
 		}
@@ -6433,8 +6439,8 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 		}
 	}
 
-	if (depth < -2 || (depth <= -1 && Current->score + FutilityThreshold < alpha))
-		return finish(score);
+	if (depth < -2 || (depth < 0 && Current->score + Futility::CheckCut<me>() < alpha))
+		return score;	// never hash this
 	gen_checks<me>(Current->moves);
 	Current->current = Current->moves;
 	while (move = pick_move())
@@ -6457,9 +6463,9 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 		}
 	}
 
-	if (T(nTried) || Current->score + 30 * CP_SEARCH < alpha || T(Current->threat & Piece(me)) || T(Current->xray[opp] & NonPawn(opp)) ||
+	if (T(nTried) || Current->score + Futility::DeltaCut<me>() < alpha || T(Current->threat & Piece(me)) || T(Current->xray[opp] & NonPawn(opp)) ||
 		T(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())))
-		return finish(score);
+		return finish(score, false);
 	int margin = alpha - Current->score + 6 * CP_SEARCH;
 	gen_delta_moves<me>(margin, Current->moves);
 	Current->current = Current->moves;
@@ -6493,7 +6499,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 				break;
 		}
 	}
-	return finish(score);
+	return finish(score, true);
 }
 
 template<bool me, bool pv> int q_evasion(int alpha, int beta, int depth, int flags)
@@ -6858,6 +6864,41 @@ template<int principal> INLINE void check_recapture(int to, int depth, int* ext)
 	}
 }
 
+namespace Futility
+{
+	constexpr array<sint16, 10> PieceThreshold = { 12, 18, 22, 24, 25, 26, 27, 26, 40, 40 };	// in CP
+	constexpr array<sint16, 8> PasserThreshold = { 0, 0, 0, 0, 0, 20, 40, 0 };
+
+	template<bool me> inline sint16 x()
+	{
+		sint16 retval = PieceThreshold[pop0(NonPawnKing(me))];
+		if (uint64 passer = Current->passer & Pawn(me))
+			retval = Max(retval, PasserThreshold[OwnRank<me>(NB<opp>(passer))]);
+		return retval;
+	}
+
+	template<bool me> inline sint16 HashCut(bool did_delta_moves)
+	{
+		return (did_delta_moves ? 4 : 8) * x<me>();
+	}
+	template<bool me> inline sint16 CheckCut()
+	{
+		return 11 * x<me>();
+	}
+	template<bool me> inline sint16 DeltaCut()
+	{
+		return HashCut<me>(false);
+	}
+	template<bool me> inline sint16 ScoutCut(int depth)
+	{
+		return (depth > 3 ? 4 : 7) * x<me>();
+	}
+};
+template<bool me> inline int MinZugzwangDepth()
+{
+	return 16;	// below this depth, no point checking for Zugzwang
+}
+
 template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 {
 	int i, value, cnt, flag, moves_to_play, score, move, ext, hash_move, do_split, sp_init, singular, played, high_depth, high_value, hash_value,
@@ -6917,12 +6958,28 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 		if (IsCheck(me))
 			return scout_evasion<me, 0>(beta, depth, flags & (~(FlagHaltCheck | FlagCallEvaluation)));
 
-		value = Current->score - (90 + depth * 8 + Max(depth - 5, 0) * 32) * CP_SEARCH;
-		if (value >= beta && depth <= 13 && T(NonPawnKing(me)) && F(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())) && F(flags & (FlagReturnBestMove | FlagDisableNull)))
-			return value;
+		if (Current->score - 90 * CP_SEARCH > beta
+			&& F(flags & (FlagReturnBestMove | FlagDisableNull))
+			&& F(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll()))
+			&& depth < MinZugzwangDepth<me>())
+		{
+			int offset = (90 + depth * 8 + Max(depth - 5, 0) * 32 + Max(depth - 11, 0) * 128) * CP_SEARCH;
+			if (beta < -200 * CP_SEARCH)
+				offset += ((+beta + 100 * CP_SEARCH) * height) / 128;
+			if (T(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())))
+				offset += SeeValue[WhiteQueen] - offset / 3;
+			if (F(Queen(White) | Queen(Black)))
+			{
+				offset -= offset / 4;
+				if (F(Rook(White) | Rook(Black)))
+					offset -= offset / 4;
+			}
+			if ((value = Current->score - offset) >= beta)
+				return value;
+		}
 
-		value = Current->score + FutilityThreshold;
-		if (value < beta && depth <= 3)
+		value = Current->score + Futility::ScoutCut<me>(depth);
+		if (depth <= 3 && value < beta)
 			return Max(value, q_search<me, 0>(beta - 1, beta, 1, FlagHashCheck | (flags & 0xFFFF)));
 
 		high_depth = 0;
