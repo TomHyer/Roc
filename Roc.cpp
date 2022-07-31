@@ -5048,23 +5048,22 @@ template<bool me> int extension(int pv, int move, int depth, bool* check = nullp
 	}
 	if (check) *check = false;
 	int from = From(move);
-	if (HasBit(Current->passer, from) && OwnRank(T(Current->turn), from) >= 5)
+	if (HasBit(Current->passer, from))
 	{
-		if (depth < 16)
-			return 1 + pv;
+		if (T(Current->material & FlagUnusualMaterial) || Current->material >= TotalMat || RO->Material[Current->material].phase > MIDDLE_PHASE)
+		{
+			int rank = OwnRank(me, from);
+			if (rank >= 5 && depth < 16)
+				return pv ? 2 : 1;
+		}
 	}
-	if (depth > 2)
-		if (uint64 om = Major(opp))
-			if (T(King(me) & 0XFFC300000000C3FF) && depth < (Multiple(om) ? 12 : 8))
-			{
-				int kf = FileOf(lsb(King(me)));
-				if (T((PAtts<me>(Pawn(me) & File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & File[kf]) & Piece(me))))
-					return 1;
-			}
-//	if (depth < (pv ? 14 : 10) && PieceAt(from) < WhiteKnight && T(RO->PCone[me][from] & King(opp)) && F(RO->PWay[me][from] & Pawn(opp)))
-//		return 1;
-//	contradictory test results; revisit
-
+	int to = To(move);
+	if (T(PieceAt(to)) && depth < 13)
+	{
+		if ((T(Current->material & FlagUnusualMaterial) || Current->material >= TotalMat || RO->Material[Current->material].phase > MIDDLE_PHASE)
+			&& HasBit(RO->KAttAtt[lsb(King(me))] | RO->KAttAtt[lsb(King(opp))], to))
+			return 1;
+	}
 	return 0;
 }
 
