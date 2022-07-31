@@ -104,3 +104,10 @@ template<bool me> int NBZ(const uint64& x)
 	return me ? MSBZ(x) : LSBZ(x);
 }
 
+template<class POP> int Regions24(POP pop, uint64 x)
+{
+	x |= (x & 0x00ffffffffffffff) << 8;
+	x |= (x & 0x0000ffffffffffff) << 16;
+	x |= (x & 0x7f7f7f7f7f7f7f7f) << 1;
+	return pop(x) / 8;
+}

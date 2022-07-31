@@ -199,11 +199,11 @@ struct CommonData_
 	array<uint64, 64> BMagic, BMagicMask, RMagic, RMagicMask;
 	array<uint64, 64> VLine, RMask, BMask, QMask, NAtt, KAtt, KAttAtt, NAttAtt, OneIn;
 	array<uint64, 64> KingFrontal, KingFlank;
-	array<array<packed_t, 28>, 2> MobQueen;
+	array<array<packed_t, 32>, 2> MobQueen;
 	array<uint8, 256> PieceFromChar;
 	array<int, 64> ROffset;
-	array<array<packed_t, 15>, 2> MobBishop, MobRook;
-	array<array<packed_t, 9>, 2> MobKnight;
+	array<array<packed_t, 18>, 2> MobBishop, MobRook;
+	array<array<packed_t, 12>, 2> MobKnight;
 	array<short, 64> BShift, BOffset, RShift;
 	array<uint64, 16> CastleKey;
 	array<array<uint64, 8>, 2> Forward;
@@ -980,10 +980,10 @@ namespace PstW
 }
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 108, 57, 26, -5, 57, 36, 24, -1, 1, 10, -5, 12 };
-constexpr array<int, 12> MobCoeffsBishop = { 106, 76, 67, -15, 59, 32, 25, -2, 1, 5, -1, 40 };
-constexpr array<int, 12> MobCoeffsRook = { 28, 39, 61, 2, 41, 33, 28, 2, -1, 1, -1, 7 };
-constexpr array<int, 12> MobCoeffsQueen = { 66, 38, 24, 2, 24, 31, 45, 1, 1, 1, -1, 10 };
+constexpr array<int, 12> MobCoeffsKnight = { 86, 46, 19, -5, 57, 36, 24, -1, 1, 10, -5, 12 };
+constexpr array<int, 12> MobCoeffsBishop = { 85, 60, 48, -15, 59, 32, 25, -2, 1, 5, -1, 40 };
+constexpr array<int, 12> MobCoeffsRook = { 22, 31, 44, 2, 41, 33, 28, 2, -1, 1, -1, 7 };
+constexpr array<int, 12> MobCoeffsQueen = { 53, 30, 17, 2, 24, 31, 45, 1, 1, 1, -1, 10 };
 
 constexpr int N_LOCUS = 22;
 
@@ -1257,13 +1257,15 @@ namespace Params
 		PawnChainLinear,
 		PawnChain,
 		PawnBlocked,
-		PawnFileSpan
+		PawnFileSpan,
+		PawnConnected
 	};
-	constexpr array<int, 16> PawnSpecial = {  // tuner: type=array, var=26, active=0
+	constexpr array<int, 20> PawnSpecial = {  // tuner: type=array, var=26, active=0
 		44, 40, 36, 0,
 		36, 26, 16, 0,
 		0, 18, 36, 0,
 		4, 4, 4, 0,
+		15, 9, -2, 4
 	};
 }
 namespace Values
@@ -1273,6 +1275,7 @@ namespace Values
 	VALUE(PawnChain);
 	VALUE(PawnBlocked);
 	VALUE(PawnFileSpan);
+	VALUE(PawnConnected);
 #undef VALUE
 }
 
@@ -3945,6 +3948,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 	uint8 files = FileOcc(Pawn(me));
 	int file_span = RO->SpanWidth[files];
 	IncV(PEI.score, Values::PawnFileSpan * file_span);
+	IncV(PEI.score, Values::PawnConnected* pop(Pawn(me)& ((Pawn(me) & 0x7f7f7f7f7f7f7f7f) << 1)));
 	PawnEntry->draw[me] = (7 - file_span) * Max(5 - pop(files), 0);
 }
 
@@ -4024,7 +4028,7 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 			control &= QueenAttacks(sq, EI.occ & ~dbl);
 		else
 			control &= att;
-		IncV(EI.score, RO->MobQueen[0][pop(control)]);
+		IncV(EI.score, RO->MobQueen[0][pop(control) + Regions24(pop, control) / 2]);
 		IncV(EI.score, RO->MobQueen[1][pop(control & RO->KingFlank[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalMajorPawn);
@@ -4102,7 +4106,7 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		}
 		else
 			control &= att;
-		IncV(EI.score, RO->MobRook[0][pop(control)]);
+		IncV(EI.score, RO->MobRook[0][pop(control) + Regions24(pop, control) / 2]);
 		IncV(EI.score, RO->MobRook[1][pop(control & RO->KingFlank[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalMajorPawn);
@@ -4201,7 +4205,7 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		if (uint64 a = att & EI.area[opp])
 			EI.king_att[me] += Single(a) ? KingBAttack1 : KingBAttack;
 		uint64 control = att & EI.free[me];
-		IncV(EI.score, RO->MobBishop[0][pop(control)]);
+		IncV(EI.score, RO->MobBishop[0][pop(control) + Regions24(pop, control) / 2]);
 		IncV(EI.score, RO->MobBishop[1][pop(control & RO->KingFrontal[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalMinorPawn);
@@ -4237,7 +4241,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 			EI.king_att[me] += Single(a) ? KingNAttack1 : KingNAttack;
 		Current->threat |= att & Major(opp);
 		uint64 control = att & EI.free[me];
-		IncV(EI.score, RO->MobKnight[0][pop(control)]);
+		IncV(EI.score, RO->MobKnight[0][pop(control) + Regions24(pop, control) / 2]);
 		IncV(EI.score, RO->MobKnight[1][pop(control & RO->KingFrontal[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalMinorPawn);
