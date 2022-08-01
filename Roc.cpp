@@ -211,8 +211,6 @@ struct CommonData_
 	array<packed_t, 8> PasserGeneral, PasserBlocked, PasserFree, PasserSupported, PasserProtected, PasserConnected, PasserOutside, PasserCandidate, PasserClear;
 	array<uint8, 64> UpdateCastling;
 	array<array<sint16, 8>, 3> Shelter;
-	array<uint16, 16> KingAttackScale;
-	array<int, 4> KingCenterScale;
 	array<uint8, 16> LogDist;
 	array<sint16, 8> PasserAtt, PasserDef, PasserAttLog, PasserDefLog;
 	array<sint16, 4> StormBlocked, StormShelterAtt, StormConnected, StormOpen, StormFree;
@@ -2307,9 +2305,6 @@ void init_eval(CommonData_* data)
 		data->PasserAttLog[i] = attdef(1);
 		data->PasserDefLog[i] = attdef(3);
 	}
-
-	data->KingAttackScale = { 0, 1, 1, 2, 4, 5, 8, 12, 15, 19, 23, 28, 34, 39, 39, 39 };
-	data->KingCenterScale = { 62, 61, 70, 68 };
 }
 
 // all these special-purpose endgame evaluators
@@ -4273,6 +4268,9 @@ static double KA_E = 0, KA_N = 0;
 
 template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
+	constexpr array<int, 4> PhaseScale = { 15, 11, 3, -3 };
+	constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 3, 5, 7, 10, 14, 18, 22, 27, 32, 37, 46, 44, 42 };
+	constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 	POP pop;
 	uint16 head = UUnpack1(EI.king_att[me]);
 	uint16 cnt = Min<uint16>(15, head & (KingNFlag - 1));
@@ -4294,18 +4292,18 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 			? Square(score) / (2 * KingAttackThreshold)
 			: score - KingAttackThreshold / 2;
 
-	int adjusted = ((score * RO->KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
+	int adjusted = ((score * KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
 	if (myN && (myQ || cnt > 6))
 		adjusted += adjusted / 3;
 
 	int kf = FileOf(EI.king[opp]);
 	if (kf > 3)
 		kf = 7 - kf;
-	adjusted = (adjusted * RO->KingCenterScale[kf]) / 64;
+	adjusted = (adjusted * KingCenterScale[kf]);
 	if (!Queen(me))
 		adjusted = (adjusted * KingSafetyNoQueen) / 16;
 	// add a correction for defense-in-depth
-	if (adjusted > 1)
+	if (adjusted > 32)
 	{
 		uint64 holes = RO->KingFrontal[EI.king[opp]] & ~Current->att[opp];
 		int nHoles = pop(holes);
@@ -4318,11 +4316,10 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
-	constexpr array<int, 4> PHASE = { 12, 8, 2, -2 };
-	int op = (PHASE[0] * adjusted) / 16;
-	int md = (PHASE[1] * adjusted) / 16;
-	int eg = (PHASE[2] * adjusted) / 16;
-	int cl = (PHASE[3] * adjusted) / 16;
+	int op = (PhaseScale[0] * adjusted) / 1024;
+	int md = (PhaseScale[1] * adjusted) / 1024;
+	int eg = (PhaseScale[2] * adjusted) / 1024;
+	int cl = (PhaseScale[3] * adjusted) / 1024;
 	KA_E += (adjusted - KA_E) / (++KA_N);
 	EI.king_att_val[me] = Pack4(op, md, eg, cl);
 	IncV(EI.score, EI.king_att_val[me]);
