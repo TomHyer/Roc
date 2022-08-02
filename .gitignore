@@ -11,3 +11,5 @@
 /RocTuning.txt
 /Tuner_SortOf.xlsm
 /~$Tuner_SortOf.xlsm
+out/
+Roc.*.cpp

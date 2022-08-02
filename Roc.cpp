@@ -1277,26 +1277,31 @@ namespace Values
 #undef VALUE
 }
 
+constexpr array<uint64, 2> BOutpost = { 0x00003C7E7E000000ull, 0x0000007E7E3C0000ull };
 namespace Params
 {
 	enum 
 	{ 
 		BishopPawnBlock, 
+		BishopOutpostInsideOut,
 		BishopOutpostNoMinor
 	};
-	constexpr array<int, 16> BishopSpecial = { // tuner: type=array, var=20, active=0
-		0, 6, 14, 6,
-		30, 30, 25, 0
+	constexpr array<int, 12> BishopSpecial = { // tuner: type=array, var=20, active=0
+		-1, 12, 12, 12,
+		100, 33, 1, -25,
+		130, 44, 1, -25
 	};
 }
 namespace Values
 {
 #define VALUE(name) constexpr packed_t name = Ca4(Params::BishopSpecial, Params::name)
 	VALUE(BishopPawnBlock);
+	VALUE(BishopOutpostInsideOut);
 	VALUE(BishopOutpostNoMinor);
 #undef VALUE
 }
 
+constexpr array<uint64, 2> NOutpost = { 0x00187E7E3C000000ull, 0x0000003C7E7E1800ull };
 namespace Params
 {
 	enum
@@ -1309,10 +1314,10 @@ namespace Params
 		KnightPawnGap
 	};
 	constexpr array<int, 24> KnightSpecial = {  // tuner: type=array, var=26, active=0
-		40, 40, 24, 0,
-		41, 40, 0, 0,
-		44, 44, 18, 0,
-		41, 40, 0, 0,
+		42, 30, 5, -21,
+		61, 43, 4, -29,
+		28, 15, 28, 3,
+		51, 13, 13, 82,
 		0, 4, 15, -10,
 		0, 2, 5, 0
 	};
@@ -1383,7 +1388,6 @@ constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, act
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
 constexpr uint16 KingAttackThreshold = 48;
 
-constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
 constexpr array<int, 2> PushW = { 7, -9 };
 constexpr array<int, 2> Push = { 8, -8 };
 constexpr array<int, 2> PushE = { 9, -7 };
@@ -4213,12 +4217,21 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		uint64 v = RO->BishopForward[me][sq] & Pawn(me) & myArea;
 		v |= (v & (File[2] | File[3] | File[4] | File[5] | RO->BMask[sq])) >> 8;	// the ">>8" is just a trick to double-count these without two calls to pop()
 		DecV(EI.score, Values::BishopPawnBlock * pop(v));
-		if (T(b & Outpost[me]) 
-			&& F(Knight(opp)) 
+		if (int f = FileOf(sq);  T(b & BOutpost[me])
+			&& F(Knight(opp))
 			&& T(Current->patt[me] & b)
-			&& F(Pawn(opp) & (RO->PCone[me][sq] ^ RO->PWay[me][sq]))
-			&& F(Bishop(opp) & myArea))
-					IncV(EI.score, Values::BishopOutpostNoMinor);
+			&& F((Pawn(opp) | (Pawn(me) & Current->patt[opp])) & PIsolated[f] & RO->Forward[me][RankOf(sq)])
+			&& F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
+		{
+			uint64 central = FileOf(sq) < 4 ? West[sq] : East[sq];
+			// check inside-outness
+
+			uint64 p = RO->PAtt[opp][sq] & Pawn(me);
+			if ((f < 3 && F(p & East[f])) || (f > 4 && F(p & West[f])))
+				IncV(EI.score, Values::BishopOutpostInsideOut);
+			else
+				IncV(EI.score, Values::BishopOutpostNoMinor);
+		}
 	}
 }
 
@@ -4244,7 +4257,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 			IncV(EI.score, Values::TacticalMinorMinor);
 		if (att & EI.area[me])
 			IncV(EI.score, Values::KingDefKnight);
-		if ((b & Outpost[me]) && !(Pawn(opp) & PIsolated[FileOf(sq)] & RO->Forward[me][RankOf(sq)]))
+		if (T(b & NOutpost[me]) && F((Pawn(opp) | (Pawn(me) & Current->patt[opp])) & PIsolated[FileOf(sq)] & RO->Forward[me][RankOf(sq)]))
 		{
 			IncV(EI.score, Values::KnightOutpost);
 			if (Current->patt[me] & b)
@@ -4252,7 +4265,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 				IncV(EI.score, Values::KnightOutpostProtected);
 				if (att & EI.free[me] & Pawn(opp))
 					IncV(EI.score, Values::KnightOutpostPawnAtt);
-				if (F(Knight(opp)) && F(Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
+				if (F(Knight(opp) | Piece((T(b & LightArea) ? WhiteLight : WhiteDark) | opp)))
 					IncV(EI.score, Values::KnightOutpostNoMinor);
 			}
 		}
