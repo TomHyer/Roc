@@ -5779,15 +5779,16 @@ template<bool me> int* gen_quiet_moves(int* list)
 	}
 
 	uint64 free = ~occ;
-	// for pawns, we distinguish threat moves
 	auto pTarget = PawnJoins<me>();
 	auto pFlag = [&](int to) {return HasBit(pTarget, to) ? FlagPriority : 0; };
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
+		int passer = T(HasBit(Current->passer, to - Push[me]));
+		int leading = passer && F(Current->passer & Pawn(me) & RO->Forward[me][RankOf(to - Push[me])]);
 		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
-			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], pFlag(to + Push[me]));
-		list = AddHistoryP(list, IPawn[me], to - Push[me], to, pFlag(to));
+			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], passer ? FlagPriority : pFlag(to + Push[me]));
+		list = AddHistoryP(list, IPawn[me], to - Push[me], to, passer ? FlagPriority : pFlag(to));
 	}
 
 	// for all other pieces, we distinguish threat moves
@@ -6626,7 +6627,7 @@ INLINE int RazoringThreshold(int score, int depth, int height)
 template<int PV = 0> struct LMR_
 {
 	const double scale_;
-	LMR_(int depth, bool no_hash) : scale_((no_hash ? 0.135 : 0.095) + 0.0015 * depth) {}
+	LMR_(int depth, bool no_hash) : scale_((no_hash ? 0.14 : 0.1) + 0.0015 * depth) {}
 	INLINE int operator()(int cnt) const
 	{
 		return cnt > 2 ? int(scale_ * msb(Square(Square(Square(uint64(cnt)))))) - PV : 0;
