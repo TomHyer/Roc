@@ -864,7 +864,7 @@ enum
 };
 
 // pawn, knight, bishop, rook, queen, pair
-constexpr array<int, 6> MatLinear = { 21, -20, -8, 86, -15, -1 };
+constexpr array<int, 6> MatLinear = { 21, -20, -8, 76, -15, -1 };
 
 // T(pawn), pawn, knight, bishop, rook, queen
 constexpr array<int, 21> MatQuadMe = { // tuner: type=array, var=1000, active=0
@@ -4281,18 +4281,13 @@ static double KA_E = 0, KA_N = 0;
 
 template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
-	constexpr array<int, 4> PhaseScale = { 15, 11, 3, -3 };
+	constexpr array<int, 4> PhaseScale = { 14, 11, 3, -3 };
 	constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 3, 5, 7, 10, 14, 18, 22, 27, 32, 37, 46, 44, 42 };
 	constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 	POP pop;
 	uint16 head = UUnpack1(EI.king_att[me]);
 	uint16 cnt = Min<uint16>(15, head & (KingNFlag - 1));
-	bool myN = T(head & (KingQFlag - KingNFlag));
-	bool myQ = head > KingQFlag;
 	uint16 score = UUnpack2(EI.king_att[me]);
-	score = score < KingAttackThreshold
-			? Square(score) / (2 * KingAttackThreshold)
-			: score - KingAttackThreshold / 2;
 	if (cnt >= 2 && T(Queen(me)))
 	{
 		score += (EI.PawnEntry->shelter[opp] * KingShelterQuad) / 64;
@@ -4306,8 +4301,6 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 			: score - KingAttackThreshold / 2;
 
 	int adjusted = ((score * KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
-	if (myN && (myQ || cnt > 6))
-		adjusted += adjusted / 3;
 
 	int kf = FileOf(EI.king[opp]);
 	if (kf > 3)
@@ -4329,7 +4322,7 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
 	}
 
-	int op = (PhaseScale[0] * adjusted) / 1024;
+	int op = ((PhaseScale[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 1024;
 	int md = (PhaseScale[1] * adjusted) / 1024;
 	int eg = (PhaseScale[2] * adjusted) / 1024;
 	int cl = (PhaseScale[3] * adjusted) / 1024;
