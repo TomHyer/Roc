@@ -1384,28 +1384,25 @@ namespace Values
 #undef VALUE
 }
 
-constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, active=0
-	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
-constexpr uint16 KingAttackThreshold = 48;
-
 constexpr array<int, 2> PushW = { 7, -9 };
 constexpr array<int, 2> Push = { 8, -8 };
 constexpr array<int, 2> PushE = { 9, -7 };
 
-constexpr uint16 KingNFlag = 64, KingQFlag = KingNFlag << 2;
-constexpr uint32 KingNAttack1 = UPack(KingNFlag + 1, KingAttackWeight[0]);
-constexpr uint32 KingNAttack = UPack(KingNFlag + 2, KingAttackWeight[1]);
+constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
+	56, 88, 44, 64, 60, 104, 116, 212, 16, 192, 256, 64 };
+constexpr uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
+constexpr uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
 constexpr uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
 constexpr uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
 constexpr uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
 constexpr uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
-constexpr uint32 KingQAttack1 = UPack(KingQFlag + 1, KingAttackWeight[6]);
-constexpr uint32 KingQAttack = UPack(KingQFlag + 2, KingAttackWeight[7]);
-constexpr uint32 KingPAttack = UPack(2, 0);
+constexpr uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
+constexpr uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
 constexpr uint32 KingAttack = UPack(1, 0);
-constexpr uint32 KingAttackSquare = KingAttackWeight[8];
-constexpr uint32 KingNoMoves = KingAttackWeight[9];
-constexpr uint32 KingShelterQuad = KingAttackWeight[10];	// a scale factor, not a score amount
+constexpr uint32 KingPAttackInc = UPack(0, KingAttackWeight[8]);
+constexpr uint32 KingAttackSquare = KingAttackWeight[9];
+constexpr uint32 KingNoMoves = KingAttackWeight[10];
+constexpr uint32 KingShelterQuad = KingAttackWeight[11];	// a scale factor, not a score amount
 
 template<int N> array<uint16, N> CoerceUnsigned(const array<int, N>& src)
 {
@@ -4015,13 +4012,6 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 				else if (v == (v & Minor(opp)))
 					IncV(EI.score, Values::QKingRay);
 
-		if (uint64 a = att & EI.area[opp])
-		{
-			EI.king_att[me] += Single(a) ? KingQAttack1 : KingQAttack;
-			for (uint64 v = att & EI.area[opp]; T(v); Cut(v))
-				if (RO->FullLine[sq][lsb(v)] & att & ((Rook(me) & RO->RMask[sq]) | (Bishop(me) & RO->BMask[sq])))
-					EI.king_att[me]++;
-		}
 		uint64 control = EI.free[me];
 		if (uint64 dbl = att & RO->PWay[me][sq] & Rook(me))  // we are supporting a rook
 			control &= QueenAttacks(sq, EI.occ & ~dbl);
@@ -4033,6 +4023,13 @@ template<bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 			IncV(EI.score, Values::TacticalMajorPawn);
 		if (control & Minor(opp))
 			IncV(EI.score, Values::TacticalMajorMinor);
+		if (uint64 a = att & EI.area[opp])
+		{
+			EI.king_att[me] += (Single(a) && F(a & control)) ? KingQAttack1 : KingQAttack;
+			for (uint64 v = att & EI.area[opp]; T(v); Cut(v))
+				if (RO->FullLine[sq][lsb(v)] & att & ((Rook(me) & RO->RMask[sq]) | (Bishop(me) & RO->BMask[sq])))
+					EI.king_att[me]++;
+		}
 		if (att & EI.area[me])
 			IncV(EI.score, Values::KingDefQueen);
 	}
@@ -4086,13 +4083,6 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 				else if (F(v & ~Minor(opp) & ~Queen(opp)))
 					IncV(EI.score, Values::RKingRay);
 
-		if (uint64 a = att & EI.area[opp])
-		{
-			EI.king_att[me] += Single(a) ? KingRAttack1 : KingRAttack;
-			for (uint64 v = att & EI.area[opp]; T(v); Cut(v))
-				if (RO->FullLine[sq][lsb(v)] & att & Major(me))
-					EI.king_att[me]++;
-		}
 		Current->threat |= att & Queen(opp);
 		uint64 control = EI.free[me];
 		if (uint64 dbl = att & File[FileOf(sq)] & Major(me))
@@ -4111,6 +4101,13 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 			IncV(EI.score, Values::TacticalMajorPawn);
 		if (control & Minor(opp))
 			IncV(EI.score, Values::TacticalMajorMinor);
+		if (uint64 a = att & EI.area[opp])
+		{
+			EI.king_att[me] += (Single(a) && F(a & control)) ? KingRAttack1 : KingRAttack;
+			for (uint64 v = att & EI.area[opp]; T(v); Cut(v))
+				if (RO->FullLine[sq][lsb(v)] & att & Major(me))
+					EI.king_att[me]++;
+		}
 		if (!(RO->PWay[me][sq] & Pawn(me)))
 		{
 			IncV(EI.score, Values::RookHof);
@@ -4201,8 +4198,6 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 				else if (F(v & ~Knight(opp) & ~Major(opp)))
 					IncV(EI.score, Values::BKingRay);
 
-		if (uint64 a = att & EI.area[opp])
-			EI.king_att[me] += Single(a) ? KingBAttack1 : KingBAttack;
 		uint64 control = att & EI.free[me];
 		IncV(EI.score, RO->MobBishop[0][pop(control) + Regions24(pop, control) / 2]);
 		IncV(EI.score, RO->MobBishop[1][pop(control & RO->KingFrontal[EI.king[opp]])]);
@@ -4210,6 +4205,8 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 			IncV(EI.score, Values::TacticalMinorPawn);
 		if (control & Knight(opp))
 			IncV(EI.score, Values::TacticalMinorMinor);
+		if (uint64 a = att & EI.area[opp])
+			EI.king_att[me] += (Single(a) && F(a & control)) ? KingBAttack1 : KingBAttack;
 		if (att & EI.area[me])
 			IncV(EI.score, Values::KingDefBishop);
 		Current->threat |= att & Major(opp);
@@ -4245,8 +4242,6 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		b = Bit(sq);
 		uint64 att = RO->NAtt[sq];
 		Current->att[me] |= att;
-		if (uint64 a = att & EI.area[opp])
-			EI.king_att[me] += Single(a) ? KingNAttack1 : KingNAttack;
 		Current->threat |= att & Major(opp);
 		uint64 control = att & EI.free[me];
 		IncV(EI.score, RO->MobKnight[0][pop(control) + Regions24(pop, control) / 2]);
@@ -4255,6 +4250,8 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 			IncV(EI.score, Values::TacticalMinorPawn);
 		if (control & Bishop(opp))
 			IncV(EI.score, Values::TacticalMinorMinor);
+		if (uint64 a = att & EI.area[opp])
+			EI.king_att[me] += (Single(att & (EI.area[opp] | RO->KAtt[EI.king[opp]]))) ? KingNAttack1 : KingNAttack;
 		if (att & EI.area[me])
 			IncV(EI.score, Values::KingDefKnight);
 		if (T(b & NOutpost[me]) && F((Pawn(opp) | (Pawn(me) & Current->patt[opp])) & PIsolated[FileOf(sq)] & RO->Forward[me][RankOf(sq)]))
@@ -4282,11 +4279,10 @@ static double KA_E = 0, KA_N = 0;
 template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	constexpr array<int, 4> PhaseScale = { 14, 11, 3, -3 };
-	constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 3, 5, 7, 10, 14, 18, 22, 27, 32, 37, 46, 44, 42 };
+	constexpr array<uint16, 16> KingAttackScale = { 0, 1, 2, 6, 8, 10, 14, 19, 25, 31, 39, 47, 46, 65, 65, 65 };
 	constexpr array<int, 4> KingCenterScale = { 62, 61, 70, 68 };
 	POP pop;
-	uint16 head = UUnpack1(EI.king_att[me]);
-	uint16 cnt = Min<uint16>(15, head & (KingNFlag - 1));
+	uint16 cnt = Min<uint16>(15, UUnpack1(EI.king_att[me]));
 	uint16 score = UUnpack2(EI.king_att[me]);
 	if (cnt >= 2 && T(Queen(me)))
 	{
@@ -4296,40 +4292,33 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 		if (!(RO->KAtt[EI.king[opp]] & (~(Piece(opp) | Current->att[me]))))
 			score += KingNoMoves;
 	}
-	score = score < KingAttackThreshold
-			? Square(score) / (2 * KingAttackThreshold)
-			: score - KingAttackThreshold / 2;
-
 	int adjusted = ((score * KingAttackScale[cnt]) >> 3) + EI.PawnEntry->shelter[opp];
-
 	int kf = FileOf(EI.king[opp]);
 	if (kf > 3)
 		kf = 7 - kf;
-	adjusted = (adjusted * KingCenterScale[kf]);
+	adjusted = (adjusted * KingCenterScale[kf]) / 64;
 	if (!Queen(me))
 		adjusted = (adjusted * KingSafetyNoQueen) / 16;
 	// add a correction for defense-in-depth
-	if (adjusted > 32)
+	if (adjusted > 1)
 	{
-		uint64 holes = RO->KingFrontal[EI.king[opp]] & ~Current->att[opp];
+		uint64 holes = RO->KingFlank[EI.king[opp]] & ~Current->att[opp];
 		int nHoles = pop(holes);
 		int nIncursions = pop(holes & Current->att[me]);
 		uint64 personnel = NonPawnKing(opp);
-		uint64 guards = RO->KingFrontal[EI.king[opp]] & personnel;
+		uint64 guards = RO->KingFlank[EI.king[opp]] & personnel;
 		uint64 awol = personnel ^ guards;
 		int nGuards = pop(guards) + pop(guards & Queen(opp));
 		int nAwol = pop(awol) + pop(awol & Queen(opp));
-		adjusted += (adjusted * (max(0, 2 * (nAwol - nGuards) - 1) + max(0, 3 * nIncursions + nHoles - 11))) / 32;
+		adjusted += (adjusted * (max(0, nAwol - nGuards) + max(0, 3 * nIncursions + nHoles - 10))) / 32;
 	}
 
-	int op = ((PhaseScale[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 1024;
-	int md = (PhaseScale[1] * adjusted) / 1024;
-	int eg = (PhaseScale[2] * adjusted) / 1024;
-	int cl = (PhaseScale[3] * adjusted) / 1024;
-	KA_E += (adjusted - KA_E) / (++KA_N);
-	EI.king_att_val[me] = Pack4(op, md, eg, cl);
-	IncV(EI.score, EI.king_att_val[me]);
-} 
+	int op = ((PhaseScale[0] + OwnRank<opp>(EI.king[opp])) * adjusted) / 32;
+	int md = (PhaseScale[1] * adjusted) / 32;
+	int eg = (PhaseScale[2] * adjusted) / 32;
+	int cl = (PhaseScale[3] * adjusted) / 32;
+	IncV(EI.score, 0 * cnt + Pack4(op, md, eg, cl));
+}
 
 template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 {
@@ -4458,7 +4447,7 @@ template<bool me, class POP> void eval_sequential(GEvalInfo& EI)
 {
 	POP pop;
 	Current->xray[me] = 0;
-	EI.king_att[me] = T(Current->patt[me] & EI.area[opp]) ? KingPAttack : 0;
+	EI.king_att[me] = Multiple(Current->patt[me] & EI.area[opp]) ? KingPAttackInc : 0;
 	DecV(EI.score, pop(Shift<opp>(EI.occ) & Pawn(me)) * Values::PawnBlocked);
 	EI.free[me] = Queen(opp) | King(opp) | (~(Current->patt[opp] | Pawn(me) | King(me)));
 	eval_queens<me, POP>(EI);
