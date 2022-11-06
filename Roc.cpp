@@ -417,14 +417,14 @@ constexpr array<int, 16> MatCode = { 0, 0, MatWP, MatBP, MatWN, MatBN, MatWL, Ma
 
 template<class Function, std::size_t... Indices>
 constexpr auto make_array_helper(Function f, std::index_sequence<Indices...>)
-->std::array<typename std::result_of<Function(std::size_t)>::type, sizeof...(Indices)>
+->std::array<decltype(f(std::size_t(0))), sizeof...(Indices)>
 {
 	return { { f(Indices)... } };
 }
 
 template<int N, class Function>
 constexpr auto make_array(Function f)
-->std::array<typename std::result_of<Function(std::size_t)>::type, N>
+->std::array<decltype(f(std::size_t(0))), N>
 {
 	return make_array_helper(f, std::make_index_sequence<N>{});
 }
@@ -725,73 +725,6 @@ constexpr sint16 KpkValue = 300 * CP_EVAL;
 constexpr sint16 EvalValue = 30000;
 constexpr sint16 MateValue = 32760 - 8 * (CP_SEARCH - 1);
 
-#if TB
-constexpr sint16 TBMateValue = 31380;
-constexpr sint16 TBCursedMateValue = 13;
-const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
-constexpr int NominalTbDepth = 33;
-inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
-
-constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
-extern unsigned TB_LARGEST;
-bool tb_init_fwd(const char*);
-
-#define TB_CUSTOM_POP_COUNT pop1
-#define TB_CUSTOM_LSB lsb
-#define TB_CUSTOM_BSWAP32 _byteswap_ulong 
-template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
-{
-	return func(Piece(White), Piece(Black),
-		King(White) | King(Black),
-		Queen(White) | Queen(Black),
-		Rook(White) | Rook(Black),
-		Bishop(White) | Bishop(Black),
-		Knight(White) | Knight(Black),
-		Pawn(White) | Pawn(Black),
-		Current->ply,
-		Current->castle_flags,
-		Current->ep_square,
-		(me == White), std::forward<Args_>(args)...);
-}
-
-
-
-unsigned tb_probe_root_fwd(
-	uint64_t _white,
-	uint64_t _black,
-	uint64_t _kings,
-	uint64_t _queens,
-	uint64_t _rooks,
-	uint64_t _bishops,
-	uint64_t _knights,
-	uint64_t _pawns,
-	unsigned _rule50,
-	unsigned _ep,
-	bool     _turn);
-
-static inline unsigned tb_probe_root_checked(
-	uint64_t _white,
-	uint64_t _black,
-	uint64_t _kings,
-	uint64_t _queens,
-	uint64_t _rooks,
-	uint64_t _bishops,
-	uint64_t _knights,
-	uint64_t _pawns,
-	unsigned _rule50,
-	unsigned _castling,
-	unsigned _ep,
-	bool     _turn)
-{
-	if (_castling != 0)
-		return TB_RESULT_FAILED;
-	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
-}
-
-int GetTBMove(unsigned res, int* best_score);
-
-#endif
-
 /*
 general move:
 0 - 11: from & to
@@ -895,6 +828,86 @@ GData* Current = Data;
 constexpr uint8 FlagSort = 1 << 0;
 constexpr uint8 FlagNoBcSort = 1 << 1;
 GData SaveData[1];
+
+#if TB
+constexpr sint16 TBMateValue = 31380;
+constexpr sint16 TBCursedMateValue = 13;
+const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue, TBMateValue };
+constexpr int NominalTbDepth = 33;
+inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
+
+constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
+extern unsigned TB_LARGEST;
+bool tb_init_fwd(const char*);
+
+#define TB_CUSTOM_POP_COUNT pop1
+#define TB_CUSTOM_LSB lsb
+#define TB_CUSTOM_BSWAP32 _byteswap_ulong 
+template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&&... args)
+{
+	return func(Piece(White), Piece(Black),
+		King(White) | King(Black),
+		Queen(White) | Queen(Black),
+		Rook(White) | Rook(Black),
+		Bishop(White) | Bishop(Black),
+		Knight(White) | Knight(Black),
+		Pawn(White) | Pawn(Black),
+		Current->ply,
+		Current->castle_flags,
+		Current->ep_square,
+		(me == White), std::forward<Args_>(args)...);
+}
+
+
+unsigned tb_probe_wdl_fwd(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _castling,
+	unsigned _ep,
+	bool     _turn);
+
+unsigned tb_probe_root_fwd(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _ep,
+	bool     _turn);
+
+static inline unsigned tb_probe_root_checked(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _castling,
+	unsigned _ep,
+	bool     _turn)
+{
+	if (_castling != 0)
+		return TB_RESULT_FAILED;
+	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
+}
+
+int GetTBMove(unsigned res, int* best_score);
+
+#endif
 
 enum
 {
@@ -6148,6 +6161,30 @@ INLINE bool is_killer(uint16 move)
 	return false;
 }
 
+void mark_evasions(int* list)
+{
+	for (; T(*list); ++list)
+	{
+		int move = (*list) & 0xFFFF;
+		if (F(PieceAt(To(move))) && F(move & 0xE000))
+		{
+			if (move == Current->ref[0])
+				*list |= RefOneScore;
+			else if (move == Current->ref[1])
+				*list |= RefTwoScore;
+			else if (find(Current->killer.begin() + 1, Current->killer.end(), move) != Current->killer.end())
+			{
+				int ik = static_cast<int>(find(Current->killer.begin() + 1, Current->killer.end(), move) - Current->killer.begin());
+				*list |= (0xFF >> Max(0, ik - 2)) << 16;
+				if (ik == 1)
+					*list |= 1 << 24;
+			}
+			else
+				*list |= HistoryP(JoinFlag(move), PieceAt(From(move)), From(move), To(move));
+		}
+	}
+}
+
 template<bool me> void gen_next_moves(int depth)
 {
 	int* p, *q, *r;
@@ -6561,6 +6598,12 @@ template<bool me> INLINE bool forkable(int dst)
 	return false;
 }
 
+template<class T_> T_* NullTerminate(T_* list)
+{
+	*list = 0;
+	return list;
+}
+
 template <bool me> int* gen_captures(int* list)
 {
 	static const int MvvLvaPromotion = RO->MvvLva[WhiteQueen][BlackQueen];
@@ -6622,12 +6665,6 @@ template <bool me> int* gen_captures(int* list)
 				list = AddCaptureP(list, IQueen[me], lsb(u), lsb(v), 0);
 	}
 	return NullTerminate(list);
-}
-
-template<class T_> T_* NullTerminate(T_* list)
-{
-	*list = 0;
-	return list;
 }
 
 template<bool me> int* gen_evasions(int* list)
@@ -6722,30 +6759,6 @@ template<bool me> int* gen_evasions(int* list)
 		for (esc = QueenAttacks(lsb(u), PieceAll()) & inter; T(esc); Cut(esc))
 			list = AddCaptureP(list, IQueen[me], lsb(u), lsb(esc), 0);
 	return NullTerminate(list);
-}
-
-void mark_evasions(int* list)
-{
-	for (; T(*list); ++list)
-	{
-		int move = (*list) & 0xFFFF;
-		if (F(PieceAt(To(move))) && F(move & 0xE000))
-		{
-			if (move == Current->ref[0])
-				*list |= RefOneScore;
-			else if (move == Current->ref[1])
-				*list |= RefTwoScore;
-			else if (find(Current->killer.begin() + 1, Current->killer.end(), move) != Current->killer.end())
-			{
-				int ik = static_cast<int>(find(Current->killer.begin() + 1, Current->killer.end(), move) - Current->killer.begin());
-				*list |= (0xFF >> Max(0, ik - 2)) << 16;
-				if (ik == 1)
-					*list |= 1 << 24;
-			}
-			else
-				*list |= HistoryP(JoinFlag(move), PieceAt(From(move)), From(move), To(move));
-		}
-	}
 }
 
 template<bool me> INLINE uint64 PawnJoins()
@@ -7501,7 +7514,7 @@ template<bool me, bool evasion> HashResult_ try_hash(int beta, int depth, int fl
 
 #if TB
 	if (hash_depth < NominalTbDepth && TB_LARGEST > 0 && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST) {
-		auto res = TBProbe(tb_probe_wdl, me);
+		auto res = TBProbe(tb_probe_wdl_fwd, me);
 		if (res != TB_RESULT_FAILED) {
 			INFO->tbHits++;
 			hash_high(TbValues[res], TbDepth(depth));
@@ -7812,6 +7825,156 @@ template<bool me, bool exclusion, bool evasion> int scout(int beta, int depth, i
 }
 
 
+int time_to_stop(GSearchInfo* SI, int time, int searching)
+{
+	if (time > SHARED->hardTimeLimit)
+		return 1;
+	if (searching)
+		return 0;
+	if (2 * time > SHARED->hardTimeLimit)
+		return 1;
+	if (SI->Bad)
+		return 0;
+	if (time > SHARED->softTimeLimit)
+		return 1;
+	if (T(SI->Change) || T(SI->FailLow))
+		return 0;
+	if (time * 100 > SHARED->softTimeLimit * TimeNoChangeMargin)
+		return 1;
+	if (F(SI->Early))
+		return 0;
+	if (time * 100 > SHARED->softTimeLimit * TimeNoPVSCOMargin)
+		return 1;
+	if (SI->Singular < 1)
+		return 0;
+	if (time * 100 > SHARED->softTimeLimit * TimeSingOneMargin)
+		return 1;
+	if (SI->Singular < 2)
+		return 0;
+	if (time * 100 > SHARED->softTimeLimit * TimeSingTwoMargin)
+		return 1;
+	return 0;
+}
+
+void send_curr_move(int move, int cnt)
+{
+	if (INFO->id != 0)
+		return;
+	auto currTime = now();
+	auto diffTime = millisecs(SHARED->startTime, currTime);
+	if (diffTime <= InfoLag || millisecs(InfoTime, currTime) <= InfoDelay)
+		return;
+	InfoTime = currTime;
+	char moveStr[16];
+	move_to_string(move, moveStr);
+	Say("info currmove " + string(moveStr) + " currmovenumber " + Str(cnt) + "\n");
+}
+
+static void send_pv
+(const int* PV,
+	size_t nodes,
+	size_t tbHits,
+	int depth,
+	int selDepth,
+	int bestScore,
+	int bestMove,
+	bool fail_low,
+	const std::chrono::high_resolution_clock::time_point& startTime)
+{
+	const char* scoreType = "mate";
+	if (bestScore > EvalValue)
+		bestScore = (MateValue - bestScore + 1) / 2;
+	else if (bestScore < -EvalValue)
+		bestScore = -(bestScore + MateValue + 1) / 2;
+	else
+	{
+		scoreType = fail_low ? "cp<" : "cp";
+		bestScore /= CP_SEARCH;
+	}
+
+	auto currTime = now();
+	auto elapsedTime = millisecs(startTime, currTime);
+	if (elapsedTime == 0)
+		elapsedTime = 1;
+
+	size_t nps = (nodes * 1000) / elapsedTime;
+
+	char pvStr[PIPE_BUF];
+	unsigned pvPos = 0;
+	for (unsigned i = 0; i < MAX_PV_LEN && PV[i] != 0; i++)
+	{
+		if (pvPos >= sizeof(pvStr) - 32)
+			break;
+		int move = PV[i];
+		pvStr[pvPos++] = ' ';
+		pvStr[pvPos++] = ((move >> 6) & 7) + 'a';
+		pvStr[pvPos++] = ((move >> 9) & 7) + '1';
+		pvStr[pvPos++] = (move & 7) + 'a';
+		pvStr[pvPos++] = ((move >> 3) & 7) + '1';
+		if (IsPromotion(move))
+		{
+			if ((move & 0xF000) == FlagPQueen)
+				pvStr[pvPos++] = 'q';
+			else if ((move & 0xF000) == FlagPRook)
+				pvStr[pvPos++] = 'r';
+			else if ((move & 0xF000) == FlagPBishop)
+				pvStr[pvPos++] = 'b';
+			else if ((move & 0xF000) == FlagPKnight)
+				pvStr[pvPos++] = 'n';
+		}
+	}
+	pvStr[pvPos++] = '\0';
+
+	Say("info depth " + Str(depth / 2) +
+		" seldepth " + Str(selDepth) +
+		" score " + string(scoreType) + " " + Str(bestScore) +
+		" nodes " + Str(nodes) + " nps " + Str(nps) + " tbhits " + Str(tbHits) +
+		" time " + Str(millisecs(startTime, currTime)) + " pv" + string(pvStr) + "\n");
+}
+
+void send_multipv(int depth, int curr_number)
+{
+	abort();	// not implemented
+}
+
+void send_pv(int depth, int alpha, int beta, bool fail_low = false)
+{
+	int sel_depth = 0;
+	while (sel_depth < 126 && T((Data + sel_depth + 1)->att[0]))
+		++sel_depth;
+	int move = (INFO->bestMove == 0 ? RootList[0] : INFO->bestMove);
+	bool isBest = false;
+	INFO->selDepth = sel_depth;
+	INFO->PV[0] = move;
+	do_move(T(Current->turn), move);
+	unsigned pvPtr = 1, pvLen = 64;
+	pick_pv(pvPtr, pvLen);
+	undo_move(F(Current->turn), move);
+	// find out whether this is the best candidate move so far
+	{
+		LOCK_SHARED;
+		isBest = depth > SHARED->best.depth;
+		if (depth == SHARED->best.depth && move != SHARED->best.move)
+		{
+			double delta = INFO->bestScore - SHARED->best.value + (SHARED->best.failLow ? 65536 : 0) - (fail_low ? 65536 : 0) + (INFO->id ? 0 : 0.5);
+			isBest = delta > 0;
+		}
+		if (isBest)
+			SHARED->best = { depth, INFO->bestScore, move, INFO->id, fail_low };
+	}
+	if (!isBest)
+		return;
+
+	size_t nodes = 0, tbHits = 0;
+	for (int i = 0; i < SETTINGS->nThreads; i++)
+	{
+		nodes += THREADS[i]->nodes;
+		tbHits += THREADS[i]->tbHits;
+	}
+	const ThreadOwn_ my = *THREADS[INFO->id];
+	send_pv(&my.PV[0], nodes, tbHits, my.depth, my.selDepth, my.bestScore, my.bestMove, fail_low, SHARED->startTime);
+}
+
 template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int flags)
 {
 	int value, move, cnt, pext = 0, ext, hash_value = -MateValue, margin, singular = 0, played = 0, new_depth, hash_move,
@@ -7879,7 +8042,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 #if TB
 	if (!root && hash_depth < NominalTbDepth && depth >= TBMinDepth && unsigned(popcnt(PieceAll())) <= TB_LARGEST)
 	{
-		auto res = TBProbe(tb_probe_wdl, me);
+		auto res = TBProbe(tb_probe_wdl_fwd, me);
 		if (res != TB_RESULT_FAILED) {
 			++INFO->tbHits;
 			hash_high(TbValues[res], TbDepth(depth));
@@ -8401,125 +8564,6 @@ template<bool me> int multipv(int depth)
 	return Current->score;
 }
 
-static void send_pv
-	(const int* PV,
-	 size_t nodes,
-	 size_t tbHits,
-	 int depth,
-	 int selDepth,
-	 int bestScore,
-	 int bestMove,
-	 bool fail_low,
-	 const std::chrono::high_resolution_clock::time_point& startTime)
-{
-	const char *scoreType = "mate";
-	if (bestScore > EvalValue)
-		bestScore = (MateValue - bestScore + 1) / 2;
-	else if (bestScore < -EvalValue)
-		bestScore = -(bestScore + MateValue + 1) / 2;
-	else
-	{
-		scoreType = fail_low ? "cp<" : "cp";
-		bestScore /= CP_SEARCH;
-	}
-
-	auto currTime = now();
-	auto elapsedTime = millisecs(startTime, currTime);
-	if (elapsedTime == 0)
-		elapsedTime = 1;
-
-	size_t nps = (nodes * 1000) / elapsedTime;
-
-	char pvStr[PIPE_BUF];
-	unsigned pvPos = 0;
-	for (unsigned i = 0; i < MAX_PV_LEN && PV[i] != 0; i++)
-	{
-		if (pvPos >= sizeof(pvStr) - 32)
-			break;
-		int move = PV[i];
-		pvStr[pvPos++] = ' ';
-		pvStr[pvPos++] = ((move >> 6) & 7) + 'a';
-		pvStr[pvPos++] = ((move >> 9) & 7) + '1';
-		pvStr[pvPos++] = (move & 7) + 'a';
-		pvStr[pvPos++] = ((move >> 3) & 7) + '1';
-		if (IsPromotion(move))
-		{
-			if ((move & 0xF000) == FlagPQueen)
-				pvStr[pvPos++] = 'q';
-			else if ((move & 0xF000) == FlagPRook)
-				pvStr[pvPos++] = 'r';
-			else if ((move & 0xF000) == FlagPBishop)
-				pvStr[pvPos++] = 'b';
-			else if ((move & 0xF000) == FlagPKnight)
-				pvStr[pvPos++] = 'n';
-		}
-	}
-	pvStr[pvPos++] = '\0';
-
-	Say("info depth " + Str(depth / 2) + 
-		" seldepth " + Str(selDepth) + 
-		" score " + string(scoreType) + " " + Str(bestScore) + 
-		" nodes " + Str(nodes) + " nps " + Str(nps) + " tbhits " + Str(tbHits) + 
-		" time " + Str(millisecs(startTime, currTime)) + " pv" + string(pvStr) + "\n");
-}
-
-void send_pv(int depth, int alpha, int beta, bool fail_low = false)
-{
-	int sel_depth = 0;
-	while (sel_depth < 126 && T((Data + sel_depth + 1)->att[0]))
-		++sel_depth;
-	int move = (INFO->bestMove == 0 ? RootList[0] : INFO->bestMove);
-	bool isBest = false;
-	INFO->selDepth = sel_depth;
-	INFO->PV[0] = move;
-	do_move(T(Current->turn), move);
-	unsigned pvPtr = 1, pvLen = 64;
-	pick_pv(pvPtr, pvLen);
-	undo_move(F(Current->turn), move);
-	// find out whether this is the best candidate move so far
-	{
-		LOCK_SHARED;
-		isBest = depth > SHARED->best.depth;
-		if (depth == SHARED->best.depth && move != SHARED->best.move)
-		{
-			double delta = INFO->bestScore - SHARED->best.value + (SHARED->best.failLow ? 65536 : 0) - (fail_low ? 65536 : 0) + (INFO->id ? 0 : 0.5);
-			isBest = delta > 0;
-		}
-		if (isBest)
-			SHARED->best = { depth, INFO->bestScore, move, INFO->id, fail_low };
-	}
-	if (!isBest)
-		return;
-
-	size_t nodes = 0, tbHits = 0;
-	for (int i = 0; i < SETTINGS->nThreads; i++)
-	{
-		nodes += THREADS[i]->nodes;
-		tbHits += THREADS[i]->tbHits;
-	}
-	const ThreadOwn_ my = *THREADS[INFO->id];
-	send_pv(&my.PV[0], nodes, tbHits, my.depth, my.selDepth, my.bestScore, my.bestMove, fail_low, SHARED->startTime);
-}
-
-void send_multipv(int depth, int curr_number)
-{
-	abort();	// not implemented
-}
-
-void send_curr_move(int move, int cnt)
-{
-	if (INFO->id != 0)
-		return;
-	auto currTime = now();
-	auto diffTime = millisecs(SHARED->startTime, currTime);
-	if (diffTime <= InfoLag || millisecs(InfoTime, currTime) <= InfoDelay)
-		return;
-	InfoTime = currTime;
-	char moveStr[16];
-	move_to_string(move, moveStr);
-	Say("info currmove " + string(moveStr) + " currmovenumber " + Str(cnt) + "\n");
-}
-
 void send_move_info(int bestScore)
 {
 	size_t nodes = 1, tbHits = 0;
@@ -8628,37 +8672,6 @@ void get_position(char string[])
 	copy(Stack.begin() + sp - Current->ply, Stack.begin() + sp + 1, Stack.begin());
 	//memcpy(Stack, Stack + sp - Current->ply, (Current->ply + 1) * sizeof(uint64));
 	sp = Current->ply;
-}
-
-int time_to_stop(GSearchInfo* SI, int time, int searching)
-{
-	if (time > SHARED->hardTimeLimit)
-		return 1;
-	if (searching)
-		return 0;
-	if (2 * time > SHARED->hardTimeLimit)
-		return 1;
-	if (SI->Bad)
-		return 0;
-	if (time > SHARED->softTimeLimit)
-		return 1;
-	if (T(SI->Change) || T(SI->FailLow))
-		return 0;
-	if (time * 100 > SHARED->softTimeLimit * TimeNoChangeMargin)
-		return 1;
-	if (F(SI->Early))
-		return 0;
-	if (time * 100 > SHARED->softTimeLimit * TimeNoPVSCOMargin)
-		return 1;
-	if (SI->Singular < 1)
-		return 0;
-	if (time * 100 > SHARED->softTimeLimit * TimeSingOneMargin)
-		return 1;
-	if (SI->Singular < 2)
-		return 0;
-	if (time * 100 > SHARED->softTimeLimit * TimeSingTwoMargin)
-		return 1;
-	return 0;
 }
 
 inline int get_number(const char *token)
@@ -9316,6 +9329,23 @@ unsigned tb_probe_root_fwd(
 	bool     _turn)
 {
 	return tb_probe_root_impl(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn, nullptr);
+}
+
+unsigned tb_probe_wdl_fwd(
+	uint64_t _white,
+	uint64_t _black,
+	uint64_t _kings,
+	uint64_t _queens,
+	uint64_t _rooks,
+	uint64_t _bishops,
+	uint64_t _knights,
+	uint64_t _pawns,
+	unsigned _rule50,
+	unsigned _castling,
+	unsigned _ep,
+	bool     _turn)
+{
+	return tb_probe_wdl(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _castling, _ep, _turn);
 }
 
 bool tb_init_fwd(const char* path)
