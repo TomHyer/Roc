@@ -33,664 +33,39 @@ typedef std::chrono::high_resolution_clock::time_point time_point;
 #include <windows.h>
 #undef min
 #undef max
-#include <intrin.h>
 #include <assert.h>
 template<class T> std::string Str(const T& src) { return std::to_string(src); }
 // Windows-specific
 typedef HANDLE mutex_t;
 typedef HANDLE event_t;
 
+#include "Base/Platform.h"
+#include "Chess/Chess.h"
+#include "Chess/Bit.h"
+#include "Chess/Pack.h"
+#include "Chess/Board.h"
+#include "Chess/Score.h"
+#include "Chess/Move.h"
+#include "Chess/Killer.h"
+#include "Chess/Piece.h"
+#include "Chess/Material.h"
+#include "Chess/PawnEval.h"
+#include "Chess/Eval.h"
+#include "Chess/Weights.h"
+#include "Chess/Magic.h"
+#include "Chess/Shared.h"
+#include "Chess/Fathom_fwd.h"
+#include "Chess/Roc.h"
+
 //#include "TunerParams.inc"
 
 using namespace std;
-#define INLINE __forceinline
-typedef unsigned char uint8;
-typedef char sint8;
-typedef unsigned short uint16;
-typedef short sint16;
-typedef unsigned int uint32;
-typedef int sint32;
-typedef unsigned long long uint64;
-typedef long long sint64;
-
-#define TEMPLATE_ME(f) (me ? f<1> : f<0>)
-template<class T> INLINE int Sgn(const T& x)
-{
-	return x == 0 ? 0 : (x > 0 ? 1 : -1);
-}
-template<class T> INLINE const T& Min(const T& x, const T& y)
-{
-	return x < y ? x : y;
-}
-template<class T> INLINE constexpr const T& Max(const T& x, const T& y)
-{
-	return x < y ? y : x;
-}
-template<class T> INLINE constexpr T Abs(const T& x)
-{
-	return x > 0 ? x : -x;
-}
-template<class T> INLINE constexpr T Square(const T& x)
-{
-	return x * x;
-}
-template<class C> INLINE bool T(const C& x)
-{
-	return x != 0;
-}
-template<class T> INLINE bool F(const T& x)
-{
-	return x == 0;
-}
-template<class T> INLINE bool Even(const T& x)
-{
-	return F(x & 1);
-}
-template<class C> INLINE bool Odd(const C& x)
-{
-	return T(x & 1);
-}
-
-#ifdef TWO_PHASE
-typedef sint32 packed_t;
-
-INLINE packed_t Pack2(sint16 op, sint16 eg)
-{
-	return op + (static_cast<sint32>(eg) << 16);
-}
-INLINE packed_t Pack4(sint16 op, sint16 mid, sint16 eg, sint16 asym)
-{
-	return Pack2(op, eg);
-}
-
-INLINE sint16 Opening(packed_t x) { return static_cast<sint16>(x & 0xFFFF); }
-INLINE sint16 Middle(packed_t x) { return 0; }
-INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x >> 16) + ((x >> 15) & 1)); }
-INLINE sint16 Closed(packed_t x) { return 0; }
-#else
-typedef sint64 packed_t;
-
-constexpr packed_t Pack4(sint16 op, sint16 mid, sint16 eg, sint16 asym)
-{
-	return op + (static_cast<sint64>(mid) << 16) + (static_cast<sint64>(eg) << 32) + (static_cast<sint64>(asym) << 48);
-}
-constexpr packed_t Pack2(sint16 x, sint16 y)
-{
-	return Pack4(x, (x + y) / 2, y, 0);
-}
-
-INLINE sint16 Opening(packed_t x) { return static_cast<sint16>(x & 0xFFFF); }
-INLINE sint16 Middle(packed_t x) { return static_cast<sint16>((x >> 16) + ((x >> 15) & 1)); }
-INLINE sint16 Endgame(packed_t x) { return static_cast<sint16>((x >> 32) + ((x >> 31) & 1)); }
-INLINE sint16 Closed(packed_t x) { return static_cast<sint16>((x >> 48) + ((x >> 47) & 1)); }
-
-#endif
 
 
-// unsigned for king_att
-constexpr uint32 UPack(uint16 x, uint16 y)
-{
-	return x + (static_cast<uint32>(y) << 16);
-}
-INLINE uint16 UUnpack1(uint32 x)
-{
-	return static_cast<uint16>(x & 0xFFFF);
-}
-INLINE uint16 UUnpack2(uint32 x)
-{
-	return static_cast<sint16>(x >> 16);
-}
-
-
-INLINE int constexpr FileOf(int loc)
-{
-	return loc & 7;
-}
-INLINE constexpr int RankOf(int loc)
-{
-	return loc >> 3;
-}
-template<bool me> INLINE int OwnRank(int loc)
-{
-	return me ? (7 - RankOf(loc)) : RankOf(loc);
-}
-INLINE int OwnRank(bool me, int loc)
-{
-	return me ? (7 - RankOf(loc)) : RankOf(loc);
-}
-INLINE int NDiagOf(int loc)
-{
-	return 7 - FileOf(loc) + RankOf(loc);
-}
-INLINE int SDiagOf(int loc)
-{
-	return FileOf(loc) + RankOf(loc);
-}
-INLINE constexpr int Dist(int x, int y)
-{
-	return Max(Abs(RankOf(x) - RankOf(y)), Abs(FileOf(x) - FileOf(y)));
-}
-
-INLINE constexpr uint64 Bit(int loc)
-{
-	return 1ull << loc;
-}
-
-#ifndef HNI
-INLINE void Cut(uint64& x)
-{
-	x &= x - 1;
-}
-#else
-INLINE void Cut(uint64& x)
-{
-	x = _blsr_u64(x);
-}
-#endif
-INLINE bool Multiple(const uint64& b)
-{
-	return T(b & (b - 1));
-}
-INLINE bool Single(const uint64& b)
-{
-	return F(b & (b - 1));
-}
-INLINE bool HasBit(const uint64& bb, int loc)
-{
-	return T(bb & Bit(loc));
-}
-
-INLINE int From(uint16 move)
-{
-	return (move >> 6) & 0x3f;
-}
-INLINE int To(uint16 move)
-{
-	return move & 0x3f;
-}
-inline void SetScore(int* move, uint16 score)
-{
-	*move = (*move & 0xFFFF) | (score << 16);
-}  // notice this operates on long-form (int) moves
-
-constexpr uint64 Filled = 0xFFFFFFFFFFFFFFFF;
-constexpr uint64 Interior = 0x007E7E7E7E7E7E00;
-constexpr uint64 Boundary = ~Interior;
-constexpr uint64 LightArea = 0x55AA55AA55AA55AA;
-constexpr uint64 DarkArea = ~LightArea;
-
-INLINE uint32 High32(const uint64& x)
-{
-	return (uint32)(x >> 32);
-}
-INLINE uint32 Low32(const uint64& x)
-{
-	return (uint32)(x);
-}
-
-constexpr int N_KILLER = 2;
-
-constexpr int MAX_PHASE = 128;
-constexpr int MIDDLE_PHASE = 64;
-constexpr int PHASE_M2M = MAX_PHASE - MIDDLE_PHASE;
-
-constexpr int MAX_HEIGHT = 128;
-
-typedef sint16 score_t;
-
-constexpr score_t CP_EVAL = 4;	// numeric value of 1 centipawn, in eval phase
-constexpr score_t CP_SEARCH = 4;	// numeric value of 1 centipawn, in search phase (# of value equivalence classes in 1-cp interval)
-
-									// helper to divide intermediate quantities to form scores
-									// note that straight integer division (a la Gull) creates an attractor at 0
-									// we support this, especially for weights inherited from Gull which have not been tuned for Roc
-template<int DEN, int SINK = DEN> struct Div_
-{
-	int operator()(int x) const
-	{
-		constexpr int shift = std::numeric_limits<int>::max() / (2 * DEN);
-		constexpr int shrink = (SINK - DEN) / 2;
-		const int y = x > 0 ? Max(0, x - shrink) : Min(0, x + shrink);
-		return (y + DEN * shift) / DEN - shift;
-	}
-};
-
-constexpr uint8 White = 0;
-constexpr uint8 Black = 1;
-constexpr uint8 WhitePawn = 2;
-constexpr uint8 BlackPawn = 3;
-constexpr uint8 IPawn[2] = { WhitePawn, BlackPawn };
-constexpr uint8 WhiteKnight = 4;
-constexpr uint8 BlackKnight = 5;
-constexpr uint8 IKnight[2] = { WhiteKnight, BlackKnight };
-constexpr uint8 WhiteLight = 6;
-constexpr uint8 BlackLight = 7;
-constexpr uint8 ILight[2] = { WhiteLight, BlackLight };
-constexpr uint8 WhiteDark = 8;
-constexpr uint8 BlackDark = 9;
-constexpr uint8 IDark[2] = { WhiteDark, BlackDark };
-constexpr uint8 WhiteRook = 10;
-constexpr uint8 BlackRook = 11;
-constexpr uint8 IRook[2] = { WhiteRook, BlackRook };
-constexpr uint8 WhiteQueen = 12;
-constexpr uint8 BlackQueen = 13;
-constexpr uint8 IQueen[2] = { WhiteQueen, BlackQueen };
-constexpr uint8 WhiteKing = 14;
-constexpr uint8 BlackKing = 15;
-constexpr uint8 IKing[2] = { WhiteKing, BlackKing };
-INLINE bool IsBishop(uint8 piece)
-{
-	return piece >= WhiteLight && piece < WhiteRook;
-}
-
-constexpr uint8 CanCastle_OO = 1;
-constexpr uint8 CanCastle_oo = 2;
-constexpr uint8 CanCastle_OOO = 4;
-constexpr uint8 CanCastle_ooo = 8;
-
-constexpr uint16 FlagCastling = 0x1000;  // also overloaded to flag "joins", desirable quiet moves
-constexpr uint16 FlagEP = 0x2000;
-constexpr uint16 FlagPKnight = 0x4000;
-constexpr uint16 FlagPBishop = 0x6000;
-constexpr uint16 FlagPRook = 0xA000;
-constexpr uint16 FlagPQueen = 0xC000;
-
-INLINE bool IsPromotion(uint16 move)
-{
-	return T(move & 0xC000);
-}
-INLINE bool IsCastling(int piece, uint16 move)
-{
-	return piece >= WhiteKing && abs(To(move) - From(move)) == 2;
-}
-INLINE bool IsEP(uint16 move)
-{
-	return (move & 0xF000) == FlagEP;
-}
-template<bool me> INLINE uint8 Promotion(uint16 move)
-{
-	uint8 retval = (move & 0xF000) >> 12;
-	if (retval == WhiteLight && HasBit(DarkArea, To(move)))
-		retval += 2;
-	return retval + (me ? 1 : 0);
-}
-
-#ifndef W32_BUILD
-INLINE int lsb(uint64 x)
-{
-	unsigned long y;
-	_BitScanForward64(&y, x);
-	return y;
-}
-
-INLINE int msb(uint64 x)
-{
-	unsigned long y;
-	_BitScanReverse64(&y, x);
-	return y;
-}
-
-INLINE int popcnt(uint64 x)
-{
-	x = x - ((x >> 1) & 0x5555555555555555);
-	x = (x & 0x3333333333333333) + ((x >> 2) & 0x3333333333333333);
-	x = (x + (x >> 4)) & 0x0f0f0f0f0f0f0f0f;
-	return (x * 0x0101010101010101) >> 56;
-}
-
-#else
-INLINE int lsb(uint64 x) {
-	_asm {
-		mov eax, dword ptr x[0]
-		test eax, eax
-		jz l_high
-		bsf eax, eax
-		jmp l_ret
-		l_high : bsf eax, dword ptr x[4]
-				 add eax, 20h
-				 l_ret :
-	}
-}
-
-INLINE int msb(uint64 x) {
-	_asm {
-		mov eax, dword ptr x[4]
-		test eax, eax
-		jz l_low
-		bsr eax, eax
-		add eax, 20h
-		jmp l_ret
-		l_low : bsr eax, dword ptr x[0]
-				l_ret :
-	}
-}
-
-INLINE int popcnt(uint64 x) {
-	unsigned int x1, x2;
-	x1 = (unsigned int)(x & 0xFFFFFFFF);
-	x1 -= (x1 >> 1) & 0x55555555;
-	x1 = (x1 & 0x33333333) + ((x1 >> 2) & 0x33333333);
-	x1 = (x1 + (x1 >> 4)) & 0x0F0F0F0F;
-	x2 = (unsigned int)(x >> 32);
-	x2 -= (x2 >> 1) & 0x55555555;
-	x2 = (x2 & 0x33333333) + ((x2 >> 2) & 0x33333333);
-	x2 = (x2 + (x2 >> 4)) & 0x0F0F0F0F;
-	return ((x1 * 0x01010101) >> 24) + ((x2 * 0x01010101) >> 24);
-}
-#endif
-
-typedef int(*pop_func_t)(const uint64&);
-int pop0(const uint64& b) { return popcnt(b); }
-struct pop0_
-{
-	INLINE int operator()(const uint64& b) const { return pop0(b); }
-	INLINE pop_func_t Imp() const { return pop0; }
-};
-#ifdef W32_BUILD
-#define pop1 pop0
-#define pop1_ pop0_
-#else
-int pop1(const uint64& b) { return static_cast<int>(_mm_popcnt_u64(b)); }
-struct pop1_
-{
-	INLINE int operator()(const uint64& b) const { return pop1(b); }
-	INLINE pop_func_t Imp() const { return pop1; }
-};
-#endif
-
-constexpr int MatWQ = 1;
-constexpr int MatBQ = 3 * MatWQ;
-constexpr int MatWR = 3 * MatBQ;
-constexpr int MatBR = 3 * MatWR;
-constexpr int MatWL = 3 * MatBR;
-constexpr int MatBL = 2 * MatWL;
-constexpr int MatWD = 2 * MatBL;
-constexpr int MatBD = 2 * MatWD;
-constexpr int MatWN = 2 * MatBD;
-constexpr int MatBN = 3 * MatWN;
-constexpr int MatWP = 3 * MatBN;
-constexpr int MatBP = 9 * MatWP;
-constexpr int TotalMat = 2 * (MatWQ + MatBQ) + MatWL + MatBL + MatWD + MatBD + 2 * (MatWR + MatBR + MatWN + MatBN) + 8 * (MatWP + MatBP) + 1;
-constexpr int FlagUnusualMaterial = 1 << 30;
-
-constexpr array<int, 16> MatCode = { 0, 0, MatWP, MatBP, MatWN, MatBN, MatWL, MatBL, MatWD, MatBD, MatWR, MatBR, MatWQ, MatBQ, 0, 0 };
-
-template<class Function, std::size_t... Indices>
-constexpr auto make_array_helper(Function f, std::index_sequence<Indices...>)
-->std::array<decltype(f(std::size_t(0))), sizeof...(Indices)>
-{
-	return { { f(Indices)... } };
-}
-
-template<int N, class Function>
-constexpr auto make_array(Function f)
-->std::array<decltype(f(std::size_t(0))), N>
-{
-	return make_array_helper(f, std::make_index_sequence<N>{});
-}
-
-
-namespace Calc
-{
-	constexpr uint64 FileA = 0x0101010101010101;
-	constexpr uint64 Line0 = 0x00000000000000FF;
-	constexpr uint64 NDiagMain = 0x8040201008040201;
-	constexpr uint64 SDiagMain = 0x0102040810204080;
-}
-constexpr array<uint64, 8> File = { Calc::FileA, Calc::FileA << 1, Calc::FileA << 2, Calc::FileA << 3, Calc::FileA << 4, Calc::FileA << 5, Calc::FileA << 6, Calc::FileA << 7 };
-constexpr array<uint64, 8> Line = { Calc::Line0, (Calc::Line0 << 8), (Calc::Line0 << 16), (Calc::Line0 << 24), (Calc::Line0 << 32), (Calc::Line0 << 40), (Calc::Line0 << 48), (Calc::Line0 << 56) };
-
-namespace Calc
-{
-	template<typename PRED_> constexpr uint64 BuildBB(PRED_ pred, int sq, int n = 64)
-	{
-		return n > 0 ? BuildBB<PRED_>(pred, sq, n - 1) | (pred(sq, n - 1) ? Bit(n - 1) : 0ull) : 0ull;
-	}
-
-	constexpr uint64 HLine(int sq)
-	{
-		return Line[RankOf(sq)] ^ Bit(sq);
-	}
-	constexpr uint64 VLine(int sq)
-	{
-		return File[FileOf(sq)] ^ Bit(sq);
-	}
-	constexpr uint64 Diag2(uint64 main, int which)
-	{
-		return which < 0 ? main >> (-8 * which) : main << (8 * which);
-	}
-	constexpr uint64 NDiag(int sq)
-	{
-		return Diag2(NDiagMain, RankOf(sq) - FileOf(sq)) ^ Bit(sq);
-	}
-	constexpr uint64 SDiag(int sq)
-	{
-		return Diag2(SDiagMain, RankOf(sq) + FileOf(sq) - 7) ^ Bit(sq);
-	}
-
-	constexpr uint64 PAttW(int sq)
-	{
-		return (FileOf(sq) > 0 ? Bit(sq) << 7 : 0ull) | (FileOf(sq) < 7 ? Bit(sq) << 9 : 0ull);
-	}
-	constexpr uint64 PAttB(int sq)
-	{
-		return (FileOf(sq) > 0 ? Bit(sq) >> 9 : 0ull) | (FileOf(sq) < 7 ? Bit(sq) >> 7 : 0ull);
-	}
-	constexpr bool IsNAtt(int from, int to)
-	{
-		return Square(RankOf(from) - RankOf(to)) + Square(FileOf(from) - FileOf(to)) == 5;
-	}
-	constexpr uint64 NAtt(int sq)
-	{
-		return BuildBB(IsNAtt, sq);
-	}
-	constexpr bool IsKAtt(int from, int to)
-	{
-		return Dist(from, to) == 1;
-	}
-	constexpr uint64 KAtt(int sq)
-	{
-		return BuildBB(IsKAtt, sq);
-	}
-
-	constexpr uint64 West(int file)
-	{
-		return file > 0 ? File[file - 1] | West(file - 1) : 0ull;
-	}
-	constexpr uint64 East(int file)
-	{
-		return file < 7 ? File[file + 1] | East(file + 1) : 0ull;
-	}
-	constexpr uint64 ForwardW(int rank)
-	{
-		return rank < 7 ? Line[rank + 1] | ForwardW(rank + 1) : 0ull;
-	}
-	constexpr uint64 ForwardB(int rank)
-	{
-		return rank > 0 ? Line[rank - 1] | ForwardB(rank - 1) : 0ull;
-	}
-
-	constexpr bool IsBetween(int from, int sq, int to)
-	{
-		return ((from > sq && sq > to) || (from < sq && sq < to))
-			&& ((RankOf(from) == RankOf(sq) && RankOf(sq) == RankOf(to))
-				|| (FileOf(from) == FileOf(sq) && FileOf(sq) == FileOf(to))
-				|| (NDiagOf(from) == NDiagOf(sq) && NDiagOf(sq) == NDiagOf(to))
-				|| (SDiagOf(from) == SDiagOf(sq) && SDiagOf(sq) == SDiagOf(to)));
-	}
-}
-constexpr array<uint64, 64> HLine = make_array<64>(Calc::HLine);
-constexpr array<uint64, 64> VLine = make_array<64>(Calc::VLine);
-constexpr array<uint64, 64> NDiag = make_array<64>(Calc::NDiag);
-constexpr array<uint64, 64> SDiag = make_array<64>(Calc::SDiag);
-constexpr array<array<uint64, 64>, 2> PAtt = { make_array<64>(Calc::PAttW) , make_array<64>(Calc::PAttB) };
-constexpr array<uint64, 64> NAtt = make_array<64>(Calc::NAtt);
-constexpr array<uint64, 64> KAtt = make_array<64>(Calc::KAtt);
-constexpr array<uint64, 8> West = make_array<8>(Calc::West);
-constexpr array<uint64, 8> East = make_array<8>(Calc::East);
-constexpr array<array<uint64, 8>, 2> Forward = { make_array<8>(Calc::ForwardW), make_array<8>(Calc::ForwardB) };
-
-namespace Calc
-{
-	constexpr uint64 RMask(int sq)
-	{
-		return ::HLine[sq] | ::VLine[sq];
-	}
-	constexpr uint64 BMask(int sq)
-	{
-		return ::NDiag[sq] | ::SDiag[sq];
-	}
-
-	constexpr bool IsNAttAtt(int from, int to)
-	{
-		return !!(::NAtt[from] & ::NAtt[to]);
-	}
-	constexpr uint64 NAttAtt(int sq)
-	{
-		return BuildBB(IsNAttAtt, sq, 64);
-	}
-
-	constexpr bool IsKAttAtt(int from, int to)
-	{
-		return !!(::KAtt[from] & ::KAtt[to]);
-	}
-	constexpr uint64 KAttAtt(int sq)
-	{
-		return BuildBB(IsKAttAtt, sq, 64);
-	}
-
-	template<bool me> constexpr uint64 PWay(int sq)
-	{
-		return File[FileOf(sq)] & Forward[me][RankOf(sq)];
-	}
-}
-constexpr array<uint64, 64> RMask = make_array<64>(Calc::RMask);
-constexpr array<uint64, 64> BMask = make_array<64>(Calc::BMask);
-constexpr array<uint64, 64> NAttAtt = make_array<64>(Calc::NAttAtt);
-constexpr array<uint64, 64> KAttAtt = make_array<64>(Calc::KAttAtt);
-constexpr array<array<uint64, 64>, 2> PWay = { make_array<64>(Calc::PWay<White>), make_array<64>(Calc::PWay<Black>) };
-
-namespace Calc
-{
-	constexpr uint64 QMask(int sq)
-	{
-		return ::RMask[sq] | ::BMask[sq];
-	}
-}
-constexpr array<uint64, 64> QMask = make_array<64>(Calc::QMask);
-
-constexpr array<uint8, 64> UpdateCastling = { 0xFF ^ CanCastle_OOO, 0xFF, 0xFF, 0xFF,
-	0xFF ^ (CanCastle_OO | CanCastle_OOO), 0xFF, 0xFF, 0xFF ^ CanCastle_OO,
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	0xFF ^ CanCastle_ooo, 0xFF, 0xFF, 0xFF,
-	0xFF ^ (CanCastle_oo | CanCastle_ooo), 0xFF, 0xFF, 0xFF ^ CanCastle_oo };
-
-struct GMaterial;
-struct GPawnEntry;
-struct GEvalInfo
-{
-	array<uint64, 2> area, free, klocus;
-	uint64 occ, rray, bray;
-	GPawnEntry* PawnEntry;
-	const GMaterial* material;
-	packed_t score;
-	array<uint32, 2> king_att;
-	array<uint16, 2> king;
-	uint16 mul;
-};
-
-// special calculators for specific material
-// irritatingly, they need to be told what pop() to use
-// setting any of these to call also triggers a call to eval_stalemate
-// so they should never call eval_stalemate themselves
-typedef void(*eval_special_t)(GEvalInfo& EI, pop_func_t pop);
-// here is a function that exists only to trigger eval_stalemate
-void eval_null(GEvalInfo&, pop_func_t) {}
-void eval_unwinnable(GEvalInfo& EI, pop_func_t) { EI.mul = 0; }
-
-struct GMaterial
-{
-	sint16 score, closed;
-	array<eval_special_t, 2> eval;
-	array<uint8, 2> mul;
-	uint8 phase;
-};
-
-constexpr int MAGIC_SIZE = 107648;
-struct CommonData_
-{
-	array<GMaterial, TotalMat> Material;
-	array<uint64, MAGIC_SIZE> MagicAttacks;
-	array<array<array<uint64, 64>, 64>, 2> Kpk;
-	array<array<uint64, 64>, 64> Between, FullLine;
-	array<packed_t, 16 * 64> PstVals;
-	array<array<uint64, 64>, 16> PieceKey;
-	array<array<int, 16>, 16> MvvLva;  // [piece][capture]
-	array<int, 256> SpanWidth, SpanGap;
-	array<array<uint64, 64>, 2> BishopForward, PCone, PSupport;
-	array<uint64, 64> BMagic, BMagicMask, RMagic, RMagicMask;
-	array<uint64, 64> KingFrontal, KingFlank;
-	array<array<packed_t, 28>, 2> MobQueen;
-	array<uint8, 256> PieceFromChar;
-	array<int, 64> ROffset;
-	array<array<packed_t, 15>, 2> MobBishop, MobRook;
-	array<array<packed_t, 9>, 2> MobKnight;
-	array<short, 64> BShift, BOffset, RShift;
-	array<uint64, 16> CastleKey;
-	array<uint64, 8> EPKey;
-	array<uint64, 8> PIsolated;
-	array<packed_t, 8> PasserGeneral, PasserBlocked, PasserFree, PasserSupported, PasserProtected, PasserConnected, PasserOutside, PasserCandidate, PasserClear;
-	array<array<sint16, 8>, 3> Shelter;
-	array<uint8, 16> LogDist;
-	array<sint16, 8> PasserAtt, PasserDef, PasserAttLog, PasserDefLog;
-	array<sint16, 4> StormBlocked, StormShelterAtt, StormConnected, StormOpen, StormFree;
-	uint64 TurnKey;
-};
 CommonData_* DATA = nullptr;
-const CommonData_* RO = nullptr;	// generally we access DATA through RO
+CommonData_* const& RO = DATA;	// generally we access DATA through RO
 
-#define opp (1 ^ (me))
-#define MY_TURN (!Current->turn == opp)
 
-INLINE uint64 ShiftNW(const uint64& target)
-{
-	return (target & (~(File[0] | Line[7]))) << 7;
-}
-INLINE uint64 ShiftNE(const uint64& target)
-{
-	return (target & (~(File[7] | Line[7]))) << 9;
-}
-INLINE uint64 ShiftSE(const uint64& target)
-{
-	return (target & (~(File[7] | Line[0]))) >> 7;
-}
-INLINE uint64 ShiftSW(const uint64& target)
-{
-	return (target & (~(File[0] | Line[0]))) >> 9;
-}
-template<bool me> INLINE uint64 ShiftW(const uint64& target)
-{
-	return me ? ShiftSW(target) : ShiftNW(target);
-}
-template<bool me> INLINE uint64 ShiftE(const uint64& target)
-{
-	return me ? ShiftSE(target) : ShiftNE(target);
-}
-template<bool me> INLINE uint64 Shift(const uint64& target)
-{
-	return me ? target >> 8 : target << 8;
-}
-
-// THIS IS A NON-TEMPLATE FUNCTION BECAUSE MY COMPILER (Visual C++ 2015, Community Edition) CANNOT INLINE THE TEMPLATE VERSION CORRECTLY
-INLINE const uint64& OwnLine(bool me, int n)
-{
-	return Line[me ? 7 - n : n];
-}
 
 // Constants controlling play
 constexpr int PliesToEvalCut = 50;	// halfway to 50-move
@@ -700,11 +75,6 @@ constexpr int DrawCapConstant = 110 * CP_EVAL;
 constexpr int DrawCapLinear = 0;	// numerator; denominator is 64
 constexpr int DeltaDecrement = (3 * CP_SEARCH) / 2;	// 5 (+91/3) vs 3
 constexpr int TBMinDepth = 7;
-
-inline int MapPositive(int scale, int param)
-{
-	return param > scale ? param : (scale * scale) / (2 * scale - param);
-}
 
 constexpr int FailLoInit = 22;
 constexpr int FailHiInit = 31;
@@ -836,7 +206,6 @@ const int TbValues[5] = { -TBMateValue, -TBCursedMateValue, 0, TBCursedMateValue
 constexpr int NominalTbDepth = 33;
 inline int TbDepth(int depth) { return Min(depth + NominalTbDepth, 117); }
 
-constexpr uint32 TB_RESULT_FAILED = 0xFFFFFFFF;
 extern unsigned TB_LARGEST;
 bool tb_init_fwd(const char*);
 
@@ -858,54 +227,6 @@ template<class F_, typename... Args_> int TBProbe(F_ func, bool me, const Args_&
 		(me == White), std::forward<Args_>(args)...);
 }
 
-
-unsigned tb_probe_wdl_fwd(
-	uint64_t _white,
-	uint64_t _black,
-	uint64_t _kings,
-	uint64_t _queens,
-	uint64_t _rooks,
-	uint64_t _bishops,
-	uint64_t _knights,
-	uint64_t _pawns,
-	unsigned _rule50,
-	unsigned _castling,
-	unsigned _ep,
-	bool     _turn);
-
-unsigned tb_probe_root_fwd(
-	uint64_t _white,
-	uint64_t _black,
-	uint64_t _kings,
-	uint64_t _queens,
-	uint64_t _rooks,
-	uint64_t _bishops,
-	uint64_t _knights,
-	uint64_t _pawns,
-	unsigned _rule50,
-	unsigned _ep,
-	bool     _turn);
-
-static inline unsigned tb_probe_root_checked(
-	uint64_t _white,
-	uint64_t _black,
-	uint64_t _kings,
-	uint64_t _queens,
-	uint64_t _rooks,
-	uint64_t _bishops,
-	uint64_t _knights,
-	uint64_t _pawns,
-	unsigned _rule50,
-	unsigned _castling,
-	unsigned _ep,
-	bool     _turn)
-{
-	if (_castling != 0)
-		return TB_RESULT_FAILED;
-	return tb_probe_root_fwd(_white, _black, _kings, _queens, _rooks, _bishops, _knights, _pawns, _rule50, _ep, _turn);
-}
-
-int GetTBMove(unsigned res, int* best_score);
 
 #endif
 
@@ -951,14 +272,6 @@ struct GEntry
 };
 constexpr GEntry NullEntry = { 0, 1, 0, 0, 0, 0, 0 };
 
-struct GPawnEntry
-{
-	uint64 key;
-	packed_t score;
-	array<sint16, 2> shelter;
-	array<uint8, 2> passer, draw;
-};
-constexpr GPawnEntry NullPawnEntry = { 0, 0,{ 0, 0 },{ 0, 0 },{ 0, 0 } };
 constexpr int N_PAWN_HASH = 1 << 20;
 array<GPawnEntry, N_PAWN_HASH> PawnHash;
 constexpr int PAWN_HASH_MASK = N_PAWN_HASH - 1;
@@ -987,23 +300,23 @@ template<class T> void prefetch(T* p)
 	_mm_prefetch(reinterpret_cast<const char*>(p), _MM_HINT_NTA);
 }
 
-#ifndef HNI
+#ifdef HNI
 inline uint64 BishopAttacks(int sq, const uint64& occ)
 {
-	return RO->MagicAttacks[RO->BOffset[sq] + (((RO->BMagicMask[sq] & occ) * RO->BMagic[sq]) >> RO->BShift[sq])];
+	return  RO->magic_.MagicAttacks[RO->magic_.BOffset[sq] + _pext_u64(occ, RO->magic_.BMagicMask[sq])];
 }
 inline uint64 RookAttacks(int sq, const uint64& occ)
 {
-	return RO->MagicAttacks[RO->ROffset[sq] + (((RO->RMagicMask[sq] & occ) * RO->RMagic[sq]) >> RO->RShift[sq])];
+	return RO->magic_.MagicAttacks[RO->magic_.ROffset[sq] + _pext_u64(occ, RO->magic_.RMagicMask[sq])];
 }
 #else
 inline uint64 BishopAttacks(int sq, const uint64& occ)
 {
-	return  RO->MagicAttacks[RO->BOffset[sq] + _pext_u64(occ, RO->BMagicMask[sq])];
+	return RO->magic_.MagicAttacks[Magic::BOffset[sq] + (((RO->magic_.BMagicMask[sq] & occ) * Magic::BMagic[sq]) >> Magic::BShift[sq])];
 }
 inline uint64 RookAttacks(int sq, const uint64& occ)
 {
-	return RO->MagicAttacks[RO->ROffset[sq] + _pext_u64(occ, RO->RMagicMask[sq])];
+	return RO->magic_.MagicAttacks[Magic::ROffset[sq] + (((RO->magic_.RMagicMask[sq] & occ) * Magic::RMagic[sq]) >> Magic::RShift[sq])];
 }
 #endif
 INLINE uint64 QueenAttacks(int sq, const uint64& occ)
@@ -1214,69 +527,27 @@ constexpr int PhaseMax = 16 * Phase[0] + 3 * Phase[1] + 3 * Phase[2] + 4 * Phase
 
 #define V(x) (x)
 
-INLINE constexpr int ArrayIndex(int width, int row, int column)
-{
-	return row * width + column;
-}
 template<class T_> constexpr auto Av(const T_& x, int width, int row, int column) -> decltype(x[0])
 {
-	return x[ArrayIndex(width, row, column)];
+	return x[row * width + column];
 }
 template<class T_> constexpr auto TrAv(const T_& x, int w, int r, int c) -> decltype(x[0])
 {
-	return Av(x, 0, 0, ((r * (2 * w - r + 1)) / 2) + c);
+	return x[(r * (2 * w - r + 1)) / 2 + c];
 }
-template<class T_> constexpr auto Sa(const T_& x, int y) -> decltype(x[0])
+
+template<int N> constexpr array<packed_t, N / 4> PackAll(const array<int, N>& src)
 {
-	return Av(x, 0, 0, y);
+	const int M = N / 4;
+	array<packed_t, M> dst;
+	for (int ii = 0; ii < M; ++ii)
+		dst[ii] = Pack(src[4 * ii], src[4 * ii + 1], src[4 * ii + 2], src[4 * ii + 3]);
+	return dst;
 }
-template<class C_> INLINE constexpr packed_t Ca4(const C_& x, int y)
-{
-	return Pack4(Av(x, 4, y, 0), Av(x, 4, y, 1), Av(x, 4, y, 2), Av(x, 4, y, 3));
-}
+
+
 
 // EVAL WEIGHTS
-
-// tuner: start
-enum
-{  // tuner: enum
-	IMatLinear,
-	IMatQuadMe = IMatLinear + 5,
-	IMatQuadOpp = IMatQuadMe + 14,
-	IBishopPairQuad = IMatQuadOpp + 10,
-	iMatClosed = IBishopPairQuad + 9,
-	IMatSpecial = iMatClosed + 6,
-	IPstQuadWeights = IMatSpecial + 40,
-	IPstLinearWeights = IPstQuadWeights + 96,
-	IPstQuadMixedWeights = IPstLinearWeights + 96,
-	IMobilityLinear = IPstQuadMixedWeights + 48,
-	IMobilityLog = IMobilityLinear + 16,
-	IMobilityLocus = IMobilityLog + 16,
-	IShelterValue = IMobilityLocus + 16,
-	IStormQuad = IShelterValue + 15,
-	IStormLinear = IStormQuad + 5,
-	IStormHof = IStormLinear + 5,
-	IPasserQuad = IStormHof + 2,
-	IPasserLinear = IPasserQuad + 36,
-	IPasserConstant = IPasserLinear + 36,
-	IPasserAttDefQuad = IPasserConstant + 36,
-	IPasserAttDefLinear = IPasserAttDefQuad + 4,
-	IPasserAttDefConst = IPasserAttDefLinear + 4,
-	IPasserSpecial = IPasserAttDefConst + 4,
-	IIsolated = IPasserSpecial + 12,
-	IUnprotected = IIsolated + 10,
-	IBackward = IUnprotected + 6,
-	IDoubled = IBackward + 4,
-	IRookSpecial = IDoubled + 4,
-	ITactical = IRookSpecial + 20,
-	IKingDefence = ITactical + 12,
-	IPawnSpecial = IKingDefence + 8,
-	IBishopSpecial = IPawnSpecial + 8,
-	IKnightSpecial = IBishopSpecial + 4,
-	IPin = IKnightSpecial + 10,
-	IKingRay = IPin + 10,
-	IKingAttackWeight = IKingRay + 6
-};
 
 // pawn, knight, bishop, rook, queen, pair
 constexpr array<int, 6> MatLinear = { 39, -11, -14, 86, -15, -1 };
@@ -1303,50 +574,19 @@ const int BishopPairQuad[9] = { // tuner: type=array, var=1000, active=0
 };
 constexpr array<int, 6> MatClosed = { -20, 22, -33, 18, -2, 26 };
 
-namespace Params
-{
-	enum
-	{
-		MatRB,
-		MatRN,
-		MatQRR,
-		MatQRB,
-		MatQRN,
-		MatQ3,
-		MatBBR,
-		MatBNR,
-		MatNNR,
-		MatM,
-		MatPawnOnly
-	};
-	constexpr array<int, 44> MatSpecial = {  // tuner: type=array, var=120, active=0
-		52, 0, -52, 0,
-		40, 2, -36, 0,
-		32, 40, 48, 0,
-		16, 20, 24, 0,
-		20, 28, 36, 0,
-		-12, -22, -32, 0,
-		-10, 20, 64, 0,
-		6, 21, 20, 0,
-		0, -12, -24, 0,
-		4, 8, 12, 0,
-		0, 0, 0, -100 };
-}
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::MatSpecial, Params::name)
-	VALUE(MatRB);
-	VALUE(MatRN);
-	VALUE(MatQRR);
-	VALUE(MatQRB);
-	VALUE(MatQRN);
-	VALUE(MatQ3);
-	VALUE(MatBBR);
-	VALUE(MatBNR);
-	VALUE(MatNNR);
-	VALUE(MatM);
-	VALUE(MatPawnOnly);
-#undef VALUE
+	static const packed_t MatRB = Pack(52, 0, -52, 0);
+	static const packed_t MatRN = Pack(40, 2, -36, 0);
+	static const packed_t MatQRR = Pack(32, 40, 48, 0);
+	static const packed_t MatQRB = Pack(16, 20, 24, 0);
+	static const packed_t MatQRN = Pack(20, 28, 36, 0);
+	static const packed_t MatQ3 = Pack(-12, -22, -32, 0);
+	static const packed_t MatBBR = Pack(-10, 20, 64, 0);
+	static const packed_t MatBNR = Pack(6, 21, 20, 0);
+	static const packed_t MatNNR = Pack(0, -12, -24, 0);
+	static const packed_t MatM = Pack(4, 8, 12, 0);
+	static const packed_t MatPawnOnly = Pack(0, 0, 0, -50);
 }
 
 namespace PstW
@@ -1363,34 +603,34 @@ namespace PstW
 
 	constexpr Weights_ Pawn = {
 		{ { -48, -275, 165, 0 },{ -460, -357, -359, 437 },{ 69, -28 } },
-	{ { -85, -171, 27, 400 },{ -160, -133, 93, 1079 },{ 13, -6 } },
-	{ { -80, -41, -85, 782 },{ 336, 303, 295, 1667 },{ -35, 13 } },
-	{ { 2, 13, 11, 23 },{ 6, 14, 37, -88 },{ 14, -2 } } };
+		{ { -85, -171, 27, 400 },{ -160, -133, 93, 1079 },{ 13, -6 } },
+		{ { -80, -41, -85, 782 },{ 336, 303, 295, 1667 },{ -35, 13 } },
+		{ { 2, 13, 11, 23 },{ 6, 14, 37, -88 },{ 14, -2 } } };
 	constexpr Weights_ Knight = {
 		{ { -134, 6, -12, -72 },{ -680, -343, -557, 1128 },{ -32, 14 } },
-	{ { -315, -123, -12, -90 },{ -449, -257, -390, 777 },{ -24, -3 } },
-	{ { -501, -246, -12, -107 },{ 61, -274, -357, 469 },{ -1, -16 } },
-	{ { -12, -5, -2, -22 },{ 96, 69, -64, -23 },{ -5, -8 } } };
+		{ { -315, -123, -12, -90 },{ -449, -257, -390, 777 },{ -24, -3 } },
+		{ { -501, -246, -12, -107 },{ 61, -274, -357, 469 },{ -1, -16 } },
+		{ { -12, -5, -2, -22 },{ 96, 69, -64, -23 },{ -5, -8 } } };
 	constexpr Weights_ Bishop = {
 		{ { -123, -62, 54, -116 },{ 24, -486, -350, -510 },{ 8, -58 } },
-	{ { -168, -49, 24, -48 },{ -323, -289, -305, -254 },{ -7, -21 } },
-	{ { -249, -33, 4, -14 },{ -529, -232, -135, 31 },{ -32, 0 } },
-	{ { 4, -10, 9, -13 },{ 91, -43, -34, 29 },{ -13, -10 } } };
+		{ { -168, -49, 24, -48 },{ -323, -289, -305, -254 },{ -7, -21 } },
+		{ { -249, -33, 4, -14 },{ -529, -232, -135, 31 },{ -32, 0 } },
+		{ { 4, -10, 9, -13 },{ 91, -43, -34, 29 },{ -13, -10 } } };
 	constexpr Weights_ Rook = {
 		{ { -260, 12, -49, 324 },{ -777, -223, 245, 670 },{ -7, -25 } },
-	{ { -148, -88, -9, 165 },{ -448, -278, -63, 580 },{ -7, 0 } },
-	{ { 13, -149, 14, 46 },{ -153, -225, -246, 578 },{ -6, 16 } },
-	{ { 0, 8, -15, 8 },{ -32, -29, 10, -51 },{ -6, -23 } } };
+		{ { -148, -88, -9, 165 },{ -448, -278, -63, 580 },{ -7, 0 } },
+		{ { 13, -149, 14, 46 },{ -153, -225, -246, 578 },{ -6, 16 } },
+		{ { 0, 8, -15, 8 },{ -32, -29, 10, -51 },{ -6, -23 } } };
 	constexpr Weights_ Queen = {
-		{ { -270, -18, -19, -68 },{ -520, 444, 474, -186 },{ 18, -6 } },
-	{ { -114, -209, 21, -103 },{ -224, -300, 73, 529 },{ -13, 1 } },
-	{ { 2, -341, 58, -160 },{ 40, -943, -171, 1328 },{ -34, 27 } },
-	{ { -3, -26, 9, 5 },{ -43, -18, -107, 60 },{ 5, 12 } } };
+		{ { -270, -18, -19, -68 }, { -520, 444, 474, -186 }, { 18, -6 } },
+		{ { -114, -209, 21, -103 }, { -224, -300, 73, 529 }, { -13, 1 } },
+		{ { 2, -341, 58, -160 }, { 40, -943, -171, 1328 }, { -34, 27 } },
+		{ { -3, -26, 9, 5 }, { -43, -18, -107, 60 }, { 5, 12 } } };
 	constexpr Weights_ King = {
-		{ { -266, -694, -12, 170 },{ 1077, 3258, 20, -186 },{ -18, 3 } },
-	{ { -284, -451, -31, 43 },{ 230, 1219, -425, 577 },{ -1, 5 } },
-	{ { -334, -157, -67, -93 },{ -510, -701, -863, 1402 },{ 37, -8 } },
-	{ { 22, 14, -16, 0 },{ 7, 70, 40,  78 } ,{ 9, -3 } } };
+		{ { -266, -694, -12, 170 }, { 1077, 3258, 20, -186 }, { -18, 3 } },
+		{ { -284, -451, -31, 43 }, { 230, 1219, -425, 577 }, { -1, 5 } },
+		{ { -334, -157, -67, -93 }, { -510, -701, -863, 1402 }, { 37, -8 } },
+		{ { 22, 14, -16, 0 }, { 7, 70, 40,  78 }, { 9, -3 } } };
 }
 
 // coefficient (Linear, Log, Locus) * phase (4)
@@ -1462,356 +702,84 @@ constexpr array<int, 12> PasserSpecial = { // tuner: type=array, var=100, active
 namespace Values
 {
 	constexpr packed_t PasserOpRookBlock =
-		Pack4(0, Av(PasserSpecial, 3, ::PasserOpRookBlock, 0), Av(PasserSpecial, 3, ::PasserOpRookBlock, 1), Av(PasserSpecial, 3, ::PasserOpRookBlock, 2));
+		Pack(0, Av(PasserSpecial, 3, ::PasserOpRookBlock, 0), Av(PasserSpecial, 3, ::PasserOpRookBlock, 1), Av(PasserSpecial, 3, ::PasserOpRookBlock, 2));
 }
 
-namespace Params
-{
-	enum
-	{
-		IsolatedOpen,
-		IsolatedClosed,
-		IsolatedBlocked,
-		IsolatedDoubledOpen,
-		IsolatedDoubledClosed
-	};
-	constexpr array<int, 20> Isolated = {
-		36, 28, 19, 1,
-		40, 21, 1, 12,
-		-40, -20, -3, -3,
-		0, 10, 45, 3,
-		27, 27, 36, 8 };
-}
 namespace Values
 {
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Isolated, Params::name)
-	VALUE(IsolatedOpen);
-	VALUE(IsolatedClosed);
-	VALUE(IsolatedBlocked);
-	VALUE(IsolatedDoubledOpen);
-	VALUE(IsolatedDoubledClosed);
-#undef VALUE
-}
+	constexpr packed_t IsolatedOpen = Pack(36, 28, 19, 1);
+	constexpr packed_t IsolatedClosed = Pack(40, 21, 1, 12);
+	constexpr packed_t IsolatedBlocked = Pack(-40, -20, -3, -3);
+	constexpr packed_t IsolatedDoubledOpen = Pack(0, 10, 45, 3);
+	constexpr packed_t IsolatedDoubledClosed = Pack(27, 27, 36, 8);
 
-namespace Params
-{
-	enum
-	{
-		UpBlocked,
-		PasserTarget,
-		PasserTarget2,
-		ChainRoot
-	};
-	constexpr array<int, 16> Unprotected = {  // tuner: type=array, var=26, active=0
-		18, 45, 31, -6,
-	-16, -36, -38, 22,
-	-3, -10, -39, 9,
-	7, -3, -3, -14 };
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Unprotected, Params::name)
-	VALUE(UpBlocked);
-	VALUE(PasserTarget);
-	VALUE(PasserTarget2);
-	VALUE(ChainRoot);
-#undef VALUE
-}
+	constexpr packed_t UpBlocked = Pack(18, 45, 31, -6);
+	constexpr packed_t PasserTarget = Pack(-16, -36, -38, 22);
+	constexpr packed_t PasserTarget2 = Pack(-3, -10, -39, 9);
+	constexpr packed_t ChainRoot = Pack(7, -3, -3, -14);
 
-namespace Params
-{
-	enum
-	{
-		BackwardOpen,
-		BackwardClosed
-	};
-	constexpr array<int, 8> Backward = {  // tuner: type=array, var=26, active=0
-		68, 54, 40, 0,
-		16, 10, 4, 0 };
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Backward, Params::name)
-	VALUE(BackwardOpen);
-	VALUE(BackwardClosed);
-#undef VALUE
-}
+	constexpr packed_t BackwardOpen = Pack(68, 54, 40, 0);
+	constexpr packed_t BackwardClosed = Pack(16, 10, 4, 0);
 
-namespace Params
-{
-	enum
-	{
-		DoubledOpen,
-		DoubledClosed
-	};
-	constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-		12, 6, 0, 0,
-		4, 2, 0, 0 };
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Doubled, Params::name)
-	VALUE(DoubledOpen);
-	VALUE(DoubledClosed);
-#undef VALUE
-}
+	constexpr packed_t DoubledOpen = Pack(12, 6, 0, 0);
+	constexpr packed_t DoubledClosed = Pack(4, 2, 0, 0);
 
-namespace Params
-{
-	enum
-	{
-		RookHof,
-		RookHofWeakPAtt,
-		RookOf,
-		RookOfOpen,
-		RookOfMinorFixed,
-		RookOfMinorHanging,
-		RookOfKingAtt,
-		Rook7th,
-		Rook7thK8th,
-		Rook7thDoubled
-	};
-	constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
-		32, 16, 0, 0,
-		8, 4, 0, 0,
-		44, 38, 32, 0,
-		-4, 2, 8, 0,
-		-4, -4, -4, 0,
-		56, 26, -4, 0,
-		20, 0, -20, 0,
-		-20, -10, 0, 0,
-		-24, 4, 32, 0,
-		-28, 48, 124, 0 };
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::RookSpecial, Params::name)
-	VALUE(RookHof);
-	VALUE(RookHofWeakPAtt);
-	VALUE(RookOf);
-	VALUE(RookOfOpen);
-	VALUE(RookOfMinorFixed);
-	VALUE(RookOfMinorHanging);
-	VALUE(RookOfKingAtt);
-	VALUE(Rook7th);
-	VALUE(Rook7thK8th);
-	VALUE(Rook7thDoubled);
-#undef VALUE
-}
+	constexpr packed_t RookHof = Pack(32, 16, 0, 0);
+	constexpr packed_t RookHofWeakPAtt = Pack(8, 4, 0, 0);
+	constexpr packed_t RookOf = Pack(44, 38, 32, 0);
+	constexpr packed_t RookOfOpen = Pack(-4, 2, 8, 0);
+	constexpr packed_t RookOfMinorFixed = Pack(-4, -4, -4, 0);
+	constexpr packed_t RookOfMinorHanging = Pack(56, 26, -4, 0);
+	constexpr packed_t RookOfKingAtt = Pack(20, 0, -20, 0);
+	constexpr packed_t Rook7th = Pack(-20, -10, 0, 0);
+	constexpr packed_t Rook7thK8th = Pack(-24, 4, 32, 0);
+	constexpr packed_t Rook7thDoubled = Pack(-28, 48, 124, 0);
 
-namespace Params
-{
-	enum
-	{
-		TacticalQueenPawn,
-		TacticalQueenMinor,
-		TacticalRookPawn,
-		TacticalRookMinor,
-		TacticalBishopPawn,
-		TacticalB2N,
-		TacticalN2B,
-		TacticalThreat,
-		TacticalDoubleThreat,
-		TacticalExtraThreat,
-		TacticalWeakThreat
-	};
-	constexpr array<int, 44> Tactical = {  // tuner: type=array, var=51, active=0
-		4, 1, 3, 3,
-	53, 20, 69, -7,
-	6, 11, 37, 22,
-	29, 29, 66, 10,
-	-1, 28, 35, 30,
-	26, 59, 71, 30,
-	89, 78, 74, 20,
-	39, 35, 42, 13,
-	179, 160, 147, 36,
-	42, 46, 53, 5,
-	20, 20, 24, 5
-	};
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Tactical, Params::name)
-	VALUE(TacticalQueenPawn);
-		VALUE(TacticalQueenMinor);
-		VALUE(TacticalRookPawn);
-		VALUE(TacticalRookMinor);
-		VALUE(TacticalBishopPawn);
-		VALUE(TacticalB2N);
-		VALUE(TacticalN2B);
-		VALUE(TacticalThreat);
-		VALUE(TacticalDoubleThreat);
-		VALUE(TacticalExtraThreat);
-		VALUE(TacticalWeakThreat);
-#undef VALUE
-}
+	constexpr packed_t TacticalQueenPawn = Pack(4, 1, 3, 3);
+	constexpr packed_t TacticalQueenMinor = Pack(53, 20, 69, -7);
+	constexpr packed_t TacticalRookPawn = Pack(6, 11, 37, 22);
+	constexpr packed_t TacticalRookMinor = Pack(29, 29, 66, 10);
+	constexpr packed_t TacticalBishopPawn = Pack(0, 28, 35, 30);
+	constexpr packed_t TacticalB2N = Pack(26, 59, 71, 30);
+	constexpr packed_t TacticalN2B = Pack(89, 78, 74, 20);
+	constexpr packed_t TacticalThreat = Pack(39, 35, 42, 13);
+	constexpr packed_t TacticalDoubleThreat = Pack(179, 160, 147, 36);
+	constexpr packed_t TacticalExtraThreat = Pack(42, 46, 53, 5);
+	constexpr packed_t TacticalWeakThreat = Pack(20, 20, 24, 5);
 
-namespace Params
-{
-	enum
-	{
-		KingDefKnight,
-		KingDefBishop,
-		KingDefQueen
-	};
-	constexpr array<int, 12> KingDefence = {  // tuner: type=array, var=13, active=0
-		8, 4, 0, 0,
-		0, 2, 4, 0,
-		16, 8, 0, 0 };
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::KingDefence, Params::name)
-	VALUE(KingDefKnight);
-	VALUE(KingDefBishop);
-	VALUE(KingDefQueen);
-#undef VALUE
-}
+	constexpr packed_t KingDefKnight = Pack(8, 4, 0, 0);
+	constexpr packed_t KingDefQueen = Pack(16, 8, 0, 0);
 
-namespace Params
-{
-	enum
-	{
-		PawnChainLinear,
-		PawnChain,
-		PawnBlocked,
-		PawnRestrictsK
-	};
-	constexpr array<int, 16> PawnSpecial = {  // tuner: type=array, var=26, active=0
-		44, 40, 36, 0,
-		36, 26, 16, 0,
-		0, 18, 36, 0,
-		23, 9, 1, 45
-	};
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::PawnSpecial, Params::name)
-	VALUE(PawnChainLinear);
-	VALUE(PawnChain);
-	VALUE(PawnBlocked);
-	VALUE(PawnRestrictsK);
-#undef VALUE
-}
+	constexpr packed_t PawnChainLinear = Pack(44, 40, 36, 0);
+	constexpr packed_t PawnChain = Pack(36, 26, 16, 0);
+	constexpr packed_t PawnBlocked = Pack(0, 18, 36, 0);
+	constexpr packed_t PawnRestrictsK = Pack(23, 9, 1, 45);
 
-namespace Params
-{
-	enum
-	{
-		BishopPawnBlock,
-		BishopOutpostNoMinor
-	};
-	constexpr array<int, 16> BishopSpecial = { // tuner: type=array, var=20, active=0
-		0, 6, 14, 6,
-		60, 60, 45, 0
-	};
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::BishopSpecial, Params::name)
-	VALUE(BishopPawnBlock);
-	VALUE(BishopOutpostNoMinor);
-#undef VALUE
-}
+	constexpr packed_t BishopPawnBlock = Pack(0, 6, 14, 6);
+	constexpr packed_t BishopOutpostNoMinor = Pack(60, 60, 45, 0);
 
-namespace Params
-{
-	enum
-	{
-		KnightOutpost,
-		KnightOutpostProtected,
-		KnightOutpostPawnAtt,
-		KnightOutpostNoMinor,
-		KnightPawnSpread,
-		KnightPawnGap
-	};
-	constexpr array<int, 24> KnightSpecial = {  // tuner: type=array, var=26, active=0
-		40, 40, 24, 0,
-		41, 40, 0, 0,
-		44, 44, 18, 0,
-		41, 40, 0, 0,
-		0, 4, 15, -10,
-		0, 2, 5, 0
-	};
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::KnightSpecial, Params::name)
-	VALUE(KnightOutpost);
-	VALUE(KnightOutpostProtected);
-	VALUE(KnightOutpostPawnAtt);
-	VALUE(KnightOutpostNoMinor);
-	VALUE(KnightPawnSpread);
-	VALUE(KnightPawnGap);
-#undef VALUE
-}
+	constexpr packed_t KnightOutpost = Pack(40, 40, 24, 0);
+	constexpr packed_t KnightOutpostProtected = Pack(41, 40, 0, 0);
+	constexpr packed_t KnightOutpostPawnAtt = Pack(44, 44, 18, 0);
+	constexpr packed_t KnightOutpostNoMinor = Pack(41, 40, 0, 0);
+	constexpr packed_t KnightPawnSpread = Pack(0, 4, 15, -10);
+	constexpr packed_t KnightPawnGap = Pack(0, 2, 5, 0);
 
-namespace Params
-{
-	enum
-	{
-		QueenPawnPin,
-		QueenSelfPin,
-		QueenWeakPin,
-		RookPawnPin,
-		RookSelfPin,
-		RookWeakPin,
-		RookThreatPin,
-		BishopPawnPin,
-		BishopSelfPin,
-		StrongPin,
-		BishopThreatPin
-	};
-	constexpr array<int, 44> Pin = {  // tuner: type=array, var=51, active=0
-		11, 33, 38, 34,
-	62, 107, 88, 55,
-	69, 61, 102, -5,
-	49, 25, 27, 9,
-	37, 96, 86, 78,
-	33, 86, 122, 25,
-	256, 189, 128, -6,
-	32, 47, 50, 7,
-	141, 149, 127, 16,
-	-1, 82, 195, 51,
-	101, 272, 214, 27 };
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::Pin, Params::name)
-	VALUE(QueenPawnPin);
-	VALUE(QueenSelfPin);
-	VALUE(QueenWeakPin);
-	VALUE(RookPawnPin);
-	VALUE(RookSelfPin);
-	VALUE(RookWeakPin);
-	VALUE(RookThreatPin);
-	VALUE(BishopPawnPin);
-	VALUE(BishopSelfPin);
-	VALUE(StrongPin);
-	VALUE(BishopThreatPin);
-#undef VALUE
-}
+	constexpr packed_t QueenPawnPin = Pack(11, 33, 38, 34);
+	constexpr packed_t QueenSelfPin = Pack(62, 107, 88, 55);
+	constexpr packed_t QueenWeakPin = Pack(69, 61, 102, -5);
+	constexpr packed_t RookPawnPin = Pack(49, 25, 27, 9);
+	constexpr packed_t RookSelfPin = Pack(37, 96, 86, 78);
+	constexpr packed_t RookWeakPin = Pack(33, 86, 122, 25);
+	constexpr packed_t RookThreatPin = Pack(256, 189, 128, -6);
+	constexpr packed_t BishopPawnPin = Pack(32, 47, 50, 7);
+	constexpr packed_t BishopSelfPin = Pack(141, 149, 127, 16);
+	constexpr packed_t StrongPin = Pack(-1, 82, 195, 51);
+	constexpr packed_t BishopThreatPin = Pack(101, 272, 214, 27);
 
-namespace Params
-{
-	enum
-	{
-		QKingRay,
-		RKingRay,
-		BKingRay
-	};
-	constexpr array<int, 12> KingRay = {  // tuner: type=array, var=51, active=0
-		17, 26, 33, -2,
-		-14, 15, 42, 0,
-		43, 14, -9, -1 };
-}
-namespace Values
-{
-#define VALUE(name) constexpr packed_t name = Ca4(Params::KingRay, Params::name)
-	VALUE(QKingRay);
-	VALUE(RKingRay);
-	VALUE(BKingRay);
-#undef VALUE
+	constexpr packed_t QKingRay = Pack(17, 26, 33, -2);
+	constexpr packed_t RKingRay = Pack(-14, 15, 42, 0);
+	constexpr packed_t BKingRay = Pack(43, 14, -9, -1);
 }
 
 constexpr array<int, 12> KingAttackWeight = {  // tuner: type=array, var=51, active=0
@@ -1823,17 +791,17 @@ constexpr array<int, 2> PushW = { 7, -9 };
 constexpr array<int, 2> Push = { 8, -8 };
 constexpr array<int, 2> PushE = { 9, -7 };
 
-constexpr uint32 KingNAttack1 = UPack(1, KingAttackWeight[0]);
-constexpr uint32 KingNAttack = UPack(2, KingAttackWeight[1]);
-constexpr uint32 KingBAttack1 = UPack(1, KingAttackWeight[2]);
-constexpr uint32 KingBAttack = UPack(2, KingAttackWeight[3]);
-constexpr uint32 KingRAttack1 = UPack(1, KingAttackWeight[4]);
-constexpr uint32 KingRAttack = UPack(2, KingAttackWeight[5]);
-constexpr uint32 KingQAttack1 = UPack(1, KingAttackWeight[6]);
-constexpr uint32 KingQAttack = UPack(2, KingAttackWeight[7]);
-constexpr uint32 KingPAttack = UPack(2, 0);
-constexpr uint32 KingAttack = UPack(1, 0);
-constexpr uint32 KingPAttackInc = UPack(0, KingAttackWeight[8]);
+constexpr uint32 KingNAttack1 = Pack(1, KingAttackWeight[0]);
+constexpr uint32 KingNAttack = Pack(2, KingAttackWeight[1]);
+constexpr uint32 KingBAttack1 = Pack(1, KingAttackWeight[2]);
+constexpr uint32 KingBAttack = Pack(2, KingAttackWeight[3]);
+constexpr uint32 KingRAttack1 = Pack(1, KingAttackWeight[4]);
+constexpr uint32 KingRAttack = Pack(2, KingAttackWeight[5]);
+constexpr uint32 KingQAttack1 = Pack(1, KingAttackWeight[6]);
+constexpr uint32 KingQAttack = Pack(2, KingAttackWeight[7]);
+constexpr uint32 KingPAttack = Pack(2, 0);
+constexpr uint32 KingAttack = Pack(1, 0);
+constexpr uint32 KingPAttackInc = Pack(0, KingAttackWeight[8]);
 constexpr uint32 KingAttackSquare = KingAttackWeight[9];
 constexpr uint32 KingNoMoves = KingAttackWeight[10];
 constexpr uint32 KingShelterQuad = KingAttackWeight[11];	// a scale factor, not a score amount
@@ -2482,32 +1450,6 @@ INLINE bool IsRepetition(int margin, int move)
 		&& F((move) & 0xF000);
 };
 
-inline uint64 XBMagicAttacks(const CommonData_* data, int i, uint64 occ)
-{
-	uint64 att = 0;
-	for (uint64 u = BMask[i]; T(u); Cut(u))
-		if (F(data->Between[i][lsb(u)] & occ))
-			att |= data->Between[i][lsb(u)] | Bit(lsb(u));
-	return att;
-}
-INLINE uint64 BMagicAttacks(int i, uint64 occ)
-{
-	return XBMagicAttacks(RO, i, occ);
-}
-
-uint64 XRMagicAttacks(const CommonData_* data, int i, uint64 occ)
-{
-	uint64 att = 0;
-	for (uint64 u = RMask[i]; T(u); Cut(u))
-		if (F(data->Between[i][lsb(u)] & occ))
-			att |= data->Between[i][lsb(u)] | Bit(lsb(u));
-	return att;
-}
-INLINE uint64 RMagicAttacks(int i, uint64 occ)
-{
-	return XRMagicAttacks(RO, i, occ);
-}
-
 uint16 rand16()
 {
 	static uint64 seed = 1;
@@ -2581,7 +1523,7 @@ void init_misc(CommonData_* data)
 {
 	for (int i = 0; i < 64; ++i)
 	{
-		data->BMagicMask[i] = data->RMagicMask[i] = 0;
+		data->magic_.BMagicMask[i] = data->magic_.RMagicMask[i] = 0;
 		data->PCone[0][i] = data->PCone[1][i]
 			= data->PSupport[0][i] = data->PSupport[1][i] = data->BishopForward[0][i] = data->BishopForward[1][i] = 0;
 		for (int j = 0; j < 64; ++j)
@@ -2604,26 +1546,26 @@ void init_misc(CommonData_* data)
 			}
 		}
 
-		data->BMagicMask[i] = BMask[i] & Interior;
-		data->RMagicMask[i] = RMask[i];
+		data->magic_.BMagicMask[i] = BMask[i] & Interior;
+		data->magic_.RMagicMask[i] = RMask[i];
 		data->PCone[0][i] = PWay[0][i];
 		data->PCone[1][i] = PWay[1][i];
 		if (FileOf(i) > 0)
 		{
-			data->RMagicMask[i] &= ~File[0];
+			data->magic_.RMagicMask[i] &= ~File[0];
 			data->PCone[0][i] |= PWay[0][i - 1];
 			data->PCone[1][i] |= PWay[1][i - 1];
 		}
 		if (RankOf(i) > 0)
-			data->RMagicMask[i] &= ~Line[0];
+			data->magic_.RMagicMask[i] &= ~Line[0];
 		if (FileOf(i) < 7)
 		{
-			data->RMagicMask[i] &= ~File[7];
+			data->magic_.RMagicMask[i] &= ~File[7];
 			data->PCone[0][i] |= PWay[0][i + 1];
 			data->PCone[1][i] |= PWay[1][i + 1];
 		}
 		if (RankOf(i) < 7)
-			data->RMagicMask[i] &= ~Line[7];
+			data->magic_.RMagicMask[i] &= ~Line[7];
 	}
 
 	for (int i = 0; i < 8; ++i)
@@ -2721,83 +1663,68 @@ void init_misc(CommonData_* data)
 
 }
 
-void init_magic(CommonData_* data)
+std::array<int, 16> ListBits(uint64 u)
 {
-	data->BMagic = { 0x0048610528020080, 0x00c4100212410004, 0x0004180181002010, 0x0004040188108502, 0x0012021008003040, 0x0002900420228000,
-		0x0080808410c00100, 0x000600410c500622, 0x00c0056084140184, 0x0080608816830050, 0x00a010050200b0c0, 0x0000510400800181,
-		0x0000431040064009, 0x0000008820890a06, 0x0050028488184008, 0x00214a0104068200, 0x004090100c080081, 0x000a002014012604,
-		0x0020402409002200, 0x008400c240128100, 0x0001000820084200, 0x0024c02201101144, 0x002401008088a800, 0x0003001045009000,
-		0x0084200040981549, 0x0001188120080100, 0x0048050048044300, 0x0008080000820012, 0x0001001181004003, 0x0090038000445000,
-		0x0010820800a21000, 0x0044010108210110, 0x0090241008204e30, 0x000c04204004c305, 0x0080804303300400, 0x00a0020080080080,
-		0x0000408020220200, 0x0000c08200010100, 0x0010008102022104, 0x0008148118008140, 0x0008080414809028, 0x0005031010004318,
-		0x0000603048001008, 0x0008012018000100, 0x0000202028802901, 0x004011004b049180, 0x0022240b42081400, 0x00c4840c00400020,
-		0x0084009219204000, 0x000080c802104000, 0x0002602201100282, 0x0002040821880020, 0x0002014008320080, 0x0002082078208004,
-		0x0009094800840082, 0x0020080200b1a010, 0x0003440407051000, 0x000000220e100440, 0x00480220a4041204, 0x00c1800011084800,
-		0x000008021020a200, 0x0000414128092100, 0x0000042002024200, 0x0002081204004200 };
+	std::array<int, 16> retval = { 0 };
+	for (int j = 0; T(u); Cut(u), ++j)
+		retval[j] = lsb(u);
+	return retval;
+}
 
-	data->RMagic = { 0x00800011400080a6, 0x004000100120004e, 0x0080100008600082, 0x0080080016500080, 0x0080040008000280, 0x0080020005040080,
-		0x0080108046000100, 0x0080010000204080, 0x0010800424400082, 0x00004002c8201000, 0x000c802000100080, 0x00810010002100b8,
-		0x00ca808014000800, 0x0002002884900200, 0x0042002148041200, 0x00010000c200a100, 0x00008580004002a0, 0x0020004001403008,
-		0x0000820020411600, 0x0002120021401a00, 0x0024808044010800, 0x0022008100040080, 0x00004400094a8810, 0x0000020002814c21,
-		0x0011400280082080, 0x004a050e002080c0, 0x00101103002002c0, 0x0025020900201000, 0x0001001100042800, 0x0002008080022400,
-		0x000830440021081a, 0x0080004200010084, 0x00008000c9002104, 0x0090400081002900, 0x0080220082004010, 0x0001100101000820,
-		0x0000080011001500, 0x0010020080800400, 0x0034010224009048, 0x0002208412000841, 0x000040008020800c, 0x001000c460094000,
-		0x0020006101330040, 0x0000a30010010028, 0x0004080004008080, 0x0024000201004040, 0x0000300802440041, 0x00120400c08a0011,
-		0x0080006085004100, 0x0028600040100040, 0x00a0082110018080, 0x0010184200221200, 0x0040080005001100, 0x0004200440104801,
-		0x0080800900220080, 0x000a01140081c200, 0x0080044180110021, 0x0008804001001225, 0x00a00c4020010011, 0x00001000a0050009,
-		0x0011001800021025, 0x00c9000400620811, 0x0032009001080224, 0x001400810044086a };
+inline uint64 XBMagicAttacks(const std::array<std::array<uint64, 64>, 64>& between, int i, uint64 occ)
+{
+	uint64 att = 0;
+	for (uint64 u = BMask[i]; T(u); Cut(u))
+		if (F(between[i][lsb(u)] & occ))
+			att |= between[i][lsb(u)] | Bit(lsb(u));
+	return att;
+}
 
-	data->BShift = { 58, 59, 59, 59, 59, 59, 59, 58, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 57, 57, 57, 57, 59, 59, 59, 59, 57, 55, 55, 57, 59, 59,
-		59, 59, 57, 55, 55, 57, 59, 59, 59, 59, 57, 57, 57, 57, 59, 59, 59, 59, 59, 59, 59, 59, 59, 59, 58, 59, 59, 59, 59, 59, 59, 58 };
+uint64 XRMagicAttacks(const std::array<std::array<uint64, 64>, 64>& between, int i, uint64 occ)
+{
+	uint64 att = 0;
+	for (uint64 u = RMask[i]; T(u); Cut(u))
+		if (F(between[i][lsb(u)] & occ))
+			att |= between[i][lsb(u)] | Bit(lsb(u));
+	return att;
+}
 
-	data->BOffset = { 0,    64,   96,   128,  160,  192,  224,  256,  320,  352,  384,  416,  448,  480,  512,  544,  576,  608,  640,  768,  896,  1024,
-		1152, 1184, 1216, 1248, 1280, 1408, 1920, 2432, 2560, 2592, 2624, 2656, 2688, 2816, 3328, 3840, 3968, 4000, 4032, 4064, 4096, 4224,
-		4352, 4480, 4608, 4640, 4672, 4704, 4736, 4768, 4800, 4832, 4864, 4896, 4928, 4992, 5024, 5056, 5088, 5120, 5152, 5184 };
 
-	data->RShift = { 52, 53, 53, 53, 53, 53, 53, 52, 53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53,
-		53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53, 53, 54, 54, 54, 54, 54, 54, 53, 52, 53, 53, 53, 53, 53, 53, 52 };
-
-	data->ROffset = { 5248,  9344,  11392, 13440, 15488, 17536, 19584, 21632, 25728, 27776, 28800, 29824, 30848, 31872, 32896,  33920,
-		35968, 38016, 39040, 40064, 41088, 42112, 43136, 44160, 46208, 48256, 49280, 50304, 51328, 52352, 53376,  54400,
-		56448, 58496, 59520, 60544, 61568, 62592, 63616, 64640, 66688, 68736, 69760, 70784, 71808, 72832, 73856,  74880,
-		76928, 78976, 80000, 81024, 82048, 83072, 84096, 85120, 87168, 91264, 93312, 95360, 97408, 99456, 101504, 103552 };
+void init_magic(const std::array<std::array<uint64, 64>, 64>& between, Magic::Magic_* magic)
+{
 
 	for (int i = 0; i < 64; ++i)
 	{
-		int bits = 64 - data->BShift[i];
-		array<int, 16> bit_list = { 0 };
-		uint64 u = data->BMagicMask[i];
-		for (int j = 0; T(u); Cut(u), ++j)
-			bit_list[j] = lsb(u);
+		array<int, 16> bit_list = ListBits(magic->BMagicMask[i]);
+		int bits = 64 - Magic::BShift[i];
 		for (int j = 0; j < Bit(bits); ++j)
 		{
-			u = 0;
+			uint64 u = 0;
 			for (int k = 0; k < bits; ++k)
 				if (Odd(j >> k))
 					u |= Bit(bit_list[k]);
 #ifndef HNI
-			int index = static_cast<int>(data->BOffset[i] + ((data->BMagic[i] * u) >> data->BShift[i]));
+			int index = static_cast<int>(Magic::BOffset[i] + ((Magic::BMagic[i] * u) >> Magic::BShift[i]));
 #else
-			int index = static_cast<int>(data->BOffset[i] + _pext_u64(u, data->BMagicMask[i]));
+			int index = static_cast<int>(Magic::BOffset[i] + _pext_u64(u, data->magic_.BMagicMask[i]));
 #endif
-			data->MagicAttacks[index] = XBMagicAttacks(data, i, u);
+			magic->MagicAttacks[index] = XBMagicAttacks(between, i, u);
 		}
-		bits = 64 - data->RShift[i];
-		u = data->RMagicMask[i];
-		for (int j = 0; T(u); Cut(u), ++j)
-			bit_list[j] = lsb(u);
+
+		bit_list = ListBits(magic->RMagicMask[i]);
+		bits = 64 - Magic::RShift[i];
 		for (int j = 0; j < Bit(bits); ++j)
 		{
-			u = 0;
+			uint64 u = 0;
 			for (int k = 0; k < bits; ++k)
 				if (Odd(j >> k))
 					u |= Bit(bit_list[k]);
 #ifndef HNI
-			int index = static_cast<int>(data->ROffset[i] + ((data->RMagic[i] * u) >> data->RShift[i]));
+			int index = static_cast<int>(Magic::ROffset[i] + ((Magic::RMagic[i] * u) >> Magic::RShift[i]));
 #else
-			int index = static_cast<int>(data->ROffset[i] + _pext_u64(u, data->RMagicMask[i]));
+			int index = static_cast<int>(Magic::ROffset[i] + _pext_u64(u, data->magic_.RMagicMask[i]));
 #endif
-			data->MagicAttacks[index] = XRMagicAttacks(data, i, u);
+			magic->MagicAttacks[index] = XRMagicAttacks(between, i, u);
 		}
 	}
 }
@@ -2942,6 +1869,29 @@ void Regularize(int* op, int* md, int* eg)
 	*md -= adj;
 }
 
+// helper to divide intermediate quantities to form scores
+// note that straight integer division (a la Gull) creates an attractor at 0
+// we support this, especially for weights inherited from Gull which have not been tuned for Roc
+template<int DEN, int SINK = DEN> struct Div_
+{
+	int operator()(int x) const
+	{
+		constexpr int shift = std::numeric_limits<int>::max() / (2 * DEN);
+		constexpr int shrink = (SINK - DEN) / 2;
+		const int y = x > 0 ? Max(0, x - shrink) : Min(0, x + shrink);
+		return (y + DEN * shift) / DEN - shift;
+	}
+};
+
+packed_t eval_pst()
+{
+	packed_t retval = 0;
+	for (int i = 0; i < 64; ++i)
+		if (PieceAt(i))
+			retval += Pst(PieceAt(i), i);
+	return retval;
+}
+
 void init_pst(CommonData_* data)
 {
 	fill(data->PstVals.begin(), data->PstVals.end(), 0);
@@ -2977,26 +1927,21 @@ void init_pst(CommonData_* data)
 			}
 			// Regularize(&op, &md, &eg);
 			Div_<64> d64;
-			XPst(data, j, i) = Pack4(d64(op), d64(md), d64(eg), d64(cl));
+			XPst(data, j, i) = Pack(d64(op), d64(md), d64(eg), d64(cl));
 		}
 	}
 
-	XPst(data, WhiteKnight, 56) -= Pack2(100 * CP_EVAL, 0);
-	XPst(data, WhiteKnight, 63) -= Pack2(100 * CP_EVAL, 0);
+	XPst(data, WhiteKnight, 56) -= Pack(100 * CP_EVAL, 0);
+	XPst(data, WhiteKnight, 63) -= Pack(100 * CP_EVAL, 0);
 	// now for black
 	for (int i = 0; i < 64; ++i)
 		for (int j = 3; j < 16; j += 2)
 		{
 			auto src = XPst(data, j - 1, 63 - i);
-			XPst(data, j, i) = Pack4(-Opening(src), -Middle(src), -Endgame(src), -Closed(src));
+			XPst(data, j, i) = Pack(-Opening(src), -Middle(src), -Endgame(src), -Closed(src));
 		}
 
-	Current->pst = 0;
-	for (int i = 0; i < 64; ++i)
-		if (PieceAt(i))
-		{
-			Current->pst += Pst(PieceAt(i), i);
-		}
+	Current->pst = eval_pst();
 }
 
 double KingLocusDist(int x, int y)
@@ -3039,7 +1984,7 @@ template<class T_> void init_mobility
 	};
 	auto m2 = [&](int pop)->packed_t
 	{
-		return Pack4(m1(0, pop), m1(1, pop), m1(2, pop), m1(3, pop));
+		return Pack(m1(0, pop), m1(1, pop), m1(2, pop), m1(3, pop));
 	};
 	auto l1 = [&](int phase, int pop)->sint16
 	{
@@ -3047,7 +1992,7 @@ template<class T_> void init_mobility
 	};
 	auto l2 = [&](int pop)->packed_t
 	{
-		return Pack4(l1(0, pop), l1(1, pop), l1(2, pop), l1(3, pop));
+		return Pack(l1(0, pop), l1(1, pop), l1(2, pop), l1(3, pop));
 	};
 
 	const auto p_max = (*mob)[0].size();
@@ -3058,15 +2003,6 @@ template<class T_> void init_mobility
 	}
 }
 
-
-template<int N> array<packed_t, N / 4> PackAll(const array<int, N>& src)
-{
-	const int M = N / 4;
-	array<packed_t, M> dst;
-	for (int ii = 0; ii < M; ++ii)
-		dst[ii] = Ca4(src, ii);
-	return dst;
-}
 
 uint64 within(int loc, int dist)
 {
@@ -3091,7 +2027,7 @@ array<sint64, 8> init_passer(const array<array<int, 4>, 3>& weights)
 
 	array<sint64, 8> retval;
 	for (int ii = 1; ii < 7; ++ii)
-		retval[ii] = Pack4(ppart(ii, 0), ppart(ii, 1), ppart(ii, 2), part(ii, 3));	// [3] can be negative
+		retval[ii] = Pack(ppart(ii, 0), ppart(ii, 1), ppart(ii, 2), part(ii, 3));	// [3] can be negative
 	return retval;
 }
 
@@ -3119,11 +2055,11 @@ void init_eval(CommonData_* data)
 
 	for (int i = 0; i < 4; ++i)
 	{
-		data->StormBlocked[i] = ((Sa(StormQuad, StormBlockedMul) * i * i) + (Sa(StormLinear, StormBlockedMul) * (i + 1))) / 100;
-		data->StormShelterAtt[i] = ((Sa(StormQuad, StormShelterAttMul) * i * i) + (Sa(StormLinear, StormShelterAttMul) * (i + 1))) / 100;
-		data->StormConnected[i] = ((Sa(StormQuad, StormConnectedMul) * i * i) + (Sa(StormLinear, StormConnectedMul) * (i + 1))) / 100;
-		data->StormOpen[i] = ((Sa(StormQuad, StormOpenMul) * i * i) + (Sa(StormLinear, StormOpenMul) * (i + 1))) / 100;
-		data->StormFree[i] = ((Sa(StormQuad, StormFreeMul) * i * i) + (Sa(StormLinear, StormFreeMul) * (i + 1))) / 100;
+		data->StormBlocked[i] = ((StormQuad[StormBlockedMul] * i * i) + (StormLinear[StormBlockedMul] * (i + 1))) / 100;
+		data->StormShelterAtt[i] = ((StormQuad[StormShelterAttMul] * i * i) + (StormLinear[StormShelterAttMul] * (i + 1))) / 100;
+		data->StormConnected[i] = ((StormQuad[StormConnectedMul] * i * i) + (StormLinear[StormConnectedMul] * (i + 1))) / 100;
+		data->StormOpen[i] = ((StormQuad[StormOpenMul] * i * i) + (StormLinear[StormOpenMul] * (i + 1))) / 100;
+		data->StormFree[i] = ((StormQuad[StormFreeMul] * i * i) + (StormLinear[StormFreeMul] * (i + 1))) / 100;
 	}
 
 	data->PasserGeneral = init_passer(PasserWeights::General);
@@ -3164,22 +2100,22 @@ template<bool me> uint16 kpkx()
 
 template<bool me> uint16 knpkx()
 {
-	if (Pawn(me) & OwnLine(me, 6) & (File[0] | File[7]))
+	if (Pawn(me) & OwnLine<me>(6) & (File[0] | File[7]))
 	{
 		int sq = lsb(Pawn(me));
-		if (KAtt[sq] & King(opp) & (OwnLine(me, 6) | OwnLine(me, 7)))
+		if (KAtt[sq] & King(opp) & (OwnLine<me>(6) | OwnLine<me>(7)))
 			return 0;
-		if (PieceAt(sq + Push[me]) == IKing[me] && (KAtt[lsb(King(me))] & KAtt[lsb(King(opp))] & OwnLine(me, 7)))
+		if (PieceAt(sq + Push[me]) == IKing[me] && (KAtt[lsb(King(me))] & KAtt[lsb(King(opp))] & OwnLine<me>(7)))
 			return 0;
 	}
-	else if (Pawn(me) & OwnLine(me, 5) & (File[0] | File[7]))
+	else if (Pawn(me) & OwnLine<me>(5) & (File[0] | File[7]))
 	{
 		int sq = lsb(Pawn(me)), to = sq + Push[me];
 		if (PieceAt(sq + Push[me]) == IPawn[opp])
 		{
-			if (KAtt[to] & King(opp) & OwnLine(me, 7))
+			if (KAtt[to] & King(opp) & OwnLine<me>(7))
 				return 0;
-			if ((KAtt[to] & KAtt[lsb(King(opp))] & OwnLine(me, 7)) && (!(NAtt[to] & Knight(me)) || Current->turn == opp))
+			if ((KAtt[to] & KAtt[lsb(King(opp))] & OwnLine<me>(7)) && (!(NAtt[to] & Knight(me)) || Current->turn == opp))
 				return 0;
 		}
 	}
@@ -3228,13 +2164,13 @@ template<bool me> uint16 krpkrx()
 			mul = Min(mul, add_mat << 3);
 		if (rrank <= 3)
 			mul = Min(mul, add_mat << 3);
-		if (rrank == 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5 && T(King(opp) & (OwnLine(me, 6) | OwnLine(me, 7))) &&
+		if (rrank == 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5 && T(King(opp) & (OwnLine<me>(6) | OwnLine<me>(7))) &&
 			(!MY_TURN || F(PAtt[me][sq] & RookAttacks(lsb(Rook(me)), PieceAll()) & (~KAtt[o_king]))))
 			mul = Min(mul, add_mat << 3);
 		if (rrank >= 5 && OwnRank<me>(o_rook) <= 1 && (!MY_TURN || IsCheck(me) || Dist(m_king, sq) >= 2))
 			mul = Min(mul, add_mat << 3);
-		if (T(King(opp) & (File[1] | File[2] | File[6] | File[7])) && T(Rook(opp) & OwnLine(me, 7)) && T(RO->Between[o_king][o_rook] & (File[3] | File[4])) &&
-			F(Rook(me) & OwnLine(me, 7)))
+		if (T(King(opp) & (File[1] | File[2] | File[6] | File[7])) && T(Rook(opp) & OwnLine<me>(7)) && T(RO->Between[o_king][o_rook] & (File[3] | File[4])) &&
+			F(Rook(me) & OwnLine<me>(7)))
 			mul = Min(mul, add_mat << 3);
 		return mul;
 	}
@@ -3247,7 +2183,7 @@ template<bool me> uint16 krpkrx()
 			mul = Min(mul, add_mat << 3);
 	}
 
-	if (KAtt[o_king] & PWay[me][sq] & OwnLine(me, 7))
+	if (KAtt[o_king] & PWay[me][sq] & OwnLine<me>(7))
 	{
 		if (rrank <= 4 && OwnRank<me>(m_king) <= 4 && OwnRank<me>(o_rook) == 5)
 			mul = Min(mul, add_mat << 3);
@@ -3257,9 +2193,9 @@ template<bool me> uint16 krpkrx()
 
 	if (T(PWay[me][sq] & Rook(me)) && T(PWay[opp][sq] & Rook(opp)))
 	{
-		if (King(opp) & (File[0] | File[1] | File[6] | File[7]) & OwnLine(me, 6))
+		if (King(opp) & (File[0] | File[1] | File[6] | File[7]) & OwnLine<me>(6))
 			mul = Min(mul, add_mat << 3);
-		else if ((Pawn(me) & (File[0] | File[7])) && (King(opp) & (OwnLine(me, 5) | OwnLine(me, 6))) && abs(FileOf(sq) - FileOf(o_king)) <= 2 &&
+		else if ((Pawn(me) & (File[0] | File[7])) && (King(opp) & (OwnLine<me>(5) | OwnLine<me>(6))) && abs(FileOf(sq) - FileOf(o_king)) <= 2 &&
 			FileOf(sq) != FileOf(o_king))
 			mul = Min(mul, add_mat << 3);
 	}
@@ -3272,7 +2208,7 @@ template<bool me> uint16 krpkrx()
 
 template<bool me> uint16 krpkbx()
 {
-	if (!(Pawn(me) & OwnLine(me, 5)))
+	if (!(Pawn(me) & OwnLine<me>(5)))
 		return 32;
 	int sq = lsb(Pawn(me));
 	if (!(PWay[me][sq] & King(opp)))
@@ -3294,7 +2230,7 @@ template<bool me> uint16 krpkbx()
 
 template<bool me> uint16 kqkp()
 {
-	if (F(KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1) & (File[0] | File[2] | File[5] | File[7])))
+	if (F(KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine<me>(1) & (File[0] | File[2] | File[5] | File[7])))
 		return 32;
 	if (PWay[opp][lsb(Pawn(opp))] & (King(me) | Queen(me)))
 		return 32;
@@ -3307,7 +2243,7 @@ template<bool me> uint16 kqkp()
 template<bool me> uint16 kqkrpx()
 {
 	int rsq = lsb(Rook(opp));
-	uint64 pawns = KAtt[lsb(King(opp))] & PAtt[me][rsq] & Pawn(opp) & Interior & OwnLine(me, 6);
+	uint64 pawns = KAtt[lsb(King(opp))] & PAtt[me][rsq] & Pawn(opp) & Interior & OwnLine<me>(6);
 	if (pawns && OwnRank<me>(lsb(King(me))) <= 4)
 		return 0;
 	return 32;
@@ -3315,7 +2251,7 @@ template<bool me> uint16 kqkrpx()
 
 template<bool me> uint16 krkpx()
 {
-	if (T(KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine(me, 1)) & F(PWay[opp][NB<me>(Pawn(opp))] & King(me)))
+	if (T(KAtt[lsb(King(opp))] & Pawn(opp) & OwnLine<me>(1)) & F(PWay[opp][NB<me>(Pawn(opp))] & King(me)))
 		return 0;
 	return 32;
 }
@@ -3429,7 +2365,7 @@ template<bool me> uint16 krppkrx()
 	}
 	else if (T(RO->PIsolated[FileOf(sq2)] & Pawn(me)) && T((File[0] | File[7]) & Pawn(me)) && T(King(opp) & Shift<me>(Pawn(me))))
 	{
-		if (OwnRank<me>(sq2) == 5 && OwnRank<me>(sq1) == 4 && T(Rook(opp) & (OwnLine(me, 5) | OwnLine(me, 6))))
+		if (OwnRank<me>(sq2) == 5 && OwnRank<me>(sq1) == 4 && T(Rook(opp) & (OwnLine<me>(5) | OwnLine<me>(6))))
 			return 10;
 		else if (OwnRank<me>(sq2) < 5)
 			return 16;
@@ -3461,11 +2397,11 @@ template<bool me> void eval_pawns_only(GEvalInfo& EI, pop_func_t pop)
 	{
 		if ((KAtt[sq] | Bit(sq)) & King(opp))
 			EI.mul = 0;
-		else if ((KAtt[sq] & KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+		else if ((KAtt[sq] & KAtt[lsb(King(opp))] & OwnLine<me>(7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
 			EI.mul = 0;
 	}
-	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
-		(Pawn(me) & OwnLine(me, 5) & Shift<opp>(Pawn(opp))))
+	else if ((King(opp) & OwnLine<me>(6) | OwnLine<me>(7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
+		(Pawn(me) & OwnLine<me>(5) & Shift<opp>(Pawn(opp))))
 		EI.mul = 0;
 	if (number == 1)
 	{
@@ -3483,17 +2419,17 @@ template<bool me> void eval_single_bishop(GEvalInfo& EI, pop_func_t pop)
 	{
 		if ((KAtt[sq] | Bit(sq)) & King(opp))
 			EI.mul = 0;
-		else if ((KAtt[sq] & KAtt[lsb(King(opp))] & OwnLine(me, 7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
+		else if ((KAtt[sq] & KAtt[lsb(King(opp))] & OwnLine<me>(7)) && PieceAt(sq - Push[me]) == IPawn[opp] && PieceAt(sq - 2 * Push[me]) == IPawn[me])
 			EI.mul = 0;
 	}
-	else if ((King(opp) & OwnLine(me, 6) | OwnLine(me, 7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
-		(Pawn(me) & OwnLine(me, 5) & Shift<opp>(Pawn(opp))))
+	else if ((King(opp) & OwnLine<me>(6) | OwnLine<me>(7)) && abs(FileOf(sq) - FileOf(lsb(King(opp)))) <= 3 && !(Pawn(me) & (~RO->PSupport[me][sq])) &&
+		(Pawn(me) & OwnLine<me>(5) & Shift<opp>(Pawn(opp))))
 		EI.mul = 0;
 
 	if (number == 1)
 	{
 		sq = lsb(Pawn(me));
-		if ((Pawn(me) & (File[1] | File[6]) & OwnLine(me, 5)) && PieceAt(sq + Push[me]) == IPawn[opp] &&
+		if ((Pawn(me) & (File[1] | File[6]) & OwnLine<me>(5)) && PieceAt(sq + Push[me]) == IPawn[opp] &&
 			((PAtt[me][sq + Push[me]] | PWay[me][sq + Push[me]]) & King(opp)))
 			EI.mul = 0;
 	}
@@ -3935,9 +2871,8 @@ void init_material(CommonData_* dst)
 
 void init_data(CommonData_* dst)
 {
-	RO = dst;
 	init_misc(dst);
-	init_magic(dst);
+	init_magic(dst->Between, &dst->magic_);
 	gen_kpk(dst);
 	init_pst(dst);
 	init_eval(dst);
@@ -3946,7 +2881,7 @@ void init_data(CommonData_* dst)
 
 
 void create_child
-(const char *hashName,
+	(const char *hashName,
 	const char *pvHashName,
 	const char *pawnHashName,
 	const char *dataName,
@@ -3998,7 +2933,7 @@ static void create_children(const Settings_& settings)
 
 	// Create shared objects:
 	string dataName = object_name("DATA", pid, 0);
-	RO = DATA = init_object(DATA, dataName.c_str(), true, false);
+	DATA = init_object(DATA, dataName.c_str(), true, false);
 	init_data(DATA);
 
 	string settingsName = object_name("SETTINGS", pid, 0);
@@ -4256,7 +3191,7 @@ void setup_board()
 		}
 	}
 	Current->material = 0;
-	Current->pst = 0;
+	Current->pst = eval_pst();
 	Current->key = RO->PieceKey[0][0];
 	if (Current->turn)
 		Current->key ^= RO->TurnKey;
@@ -4280,7 +3215,6 @@ void setup_board()
 				Current->material += MatCode[PieceAt(i)];
 			else
 				Current->pawn_key ^= RO->PieceKey[PieceAt(i)][i];
-			Current->pst += Pst(PieceAt(i), i);
 		}
 	}
 	if (popcnt(Piece(WhiteKnight)) > 2 || popcnt(Piece(WhiteLight)) > 1 || popcnt(Piece(WhiteDark)) > 1 || popcnt(Piece(WhiteRook)) > 2 || popcnt(Piece(WhiteQueen)) > 2 ||
@@ -4926,7 +3860,7 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 			int value = dist_att * RO->PasserAtt[rrank] + RO->LogDist[dist_att] * RO->PasserAttLog[rrank]
 				- dist_def * RO->PasserDef[rrank] - RO->LogDist[dist_def] * RO->PasserDefLog[rrank];  // IDEA -- incorporate side-to-move in closer-king check?
 			// IDEA -- scale down rook pawns?
-			IncV(PEI.score, Pack2(0, value / 256));
+			IncV(PEI.score, Pack(0, value / 256));
 			NOTICE(PEI.score, NO_INFO);
 		}
 	}
@@ -5151,12 +4085,12 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 					IncV(EI.score, force * Values::RookHofWeakPAtt);
 			}
 		}
-		if ((b & OwnLine(me, 6)) && ((King(opp) | Pawn(opp)) & (OwnLine(me, 6) | OwnLine(me, 7))))
+		if ((b & OwnLine<me>(6)) && ((King(opp) | Pawn(opp)) & (OwnLine<me>(6) | OwnLine<me>(7))))
 		{
 			IncV(EI.score, Values::Rook7th);
-			if (King(opp) & OwnLine(me, 7))
+			if (King(opp) & OwnLine<me>(7))
 				IncV(EI.score, Values::Rook7thK8th);
-			if (Major(me) & att & OwnLine(me, 6))
+			if (Major(me) & att & OwnLine<me>(6))
 				IncV(EI.score, Values::Rook7thDoubled);
 		}
 	}
@@ -5231,8 +4165,6 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 			IncV(EI.score, Values::TacticalBishopPawn);
 		if (control & Knight(opp))
 			IncV(EI.score, Values::TacticalB2N);
-		if (att & EI.area[me])
-			IncV(EI.score, Values::KingDefBishop);
 		Current->threat |= att & Major(opp);
 		if (T(b & Outpost[me])
 			&& F(Knight(opp))
@@ -5296,8 +4228,8 @@ constexpr array<int, 8> KingCenterScale = { 64, 65, 74, 70, 68, 70, 61, 62 };	//
 template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 {
 	POP pop;
-	uint16 cnt = Min<uint16>(15, UUnpack1(EI.king_att[me]));
-	uint16 score = UUnpack2(EI.king_att[me]);
+	uint16 cnt = Min<uint16>(15, Pick16<1>(EI.king_att[me]));
+	uint16 score = Pick16<2>(EI.king_att[me]);
 	if (cnt >= 2 && T(Queen(me)))
 	{
 		score += (EI.PawnEntry->shelter[opp] * KingShelterQuad) / 64;
@@ -5333,7 +4265,7 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	int eg = (PHASE[2] * adjusted) / 32;
 	int cl = (PHASE[3] * adjusted) / 32;
 	NOTICE(EI.score, cnt);
-	IncV(EI.score, Pack4(op, md, eg, cl));
+	IncV(EI.score, Pack(op, md, eg, cl));
 	NOTICE(EI.score, NO_INFO);
 }
 
@@ -5463,13 +4395,13 @@ template<bool me> void eval_castling(GEvalInfo& EI)
 	constexpr array<int, 2> later = { 15, 5 };
 	uint64 occ = PieceAll();
 	if (can_castle(occ, me, true))
-		IncV(EI.score, Pack4(now[0], 0, 0, 0));
+		IncV(EI.score, Pack(now[0], 0, 0, 0));
 	else if (Current->castle_flags & (me ? CanCastle_oo : CanCastle_OO))
-		IncV(EI.score, Pack4(later[0], 0, 0, 0));
+		IncV(EI.score, Pack(later[0], 0, 0, 0));
 	if (can_castle(occ, me, false))
-		IncV(EI.score, Pack4(now[1], 0, 0, 0));
+		IncV(EI.score, Pack(now[1], 0, 0, 0));
 	else if (Current->castle_flags & (me ? CanCastle_ooo : CanCastle_OOO))
-		IncV(EI.score, Pack4(later[1], 0, 0, 0));
+		IncV(EI.score, Pack(later[1], 0, 0, 0));
 }
 
 template<bool me> void eval_xray(GEvalInfo& EI)
@@ -5696,7 +4628,7 @@ template<bool me> bool is_legal(int move)
 		{
 			if (capture)
 				return 0;
-			if (T(u & OwnLine(me, 7)) && !IsPromotion(move))
+			if (T(u & OwnLine<me>(7)) && !IsPromotion(move))
 				return 0;
 			return 1;
 		}
@@ -5706,7 +4638,7 @@ template<bool me> bool is_legal(int move)
 				return 0;
 			if (PieceAt(to - Push[me]))
 				return 0;
-			if (F(u & OwnLine(me, 3)))
+			if (F(u & OwnLine<me>(3)))
 				return 0;
 			return 1;
 		}
@@ -5714,7 +4646,7 @@ template<bool me> bool is_legal(int move)
 		{
 			if (capture == 0)
 				return 0;
-			if (T(u & OwnLine(me, 7)) && !IsPromotion(move))
+			if (T(u & OwnLine<me>(7)) && !IsPromotion(move))
 				return 0;
 			return 1;
 		}
@@ -5825,7 +4757,7 @@ template<bool me> bool is_check(int move)
 	{
 		if (PAtt[me][to] & king)
 			return true;
-		if (HasBit(OwnLine(me, 7), to) && T(king & OwnLine(me, 7)) && F(RO->Between[to][king_sq] & PieceAll()))
+		if (HasBit(OwnLine<me>(7), to) && T(king & OwnLine<me>(7)) && F(RO->Between[to][king_sq] & PieceAll()))
 			return true;
 	}
 	else if (piece < WhiteLight)
@@ -6621,7 +5553,7 @@ template <bool me> int* gen_captures(int* list)
 	if (Current->ep_square)
 		for (v = PAtt[opp][Current->ep_square] & Pawn(me); T(v); Cut(v))
 			list = AddMove(list, lsb(v), Current->ep_square, FlagEP, RO->MvvLva[IPawn[me]][IPawn[opp]] + bonus(lsb(v)));
-	for (u = Pawn(me) & OwnLine(me, 6); T(u); Cut(u))
+	for (u = Pawn(me) & OwnLine<me>(6); T(u); Cut(u))
 		if (F(PieceAt(lsb(u) + Push[me])))
 		{
 			int from = lsb(u), to = from + Push[me];
@@ -6629,14 +5561,14 @@ template <bool me> int* gen_captures(int* list)
 			if (T(NAtt[to] & King(opp)) || forkable<me>(to))	// Roc v Hannibal, 64th amateur series A round 2, proved the need for this second test
 				list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnight);
 		}
-	for (v = ShiftW<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
+	for (v = ShiftW<opp>(Current->mask) & Pawn(me) & OwnLine<me>(6); T(v); Cut(v))
 	{
 		int from = lsb(v), to = from + PushE[me];
 		list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotionCap(PieceAt(to)) + bonus(to));
 		if (HasBit(NAtt[kOpp], to))
 			list = AddMove(list, from, to, FlagPKnight, MvvLvaPromotionKnightCap(PieceAt(to)) + bonus(to));
 	}
-	for (v = ShiftE<opp>(Current->mask) & Pawn(me) & OwnLine(me, 6); T(v); Cut(v))
+	for (v = ShiftE<opp>(Current->mask) & Pawn(me) & OwnLine<me>(6); T(v); Cut(v))
 	{
 		int from = lsb(v), to = from + PushW[me];
 		list = AddMove(list, from, to, FlagPQueen, MvvLvaPromotionCap(PieceAt(to)) + bonus(to));
@@ -6645,9 +5577,9 @@ template <bool me> int* gen_captures(int* list)
 	}
 	if (T(Current->att[me] & Current->mask))
 	{
-		for (v = ShiftW<opp>(Current->mask) & Pawn(me) & (~OwnLine(me, 6)); T(v); Cut(v))
+		for (v = ShiftW<opp>(Current->mask) & Pawn(me) & (~OwnLine<me>(6)); T(v); Cut(v))
 			list = AddCaptureP(list, IPawn[me], lsb(v), lsb(v) + PushE[me], 0);
-		for (v = ShiftE<opp>(Current->mask) & Pawn(me) & (~OwnLine(me, 6)); T(v); Cut(v))
+		for (v = ShiftE<opp>(Current->mask) & Pawn(me) & (~OwnLine<me>(6)); T(v); Cut(v))
 			list = AddCaptureP(list, IPawn[me], lsb(v), lsb(v) + PushW[me], 0);
 		for (v = KAtt[lsb(King(me))] & Current->mask & (~Current->att[opp]); T(v); Cut(v))
 			list = AddCaptureP(list, IKing[me], lsb(King(me)), lsb(v), 0);
@@ -6712,7 +5644,7 @@ template<bool me> int* gen_evasions(int* list)
 	for (u = PAtt[opp][att_sq] & Pawn(me); T(u); Cut(u))
 	{
 		int from = lsb(u);
-		if (HasBit(OwnLine(me, 7), att_sq))
+		if (HasBit(OwnLine<me>(7), att_sq))
 			list = AddMove(list, from, att_sq, FlagPQueen, MvvLvaPromotionCap(PieceAt(att_sq)));
 		else if (HasBit(Current->mask, att_sq))
 			list = AddCaptureP(list, IPawn[me], from, att_sq, 0);
@@ -6724,7 +5656,7 @@ template<bool me> int* gen_evasions(int* list)
 	for (u = Shift<opp>(inter) & Pawn(me); T(u); Cut(u))
 	{
 		int from = lsb(u);
-		if (HasBit(OwnLine(me, 6), from))
+		if (HasBit(OwnLine<me>(6), from))
 			list = AddMove(list, from, from + Push[me], FlagPQueen, MvvLvaPromotion);
 		else if (F(~Current->mask))
 			list = AddMove(list, from, from + Push[me], 0, 0);
@@ -6735,7 +5667,7 @@ template<bool me> int* gen_evasions(int* list)
 
 	if (F(~Current->mask))
 	{
-		for (u = Shift<opp>(Shift<opp>(inter)) & OwnLine(me, 1) & Pawn(me); T(u); Cut(u))
+		for (u = Shift<opp>(Shift<opp>(inter)) & OwnLine<me>(1) & Pawn(me); T(u); Cut(u))
 		{
 			int from = lsb(u);
 			if (F(PieceAt(from + Push[me])))
@@ -6793,25 +5725,25 @@ template<bool me> int* gen_quiet_moves(int* list)
 	if (me == White)
 	{
 		if (can_castle(occ, me, true))
-			list = AddHistoryP(list, IKing[White], 4, 6, FlagCastling);
+			list = AddHistoryP(list, WhiteKing, 4, 6, FlagCastling);
 		if (can_castle(occ, me, false))
-			list = AddHistoryP(list, IKing[White], 4, 2, FlagCastling);
+			list = AddHistoryP(list, WhiteKing, 4, 2, FlagCastling);
 	}
 	else
 	{
 		if (can_castle(occ, me, true))
-			list = AddHistoryP(list, IKing[Black], 60, 62, FlagCastling);
+			list = AddHistoryP(list, BlackKing, 60, 62, FlagCastling);
 		if (can_castle(occ, me, false))
-			list = AddHistoryP(list, IKing[Black], 60, 58, FlagCastling);
+			list = AddHistoryP(list, BlackKing, 60, 58, FlagCastling);
 	}
 
 	uint64 free = ~occ;
 	auto pTarget = PawnJoins<me>();
-	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
+	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine<me>(7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
 		int passer = T(HasBit(Current->passer, to - Push[me]));
-		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
+		if (HasBit(OwnLine<me>(2), to) && F(PieceAt(to + Push[me])))
 			list = AddHistoryP(list, IPawn[me], to - Push[me], to + Push[me], dropPawn(to + Push[me]));
 		list = AddHistoryP(list, IPawn[me], to - Push[me], to, dropPawn(to), Square(OwnRank<me>(to) + 4 * passer - 2));
 	}
@@ -6884,14 +5816,14 @@ template<bool me> int* gen_checks(int* list)
 		target = clear & (~RO->FullLine[king][from]);
 		if (PieceAt(from) == IPawn[me])
 		{
-			if (!HasBit(OwnLine(me, 7), from + Push[me]))
+			if (!HasBit(OwnLine<me>(7), from + Push[me]))
 			{
 				if (HasBit(target, from + Push[me]) && F(PieceAt(from + Push[me])))
 				{
 					list = AddMove(list, from, from + Push[me], 0, MvvLvaXray);
 					// now check double push
 					const int to2 = from + 2 * Push[me];
-					if (HasBit(OwnLine(me, 1), from) && HasBit(target, to2) && F(PieceAt(to2)))
+					if (HasBit(OwnLine<me>(1), from) && HasBit(target, to2) && F(PieceAt(to2)))
 						list = AddMove(list, from, to2, 0, MvvLvaXray);
 				}
 
@@ -6921,7 +5853,7 @@ template<bool me> int* gen_checks(int* list)
 		for (v = NAtt[king] & NAtt[lsb(u)] & clear; T(v); Cut(v))
 			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
 
-	for (u = KAttAtt[king] & Pawn(me) & (~OwnLine(me, 6)) & nonDiscover; T(u); Cut(u))
+	for (u = KAttAtt[king] & Pawn(me) & (~OwnLine<me>(6)) & nonDiscover; T(u); Cut(u))
 	{
 		int from = lsb(u);
 		for (v = PAtt[me][from] & PAtt[opp][king] & clear & Piece(opp); T(v); Cut(v))
@@ -6954,7 +5886,7 @@ template<bool me> int* gen_checks(int* list)
 
 	if (OwnRank<me>(king) == 4)
 	{	  // check for double-push checks	
-		for (u = Pawn(me) & OwnLine(me, 1) & nonDiscover & PAtt[opp][king - 2 * Push[me]]; T(u); Cut(u))
+		for (u = Pawn(me) & OwnLine<me>(1) & nonDiscover & PAtt[opp][king - 2 * Push[me]]; T(u); Cut(u))
 		{
 			int from = lsb(u);
 			int to = from + 2 * Push[me];
@@ -6972,21 +5904,21 @@ template<bool me> int* gen_delta_moves(int margin, int* list)
 	if (me == White)
 	{
 		if (can_castle(occ, me, true))
-			list = AddCDeltaP(list, margin, IKing[White], 4, 6, FlagCastling);
+			list = AddCDeltaP(list, margin, WhiteKing, 4, 6, FlagCastling);
 		if (can_castle(occ, me, false))
-			list = AddCDeltaP(list, margin, IKing[White], 4, 2, FlagCastling);
+			list = AddCDeltaP(list, margin, WhiteKing, 4, 2, FlagCastling);
 	}
 	else
 	{
 		if (can_castle(occ, me, true))
-			list = AddCDeltaP(list, margin, IKing[Black], 60, 62, FlagCastling);
+			list = AddCDeltaP(list, margin, BlackKing, 60, 62, FlagCastling);
 		if (can_castle(occ, me, false))
-			list = AddCDeltaP(list, margin, IKing[Black], 60, 58, FlagCastling);
+			list = AddCDeltaP(list, margin, BlackKing, 60, 58, FlagCastling);
 	}
-	for (uint64 v = Shift<me>(Pawn(me)) & free & (~OwnLine(me, 7)); T(v); Cut(v))
+	for (uint64 v = Shift<me>(Pawn(me)) & free & (~OwnLine<me>(7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
-		if (HasBit(OwnLine(me, 2), to) && F(PieceAt(to + Push[me])))
+		if (HasBit(OwnLine<me>(2), to) && F(PieceAt(to + Push[me])))
 			list = AddCDeltaP(list, margin, IPawn[me], to - Push[me], to + Push[me], 0);
 		list = AddCDeltaP(list, margin, IPawn[me], to - Push[me], to, 0);
 	}
@@ -7236,7 +6168,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 	}
 
 	if (T(nTried) || Current->score + 30 * CP_SEARCH < alpha || T(Current->threat & Piece(me)) || T(Current->xray[opp] & NonPawn(opp)) ||
-		T(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())))
+		T(Pawn(opp) & OwnLine<me>(1) & Shift<me>(~PieceAll())))
 		return finish(score);
 	int margin = alpha - Current->score + 6 * CP_SEARCH;
 	gen_delta_moves<me>(margin, Current->moves);
@@ -7455,7 +6387,7 @@ template<bool me, bool evasion> HashResult_ try_hash(int beta, int depth, int fl
 	if (!evasion)
 	{
 		int value = Current->score - (90 + depth * 8 + Max(depth - 5, 0) * 32) * CP_SEARCH;
-		if (value >= beta && depth <= 13 && T(NonPawnKing(me)) && F(Pawn(opp) & OwnLine(me, 1) & Shift<me>(~PieceAll())) && F(flags & (FlagReturnBestMove | FlagDisableNull)))
+		if (value >= beta && depth <= 13 && T(NonPawnKing(me)) && F(Pawn(opp) & OwnLine<me>(1) & Shift<me>(~PieceAll())) && F(flags & (FlagReturnBestMove | FlagDisableNull)))
 			return abort(value);
 
 		value = Current->score + FutilityThreshold;
@@ -9050,7 +7982,7 @@ int main(int argc, char **argv)
 			*settingsStr = argv[6],
 			*sharedStr = argv[7],
 			*infoStr = argv[8];
-		RO = DATA = share_object(DATA, dataStr, true);
+		DATA = share_object(DATA, dataStr, true);
 		SETTINGS = share_object(SETTINGS, settingsStr, true);
 		SHARED = share_object(SHARED, sharedStr, false);
 		HASH = share_object(HASH, hashStr, false);
@@ -9094,7 +8026,7 @@ int main(int argc, char **argv)
 	else if (argc > 2 && strcmp(argv[1], "bench") == 0)
 	{
 		const int benchDepth = atoi(argv[2]);
-		RO = DATA = init_object(DATA, nullptr, true, false);
+		DATA = init_object(DATA, nullptr, true, false);
 		init_data(DATA);
 		Settings_ settings;
 		settings.nThreads = 1;
@@ -9290,9 +8222,9 @@ int main(int argc, char *argv[])
 // Fathom/Syzygy code at end where its #defines cannot screw us up
 #undef LOCK
 #undef UNLOCK
-#include "src\tbconfig.h"
-#include "src\tbcore.h"
-#include "src\tbprobe.c"
+#include "tbconfig.h"
+#include "tbcore.h"
+#include "tbprobe.c"
 #pragma optimize("", on)
 
 int GetTBMove(unsigned res, int* best_score)
