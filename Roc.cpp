@@ -741,11 +741,10 @@ namespace Values
 	constexpr packed_t TacticalRookMinor = Pack(29, 29, 66, 10);
 	constexpr packed_t TacticalBishopPawn = Pack(0, 28, 35, 30);
 	constexpr packed_t TacticalB2N = Pack(26, 59, 71, 30);
-	constexpr packed_t TacticalN2B = Pack(89, 78, 74, 20);
-	constexpr packed_t TacticalThreat = Pack(39, 35, 42, 13);
-	constexpr packed_t TacticalDoubleThreat = Pack(179, 160, 147, 36);
-	constexpr packed_t TacticalExtraThreat = Pack(42, 46, 53, 5);
-	constexpr packed_t TacticalWeakThreat = Pack(20, 20, 24, 5);
+	constexpr packed_t TacticalN2B = Pack(89, 78, 74, 20);	
+	constexpr packed_t TacticalThreat = Pack(79, 64, 45, -3);
+	constexpr packed_t TacticalDoubleThreat = Pack(164, 106, 48, 0);
+	constexpr packed_t TacticalUnguardedQ = Pack(0, 9, 39, -10);
 
 	constexpr packed_t KingDefKnight = Pack(8, 4, 0, 0);
 	constexpr packed_t KingDefQueen = Pack(16, 8, 0, 0);
@@ -4340,18 +4339,13 @@ template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 	POP pop;
 	uint64 threat = Current->att[opp] & (~Current->att[me]) & Piece(me);
 	Current->threat |= threat;
-	if (Single(threat))
-	{
-		if (threat)
-			DecV(EI.score, Values::TacticalThreat);
-	}
-	else
+	if (Multiple(threat))
 	{
 		DecV(EI.score, Values::TacticalDoubleThreat);
-		DecV(EI.score, (pop(threat) - 2) * Values::TacticalExtraThreat);
+		DecV(EI.score, (pop(threat) - 2) * Values::TacticalThreat);
 	}
-	if (uint64 weakThreat = Current->dbl_att[opp] & ~(Current->att[me] | threat) & Piece(me))
-		DecV(EI.score, Values::TacticalWeakThreat);
+	else if (threat)
+		DecV(EI.score, Values::TacticalThreat);
 }
 
 template<class POP> void eval_unusual_material(GEvalInfo& EI)
