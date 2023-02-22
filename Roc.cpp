@@ -764,17 +764,17 @@ namespace Values
 	constexpr packed_t KnightPawnSpread = Pack(0, 4, 15, -10);
 	constexpr packed_t KnightPawnGap = Pack(0, 2, 5, 0);
 
-	constexpr packed_t QueenPawnPin = Pack(11, 33, 38, 34);
-	constexpr packed_t QueenSelfPin = Pack(62, 107, 88, 55);
-	constexpr packed_t QueenWeakPin = Pack(69, 61, 102, -5);
-	constexpr packed_t RookPawnPin = Pack(49, 25, 27, 9);
-	constexpr packed_t RookSelfPin = Pack(37, 96, 86, 78);
-	constexpr packed_t RookWeakPin = Pack(33, 86, 122, 25);
-	constexpr packed_t RookThreatPin = Pack(256, 189, 128, -6);
-	constexpr packed_t BishopPawnPin = Pack(32, 47, 50, 7);
-	constexpr packed_t BishopSelfPin = Pack(141, 149, 127, 16);
-	constexpr packed_t StrongPin = Pack(-1, 82, 195, 51);
-	constexpr packed_t BishopThreatPin = Pack(101, 272, 214, 27);
+	constexpr packed_t QueenPawnPin = Pack(34, 44, 42, 59);
+	constexpr packed_t QueenSelfPin = Pack(88, 232, -45, 130);
+	constexpr packed_t QueenWeakPin = Pack(86, 108, 72, 56);
+	constexpr packed_t RookPawnPin = Pack(121, 39, 1, 39);
+	constexpr packed_t RookSelfPin = Pack(25, 170, 71, 165);
+	constexpr packed_t RookWeakPin = Pack(68, 153, 146, 108);
+	constexpr packed_t RookThreatPin = Pack(632, 716, 614, -190);
+	constexpr packed_t BishopPawnPin = Pack(58, 130, 106, 46);
+	constexpr packed_t BishopSelfPin = Pack(233, 249, 122, 52);
+	constexpr packed_t StrongPin = Pack(-16, 136, 262, -22);
+	constexpr packed_t BishopThreatPin = Pack(342, 537, 629, -34);
 
 	constexpr packed_t QKingRay = Pack(17, 26, 33, -2);
 	constexpr packed_t RKingRay = Pack(-14, 15, 42, 0);
