@@ -51,6 +51,8 @@ typedef HANDLE event_t;
 #include "Chess/Material.h"
 #include "Chess/PawnEval.h"
 #include "Chess/Eval.h"
+#include "Chess/PasserEval.h"
+#include "Chess/Locus.h"
 #include "Chess/Weights.h"
 #include "Chess/Magic.h"
 #include "Chess/Shared.h"
@@ -634,10 +636,10 @@ namespace PstW
 }
 
 // coefficient (Linear, Log, Locus) * phase (4)
-constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 27, 2000, 891, 89, -175, 257, 289, -47, 163 };
-constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 127, 1687, 1644, 1594, -565, -96, 437, 136, 502 };
+constexpr array<int, 12> MobCoeffsKnight = { 1281, 857, 650, 27, 2000, 891, 89, -175, 257, 206, 0, 163 };
+constexpr array<int, 12> MobCoeffsBishop = { 1484, 748, 558, 127, 1687, 1644, 1594, -565, 0, 337, 136, 502 };
 constexpr array<int, 12> MobCoeffsRook = { 1096, 887, 678, 10, -565, 248, 1251, -5, 74, 72, 45, -12 };
-constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -7, 1755, 324, -1091, -9, 78, 109, 17, -12 };
+constexpr array<int, 12> MobCoeffsQueen = { 597, 876, 1152, -7, 1755, 324, -1091, -9, 78, 100, 17, -12 };
 constexpr int N_LOCUS = 22;
 
 // file type (3) * distance from 2d rank/open (5)
@@ -742,9 +744,9 @@ namespace Values
 	constexpr packed_t TacticalBishopPawn = Pack(0, 28, 35, 30);
 	constexpr packed_t TacticalB2N = Pack(26, 59, 71, 30);
 	constexpr packed_t TacticalN2B = Pack(89, 78, 74, 20);	
-	constexpr packed_t TacticalThreat = Pack(79, 64, 45, -3);
-	constexpr packed_t TacticalDoubleThreat = Pack(164, 106, 48, 0);
-	constexpr packed_t TacticalUnguardedQ = Pack(0, 9, 39, -10);
+
+	constexpr packed_t Threat = Pack(79, 64, 45, -3);
+	constexpr packed_t ThreatDouble = Pack(164, 106, 48, 0);
 
 	constexpr packed_t KingDefKnight = Pack(8, 4, 0, 0);
 	constexpr packed_t KingDefQueen = Pack(16, 8, 0, 0);
@@ -1943,37 +1945,9 @@ void init_pst(CommonData_* data)
 	Current->pst = eval_pst();
 }
 
-double KingLocusDist(int x, int y)
-{
-	return sqrt(1.0 * Square(RankOf(x) - RankOf(y)) + Square(FileOf(x) - FileOf(y)));
-}
-uint64 make_klocus(int k_loc, double center_weight, double spine_weight)
-{
-	if (N_LOCUS <= 0)
-		return 0ull;
-	array<pair<double, int>, 64> temp;
-	for (int ii = 0; ii < 64; ++ii)
-	{
-		auto kDist = KingLocusDist(k_loc, ii);
-		auto spineDist = fabs(3.5 - FileOf(ii));
-		auto centerDist = sqrt(Square(3.5 - RankOf(ii)) + Square(spineDist));
-		auto useDist = center_weight * centerDist + spine_weight * spineDist + kDist;
-		temp[ii] = { useDist, ii };
-	}
-	sort(temp.begin(), temp.end());
-	uint64 retval = 0ull;
-	int ii = N_LOCUS;
-	// include elements tied with the cutoff
-	while (ii < 64 && temp[ii].first == temp[N_LOCUS - 1].first)
-		++ii;
-	while (ii)
-		retval |= Bit(temp[--ii].second);
-	return retval;
-}
-
 template<class T_> void init_mobility
-(const array<int, 12>& coeffs,
-	T_* mob)
+	(const array<int, 12>& coeffs,
+	 T_* mob)
 {
 	// ordering of coeffs is (linear*4, log*4, locus*4)
 	auto m1 = [&](int phase, int pop)->sint16
@@ -2012,35 +1986,17 @@ uint64 within(int loc, int dist)
 	return retval;
 }
 
-array<sint64, 8> init_passer(const array<array<int, 4>, 3>& weights)
-{
-	constexpr double MID_SCORE = 2.5;  // rank around 4.5
-	auto loc = [&](int rank) { return rank * (rank - 1) / 15.0 - 1.0; };	// in [-1, 1]
-	auto part = [&](int rank, int which)
-	{
-		double l = loc(rank);
-		double r = weights[1][which] + abs(l) * ((l > 0 ? weights[2][which] : weights[0][which]) - weights[1][which]);
-		return static_cast<sint16>(r);
-	};
-	auto ppart = [&](int rank, int which) { return max<sint16>(0, part(rank, which)); };
-
-	array<sint64, 8> retval;
-	for (int ii = 1; ii < 7; ++ii)
-		retval[ii] = Pack(ppart(ii, 0), ppart(ii, 1), ppart(ii, 2), part(ii, 3));	// [3] can be negative
-	return retval;
-}
-
 void init_eval(CommonData_* data)
 {
 	init_mobility(MobCoeffsKnight, &data->MobKnight);
 	init_mobility(MobCoeffsBishop, &data->MobBishop);
 	init_mobility(MobCoeffsRook, &data->MobRook);
 	init_mobility(MobCoeffsQueen, &data->MobQueen);
-	for (int i = 0; i < 64; ++i)
-	{
-		data->KingFrontal[i] = make_klocus(i, 1.0, -0.25) & within(i, 3);
-		data->KingFlank[i] = make_klocus(i, 0.0, -0.75);
-	}
+	data->LocusK = MakeLoci(Locus::KDist, N_LOCUS);
+	data->LocusQ = MakeLoci(Locus::MinorDist_(QMask, 7.0, 4.0, 1.6), N_LOCUS);
+	data->LocusR = MakeLoci(Locus::RDist_(3.0, 4.0), N_LOCUS);
+	data->LocusB = MakeLoci(Locus::MinorDist_(BMask, 9.0, 5.0, 1.6), N_LOCUS);
+	data->LocusN = MakeLoci(Locus::MinorDist_(NAtt, 2.0, 1.0, 1.6), N_LOCUS);
 
 	for (int i = 0; i < 3; ++i)
 		for (int j = 7; j >= 0; --j)
@@ -2061,15 +2017,15 @@ void init_eval(CommonData_* data)
 		data->StormFree[i] = ((StormQuad[StormFreeMul] * i * i) + (StormLinear[StormFreeMul] * (i + 1))) / 100;
 	}
 
-	data->PasserGeneral = init_passer(PasserWeights::General);
-	data->PasserBlocked = init_passer(PasserWeights::Blocked);
-	data->PasserFree = init_passer(PasserWeights::Free);
-	data->PasserSupported = init_passer(PasserWeights::Supported);
-	data->PasserProtected = init_passer(PasserWeights::Protected);
-	data->PasserConnected = init_passer(PasserWeights::Connected);
-	data->PasserOutside = init_passer(PasserWeights::Outside);
-	data->PasserCandidate = init_passer(PasserWeights::Candidate);
-	data->PasserClear = init_passer(PasserWeights::Clear);
+	data->PasserGeneral = PasserValuesGull(PasserWeights::General);
+	data->PasserBlocked = PasserValuesGull(PasserWeights::Blocked);
+	data->PasserFree = PasserValuesGull(PasserWeights::Free);
+	data->PasserSupported = PasserValuesGull(PasserWeights::Supported);
+	data->PasserProtected = PasserValuesGull(PasserWeights::Protected);
+	data->PasserConnected = PasserValuesGull(PasserWeights::Connected);
+	data->PasserOutside = PasserValuesGull(PasserWeights::Outside);
+	data->PasserCandidate = PasserValuesGull(PasserWeights::Candidate);
+	data->PasserClear = PasserValuesGull(PasserWeights::Clear);
 	for (int i = 0; i < 8; ++i)
 	{
 		int im2 = Max(i - 2, 0);
@@ -3973,8 +3929,8 @@ template <bool me, class POP> INLINE void eval_queens(GEvalInfo& EI)
 		NOTICE(EI.score, pop(control));
 		IncV(EI.score, RO->MobQueen[0][pop(control)]);
 		NOTICE(EI.score, NO_INFO);
-		FakeV(EI.score, (64 * pop(control & RO->KingFrontal[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
-		IncV(EI.score, RO->MobQueen[1][pop(control & RO->KingFrontal[EI.king[opp]])]);
+		FakeV(EI.score, (64 * pop(control & RO->LocusQ[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
+		IncV(EI.score, RO->MobQueen[1][pop(control & RO->LocusQ[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalQueenPawn);
 		if (control & Minor(opp))
@@ -4053,8 +4009,8 @@ template <bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 		NOTICE(EI.score, pop(control));
 		IncV(EI.score, RO->MobRook[0][pop(control)]);
 		NOTICE(EI.score, NO_INFO);
-		FakeV(EI.score, (64 * pop(control & RO->KingFrontal[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
-		IncV(EI.score, RO->MobRook[1][pop(control & RO->KingFrontal[EI.king[opp]])]);
+		FakeV(EI.score, (64 * pop(control & RO->LocusR[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
+		IncV(EI.score, RO->MobRook[1][pop(control & RO->LocusR[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalRookPawn);
 		if (control & Minor(opp))
@@ -4158,8 +4114,8 @@ template <bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		NOTICE(EI.score, pop(control));
 		IncV(EI.score, RO->MobBishop[0][pop(control)]);
 		NOTICE(EI.score, NO_INFO);
-		FakeV(EI.score, (64 * pop(control & RO->KingFrontal[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
-		IncV(EI.score, RO->MobBishop[1][pop(control & RO->KingFrontal[EI.king[opp]])]);
+		FakeV(EI.score, (64 * pop(control & RO->LocusB[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
+		IncV(EI.score, RO->MobBishop[1][pop(control & RO->LocusB[EI.king[opp]])]);
 		if (control & Pawn(opp))
 			IncV(EI.score, Values::TacticalBishopPawn);
 		if (control & Knight(opp))
@@ -4199,8 +4155,8 @@ template <bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 		NOTICE(EI.score, pop(control));
 		IncV(EI.score, RO->MobKnight[0][pop(control)]);
 		NOTICE(EI.score, NO_INFO);
-		FakeV(EI.score, (64 * pop(control & RO->KingFrontal[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
-		IncV(EI.score, RO->MobKnight[1][pop(control & RO->KingFrontal[EI.king[opp]])]);
+		FakeV(EI.score, (64 * pop(control & RO->LocusN[EI.king[opp]]) - N_LOCUS * pop(control)) * Pack4(1, 1, 1, 1));
+		IncV(EI.score, RO->MobKnight[1][pop(control & RO->LocusN[EI.king[opp]])]);
 		if (control & Bishop(opp))
 			IncV(EI.score, Values::TacticalN2B);
 		if (att & EI.area[me])
@@ -4247,11 +4203,11 @@ template<bool me, class POP> INLINE void eval_king(GEvalInfo& EI)
 	// add a correction for defense-in-depth
 	if (adjusted > 1)
 	{
-		uint64 holes = RO->KingFrontal[EI.king[opp]] & ~Current->att[opp];
+		uint64 holes = RO->LocusK[EI.king[opp]] & ~Current->att[opp];
 		int nHoles = pop(holes);
 		int nIncursions = pop(holes & Current->att[me]);
 		uint64 personnel = NonPawnKing(opp);
-		uint64 guards = RO->KingFrontal[EI.king[opp]] & personnel;
+		uint64 guards = RO->LocusK[EI.king[opp]] & personnel;
 		uint64 awol = personnel ^ guards;
 		int nGuards = pop(guards) + pop(guards & Queen(opp));
 		int nAwol = pop(awol) + pop(awol & Queen(opp));
@@ -4341,11 +4297,11 @@ template <bool me, class POP> INLINE void eval_pieces(GEvalInfo& EI)
 	Current->threat |= threat;
 	if (Multiple(threat))
 	{
-		DecV(EI.score, Values::TacticalDoubleThreat);
-		DecV(EI.score, (pop(threat) - 2) * Values::TacticalThreat);
+		DecV(EI.score, Values::ThreatDouble);
+		DecV(EI.score, (pop(threat) - 2) * Values::Threat);
 	}
 	else if (threat)
-		DecV(EI.score, Values::TacticalThreat);
+		DecV(EI.score, Values::Threat);
 }
 
 template<class POP> void eval_unusual_material(GEvalInfo& EI)
