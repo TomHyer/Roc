@@ -5067,6 +5067,13 @@ void mark_evasions(int* list)
 	}
 }
 
+template<bool me> inline bool IsGoodCap(int move)
+{
+	return (HasBit(Current->xray[me], From(move)) && !HasBit(RO->FullLine[lsb(King(opp))][From(move)], To(move)))
+		 || see<me>(move, 0, SeeValue);
+}
+
+
 template<bool me> void gen_next_moves(int depth)
 {
 	int* p, *q, *r;
@@ -5086,7 +5093,7 @@ template<bool me> void gen_next_moves(int depth)
 		for (q = r - 1, p = Current->moves; q >= p;)
 		{
 			int move = (*q) & 0xFFFF;
-			if (!see<me>(move, 0, SeeValue))
+			if (!IsGoodCap<me>(move))
 			{
 				int next = *p;
 				*p = *q;
@@ -5766,15 +5773,16 @@ template<bool me> int* gen_checks(int* list)
 		target = clear & (~RO->FullLine[king][from]);
 		if (PieceAt(from) == IPawn[me])
 		{
-			if (!HasBit(OwnLine<me>(7), from + Push[me]))
+			if (OwnRank<me>(from) < 6)
 			{
 				if (HasBit(target, from + Push[me]) && F(PieceAt(from + Push[me])))
 				{
-					list = AddMove(list, from, from + Push[me], 0, MvvLvaXray);
-					// now check double push
+					// double push
 					const int to2 = from + 2 * Push[me];
-					if (HasBit(OwnLine<me>(1), from) && HasBit(target, to2) && F(PieceAt(to2)))
+					if (OwnRank<me>(from) == 1 && HasBit(target, to2) && F(PieceAt(to2)))
 						list = AddMove(list, from, to2, 0, MvvLvaXray);
+					// single push
+					list = AddMove(list, from, from + Push[me], 0, MvvLvaXray);
 				}
 
 				for (v = PAtt[me][from] & target & Piece(opp); T(v); Cut(v))
