@@ -55,6 +55,7 @@ typedef HANDLE event_t;
 #include "Chess/Locus.h"
 #include "Chess/Weights.h"
 #include "Chess/Magic.h"
+#include "Chess/Futility.h"
 #include "Chess/Shared.h"
 #include "Chess/Fathom_fwd.h"
 #include "Chess/Roc.h"
@@ -86,7 +87,6 @@ constexpr int FailLoDelta = 27;
 constexpr int FailHiDelta = 24;
 constexpr int InitiativeConst = 3 * CP_SEARCH;
 constexpr int InitiativePhase = 3 * CP_SEARCH;
-constexpr int FutilityThreshold = 50 * CP_SEARCH;
 
 #define IncV(var, x) (me ? (var -= (x)) : (var += (x)))
 #define DecV(var, x) IncV(var, -(x))
@@ -302,6 +302,37 @@ template<class T> void prefetch(T* p)
 	_mm_prefetch(reinterpret_cast<const char*>(p), _MM_HINT_NTA);
 }
 
+namespace Futility
+{
+	constexpr std::array<sint16, 10> PieceThreshold = { 12, 18, 22, 24, 25, 26, 27, 26, 40, 40 };	// in CP
+	constexpr std::array<sint16, 8> PasserThreshold = { 0, 0, 0, 0, 0, 20, 40, 0 };
+
+	template<bool me> inline sint16 x()
+	{
+		sint16 retval = PieceThreshold[pop0(NonPawnKing(me))];
+		if (uint64 passer = Current->passer & Pawn(me))
+			retval = Max(retval, PasserThreshold[OwnRank<me>(NB<opp>(passer))]);
+		return retval;
+	}
+
+	template<bool me> inline sint16 HashCut(bool did_delta_moves)
+	{
+		return (did_delta_moves ? 4 : 8) * x<me>();
+	}
+	template<bool me> inline sint16 CheckCut()
+	{
+		return 11 * x<me>();
+	}
+	template<bool me> inline sint16 DeltaCut()
+	{
+		return HashCut<me>(false);
+	}
+	template<bool me> inline sint16 ScoutCut(int depth)
+	{
+		return (depth > 3 ? 4 : 7) * x<me>();
+	}
+};
+
 #ifdef HNI
 inline uint64 BishopAttacks(int sq, const uint64& occ)
 {
@@ -342,21 +373,21 @@ INLINE int* AddMove(int* list, int from, int to, int flags, int score)
 	*list = ((from) << 6) | (to) | (flags) | (score);
 	return ++list;
 }
-INLINE int* AddCapturePP(int* list, int att, int vic, int from, int to, int flags)
+INLINE int* AddCapturePP(int* list, int att, int vic, int from, int to)
 {
-	return AddMove(list, from, to, flags, RO->MvvLva[att][vic]);
+	return AddMove(list, from, to, 0, RO->MvvLva[att][vic]);
 }
-INLINE int* AddCaptureP(int* list, int piece, int from, int to, int flags)
+INLINE int* AddCaptureP(int* list, int piece, int from, int to)
 {
-	return AddCapturePP(list, piece, PieceAt(to), from, to, flags);
+	return AddCapturePP(list, piece, PieceAt(to), from, to);
 }
-INLINE int* AddCaptureP(int* list, int piece, int from, int to, int flags, uint8 min_vic)
+INLINE int* AddCaptureP(int* list, int piece, int from, int to, uint8 min_vic)
 {
-	return AddCapturePP(list, piece, Max(min_vic, PieceAt(to)), from, to, flags);
+	return AddCapturePP(list, piece, Max(min_vic, PieceAt(to)), from, to);
 }
-INLINE int* AddCapture(int* list, int from, int to, int flags)
+INLINE int* AddCapture(int* list, int from, int to)
 {
-	return AddCaptureP(list, PieceAt(from), from, to, flags);
+	return AddCaptureP(list, PieceAt(from), from, to);
 }
 
 INLINE uint16 JoinFlag(uint16 move)
@@ -5542,16 +5573,16 @@ template <bool me> int* gen_captures(int* list)
 			list = AddCaptureP(list, IKing[me], lsb(King(me)), lsb(v), 0);
 		for (u = Knight(me); T(u); Cut(u))
 			for (v = NAtt[lsb(u)] & Current->mask; T(v); Cut(v))
-				list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v), 0);
+				list = AddCaptureP(list, IKnight[me], lsb(u), lsb(v));
 		for (u = Bishop(me); T(u); Cut(u))
 			for (v = BishopAttacks(lsb(u), PieceAll()) & Current->mask; T(v); Cut(v))
-				list = AddCapture(list, lsb(u), lsb(v), 0);
+				list = AddCapture(list, lsb(u), lsb(v));
 		for (u = Rook(me); T(u); Cut(u))
 			for (v = RookAttacks(lsb(u), PieceAll()) & Current->mask; T(v); Cut(v))
-				list = AddCaptureP(list, IRook[me], lsb(u), lsb(v), 0);
+				list = AddCaptureP(list, IRook[me], lsb(u), lsb(v));
 		for (u = Queen(me); T(u); Cut(u))
 			for (v = QueenAttacks(lsb(u), PieceAll()) & Current->mask; T(v); Cut(v))
-				list = AddCaptureP(list, IQueen[me], lsb(u), lsb(v), 0);
+				list = AddCaptureP(list, IQueen[me], lsb(u), lsb(v));
 	}
 	return NullTerminate(list);
 }
@@ -5640,7 +5671,7 @@ template<bool me> int* gen_evasions(int* list)
 			list = AddCaptureP(list, IKnight[me], lsb(u), lsb(esc), 0);
 	for (u = Bishop(me); T(u); Cut(u))
 		for (esc = BishopAttacks(lsb(u), PieceAll()) & inter; T(esc); Cut(esc))
-			list = AddCapture(list, lsb(u), lsb(esc), 0);
+			list = AddCapture(list, lsb(u), lsb(esc));
 	for (u = Rook(me); T(u); Cut(u))
 		for (esc = RookAttacks(lsb(u), PieceAll()) & inter; T(esc); Cut(esc))
 			list = AddCaptureP(list, IRook[me], lsb(u), lsb(esc), 0);
@@ -5824,7 +5855,7 @@ template<bool me> int* gen_checks(int* list)
 	r_target = RookAttacks(king, PieceAll()) & clear;
 	for (u = Board->bb[(T(King(opp) & LightArea) ? WhiteLight : WhiteDark) | me] & nonDiscover; T(u); Cut(u))
 		for (v = BishopAttacks(lsb(u), PieceAll()) & b_target; T(v); Cut(v))
-			list = AddCapture(list, lsb(u), lsb(v), 0);
+			list = AddCapture(list, lsb(u), lsb(v));
 	for (u = Rook(me) & nonDiscover; T(u); Cut(u))
 		for (v = RookAttacks(lsb(u), PieceAll()) & r_target; T(v); Cut(v))
 			list = AddCaptureP(list, IRook[me], lsb(u), lsb(v), 0);
@@ -5836,9 +5867,9 @@ template<bool me> int* gen_checks(int* list)
 		{
 			int to = lsb(v);
 			if (HasBit(contact, to))
-				list = AddCaptureP(list, IQueen[me], from, to, 0, T(Boundary & King(opp)) || OwnRank<me>(to) == 7 ? IPawn[opp] : IRook[opp]);
+				list = AddCaptureP(list, IQueen[me], from, to, T(Boundary & King(opp)) || OwnRank<me>(to) == 7 ? IPawn[opp] : IRook[opp]);
 			else
-				list = AddCaptureP(list, IQueen[me], from, to, 0);
+				list = AddCaptureP(list, IQueen[me], from, to);
 		}
 	}
 
@@ -5972,9 +6003,9 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 {
 	int i, value, score, move, hash_move, hash_depth;
 	GEntry* Entry;
-	auto finish = [&](int score)
+	auto finish = [&](int score, bool did_delta_moves)
 	{
-		if (depth >= -2 && (depth >= 0 || Current->score + FutilityThreshold >= alpha))
+		if (depth >= -2 && (depth >= 0 || Current->score + Futility::HashCut<me>(did_delta_moves) >= alpha))
 			hash_high(score, 1);
 		return score;
 	};
@@ -6070,7 +6101,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 					&& F(hash_move & 0xE000)
 					&& !pv
 					&& alpha >= beta - 1
-					&& (depth < -2 || depth <= -1 && Current->score + FutilityThreshold < alpha))
+					&& (depth < -2 || depth <= -1 && Current->score + Futility::HashCut<me>(false) < alpha))
 					return alpha;
 			}
 		}
@@ -6101,8 +6132,8 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 		}
 	}
 
-	if (depth < -2 || (depth <= -1 && Current->score + FutilityThreshold < alpha))
-		return finish(score);
+	if (depth < -2 || (depth <= -1 && Current->score + Futility::CheckCut<me>() < alpha))
+		return finish(score, false);
 	gen_checks<me>(Current->moves);
 	Current->current = Current->moves;
 	while (move = pick_move())
@@ -6125,9 +6156,12 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 		}
 	}
 
-	if (T(nTried) || Current->score + 30 * CP_SEARCH < alpha || T(Current->threat & Piece(me)) || T(Current->xray[opp] & NonPawn(opp)) ||
-		T(Pawn(opp) & OwnLine<me>(1) & Shift<me>(~PieceAll())))
-		return finish(score);
+	if (T(nTried) 
+		|| Current->score + Futility::DeltaCut<me>() < alpha 
+		|| T(Current->threat & Piece(me)) 
+		|| T(Current->xray[opp] & NonPawn(opp)) 
+		|| T(Pawn(opp) & OwnLine<me>(1) & Shift<me>(~PieceAll())))
+		return finish(score, false);
 	int margin = alpha - Current->score + 6 * CP_SEARCH;
 	gen_delta_moves<me>(margin, Current->moves);
 	Current->current = Current->moves;
@@ -6161,7 +6195,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 				break;
 		}
 	}
-	return finish(score);
+	return finish(score, true);
 	}
 
 template<bool me, bool pv> int q_evasion(int alpha, int beta, int depth, int flags)
@@ -6304,8 +6338,7 @@ template<bool exclusion, bool evasion> int cut_search(int move, int hash_move, i
 
 INLINE int RazoringThreshold(int score, int depth, int height)
 {
-	int shift = (20 + (3 * depth * (15 + Max(height, depth))) / 4 + 100 * Max(depth - 18, 0)) * CP_SEARCH;
-	return score + shift + FutilityThreshold;
+	return score + (70 + 8 * Max(height, depth) + 3 * Square(Max(0, depth - 7))) * CP_SEARCH;
 }
 
 template<int PV = 0> struct LMR_
@@ -6348,7 +6381,7 @@ template<bool me, bool evasion> HashResult_ try_hash(int beta, int depth, int fl
 		if (value >= beta && depth <= 13 && T(NonPawnKing(me)) && F(Pawn(opp) & OwnLine<me>(1) & Shift<me>(~PieceAll())) && F(flags & (FlagReturnBestMove | FlagDisableNull)))
 			return abort(value);
 
-		value = Current->score + FutilityThreshold;
+		value = Current->score + Futility::HashCut<me>(false);
 		if (value < beta && depth <= 3)
 			return abort(Max(value, q_search<me, 0>(beta - 1, beta, 1, FlagHashCheck | (flags & 0xFFFF))));
 	}
