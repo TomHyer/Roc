@@ -706,15 +706,40 @@ constexpr array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=
 
 namespace PasserWeights
 {
+//	constexpr array<int, 12> Candidate = { -22,75,5, 0,29,63, 27,12,38, -8,78,-26 };
+//	constexpr array<int, 12> General = { -5,73,17, 14,19,91, 17,-9,60, -5,27,-16 };
+//	constexpr array<int, 12> Protected = { 69,-113,334, 53,-24,294, 37,52,177, -55,157,-176 };
+//	constexpr array<int, 12> Outside = { -18,169,-14, 11,87,73, 0,75,-33, 13,-61,44 };
+//	constexpr array<int, 12> Blocked = { -1,140,49, 30,79,175, 14,87,38, 19,57,-50 };
+//	constexpr array<int, 12> Clear = { -3,-13,-12, 5,-30,13, -2,-10,-2, -1,-1,-1 };
+//	constexpr array<int, 12> Connected = { 11,134,76, 66,-28,328, 37,97,151, 107,-256,366 };
+//	constexpr array<int, 12> Free = { 29,239,-100, 67,130,403, 110,179,594, 3,1,13 };
+//	constexpr array<int, 12> Supported = { -2,188,17, 27,110,154, 53,65,280, -4,18,-16 };
+//	constexpr array<int, 12> QPGame = { 0,0,0, 0,0,0, -40,60,-20, 0,0,0 };
+	
+	// Gull-style
 	constexpr array<array<int, 4>, 3> Candidate = { array<int, 4>({-7, -6, 3, 12}), array<int, 4>({15, 9, 19, 68}), array<int, 4>({28, 28, 17, -11}) };
-	constexpr array<array<int, 4>, 3> General = { array<int, 4>({-24, -4, 5, 31}), array<int, 4>({45, 17, 4, 10}), array<int, 4>({79, 69, 16, 4}) };
-	constexpr array<array<int, 4>, 3> Protected = { array<int, 4>({-31, -44, 0, -9}), array<int, 4>({45, 85, 87, 38}), array<int, 4>({98, 189, 258, 8}) };
-	constexpr array<array<int, 4>, 3> Outside = { array<int, 4>({-17, -4, 0, 22}), array<int, 4>({63, 38, 14, -4}), array<int, 4>({110, 91, 0, 1}) };
-	constexpr array<array<int, 4>, 3> Blocked = { array<int, 4>({-15, -9, 4, 26}), array<int, 4>({68, 52, 32, 5}), array<int, 4>({132, 127, 56, 1}) };
-	constexpr array<array<int, 4>, 3> Clear = { array<int, 4>({5, 3, 1, 1}), array<int, 4>({13, 8, 6, 1}), array<int, 4>({24, 9, 8, 1}) };
-	constexpr array<array<int, 4>, 3> Connected = { array<int, 4>({-12, -13, -9, 13}), array<int, 4>({91, 103, 102, -1}), array<int, 4>({229, 208, 132, 1}) };
-	constexpr array<array<int, 4>, 3> Free = { array<int, 4>({1, -8, 13, -1}), array<int, 4>({92, 150, 177, -1}), array<int, 4>({90, 380, 431, -1}) };
-	constexpr array<array<int, 4>, 3> Supported = { array<int, 4>({-5, -2, 4, 14}), array<int, 4>({115, 109, 89, 0}), array<int, 4>({189, 216, 231, 1}) };
+//	constexpr array<array<int, 4>, 3> General = { array<int, 4>({-24, -4, 5, 31}), array<int, 4>({45, 17, 4, 10}), array<int, 4>({79, 69, 16, 4}) };
+//	constexpr array<array<int, 4>, 3> Protected = { array<int, 4>({-31, -44, 0, -9}), array<int, 4>({45, 85, 87, 38}), array<int, 4>({98, 189, 258, 8}) };
+//	constexpr array<array<int, 4>, 3> Outside = { array<int, 4>({-17, -4, 0, 22}), array<int, 4>({63, 38, 14, -4}), array<int, 4>({110, 91, 0, 1}) };
+//	constexpr array<array<int, 4>, 3> Blocked = { array<int, 4>({-15, -9, 4, 26}), array<int, 4>({68, 52, 32, 5}), array<int, 4>({132, 127, 56, 1}) };
+//	constexpr array<array<int, 4>, 3> Clear = { array<int, 4>({5, 3, 1, 1}), array<int, 4>({13, 8, 6, 1}), array<int, 4>({24, 9, 8, 1}) };
+//	constexpr array<array<int, 4>, 3> Connected = { array<int, 4>({-12, -13, -9, 13}), array<int, 4>({91, 103, 102, -1}), array<int, 4>({229, 208, 132, 1}) };
+//	constexpr array<array<int, 4>, 3> Free = { array<int, 4>({1, -8, 13, -1}), array<int, 4>({92, 150, 177, -1}), array<int, 4>({90, 380, 431, -1}) };
+//	constexpr array<array<int, 4>, 3> Supported = { array<int, 4>({-5, -2, 4, 14}), array<int, 4>({115, 109, 89, 0}), array<int, 4>({189, 216, 231, 1}) };
+}
+
+namespace PasserValues
+{
+	// not much point in using 3 parameters for 4 degrees of freedom
+	constexpr array<packed_t, 7> General = { 0ull, 0ull, 0ull, Pack(6, 4, 3, 14), Pack(31, 16, 6, 11), Pack(56, 48, 18, 7), Pack(81, 91, 36, 4) };
+	constexpr array<packed_t, 7> Protected = { 0ull, 0ull, 0ull, Pack(0, 5, 28, 11), Pack(23, 53, 66, 26), Pack(91, 138, 148, 10), Pack(174, 242, 261, 0) };
+	constexpr array<packed_t, 7> Outside = { 0ull, 0ull, 0ull, Pack(20, 18, 10, 3), Pack(54, 40, 20, 0), Pack(87, 76, 21, 0), Pack(120, 123, 16, 0) };
+	constexpr array<packed_t, 7> Blocked = { 0ull, 0ull, 0ull, Pack(21, 18, 19, 21), Pack(58, 51, 37, 20), Pack(103, 113, 61, 15), Pack(154, 189, 89, 11) };
+	constexpr array<packed_t, 7> Clear = { 0ull, 0ull, 0ull, Pack(3, 1, 0, 0), Pack(3, 0, 0, 0), Pack(2, 0, 0, 0), Pack(3, 0, 0, 0) };
+	constexpr array<packed_t, 7> Connected = { 0ull, 0ull, 0ull, Pack(29, 23, 34, 0), Pack(72, 69, 80, 0), Pack(139, 160, 137, 31), Pack(225, 271, 193, 87) };
+	constexpr array<packed_t, 7> Free = { 0ull, 0ull, 0ull, Pack(53, 49, 72, 0), Pack(95, 124, 166, 0), Pack(116, 274, 360, 3), Pack(121, 468, 611, 6) };
+	constexpr array<packed_t, 7> Supported = { 0ull, 0ull, 0ull, Pack(41, 36, 33, 5), Pack(90, 84, 77, 2), Pack(141, 157, 172, 0), Pack(194, 246, 297, 0) };
 }
 
 // type (2: att, def) * scaling (2: linear, log) 
@@ -2048,15 +2073,15 @@ void init_eval(CommonData_* data)
 		data->StormFree[i] = ((StormQuad[StormFreeMul] * i * i) + (StormLinear[StormFreeMul] * (i + 1))) / 100;
 	}
 
-	data->PasserGeneral = PasserValuesGull(PasserWeights::General);
-	data->PasserBlocked = PasserValuesGull(PasserWeights::Blocked);
-	data->PasserFree = PasserValuesGull(PasserWeights::Free);
-	data->PasserSupported = PasserValuesGull(PasserWeights::Supported);
-	data->PasserProtected = PasserValuesGull(PasserWeights::Protected);
-	data->PasserConnected = PasserValuesGull(PasserWeights::Connected);
-	data->PasserOutside = PasserValuesGull(PasserWeights::Outside);
-	data->PasserCandidate = PasserValuesGull(PasserWeights::Candidate);
-	data->PasserClear = PasserValuesGull(PasserWeights::Clear);
+	//data->PasserGeneral = PasserValues::Init(PasserWeights::General);
+	//data->PasserBlocked = PasserValues::Init(PasserWeights::Blocked);
+	//data->PasserFree = PasserValues::Init(PasserWeights::Free);
+	//data->PasserSupported = PasserValues::Init(PasserWeights::Supported);
+	//data->PasserProtected = PasserValues::Init(PasserWeights::Protected);
+	//data->PasserConnected = PasserValues::Init(PasserWeights::Connected);
+	//data->PasserOutside = PasserValues::Init(PasserWeights::Outside);
+	data->PasserCandidate = PasserValues::Init(PasserWeights::Candidate);
+	//data->PasserClear = PasserValues::Init(PasserWeights::Clear);
 	for (int i = 0; i < 8; ++i)
 	{
 		int im2 = Max(i - 2, 0);
@@ -3835,11 +3860,11 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 			//	if (rrank <= deficit) continue;
 			//}
 			NOTICE(PEI.score, rrank);
-			IncV(PEI.score, RO->PasserGeneral[rrank]);
+			IncV(PEI.score, PasserValues::General[rrank]);
 			if (PEI.patt[me] & b)
-				IncV(PEI.score, RO->PasserProtected[rrank]);
+				IncV(PEI.score, PasserValues::Protected[rrank]);
 			if (F(Pawn(opp) & West[file]) || F(Pawn(opp) & East[file]))
-				IncV(PEI.score, RO->PasserOutside[rrank]);
+				IncV(PEI.score, PasserValues::Outside[rrank]);
 			// IDEA: average the distance with the distance to the promotion square? or just use the latter?
 			int dist_att = Dist(PEI.king[opp], sq + Push[me]);
 			int dist_def = Dist(PEI.king[me], sq + Push[me]);
@@ -4269,12 +4294,12 @@ template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 		if (rank <= 2)
 			continue;
 		if (!PieceAt(sq + Push[me]))
-			IncV(EI.score, RO->PasserBlocked[rank]);
+			IncV(EI.score, PasserValues::Blocked[rank]);
 		uint64 way = PWay[me][sq];
 		int connected = 0, supported = 0, hooked = 0, unsupported = 0, free = 0;
 		if (!(way & Piece(opp)))
 		{
-			IncV(EI.score, RO->PasserClear[rank]);
+			IncV(EI.score, PasserValues::Clear[rank]);
 			if (PWay[opp][sq] & Major(me))
 			{
 				int square = NB<opp>(PWay[opp][sq] & Major(me));
@@ -4295,18 +4320,18 @@ template<bool me, class POP> INLINE void eval_passer(GEvalInfo& EI)
 			}
 			if (connected)
 			{
-				IncV(EI.score, RO->PasserConnected[rank] * min(file + 2, 9 - file));
+				IncV(EI.score, PasserValues::Connected[rank] * min(file + 2, 9 - file));
 			}
 			if (!hooked && !(Current->att[opp] & way))
 			{
-				IncV(EI.score, RO->PasserFree[rank]);
+				IncV(EI.score, PasserValues::Free[rank]);
 				free = 1;
 			}
 			else
 			{
 				uint64 attacked = Current->att[opp] | (hooked ? way : 0);
 				if (supported || (!hooked && connected) || (!(Major(me) & way) && !(attacked & (~Current->att[me]))))
-					IncV(EI.score, RO->PasserSupported[rank]);
+					IncV(EI.score, PasserValues::Supported[rank]);
 				else
 					unsupported = 1;
 			}
