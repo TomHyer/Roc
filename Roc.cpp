@@ -776,8 +776,8 @@ namespace Values
 	constexpr packed_t PasserTarget2 = Pack(-3, -10, -39, 9);
 	constexpr packed_t ChainRoot = Pack(7, -3, -3, -14);
 
-	constexpr packed_t BackwardOpen = Pack(68, 54, 40, 0);
-	constexpr packed_t BackwardClosed = Pack(16, 10, 4, 0);
+	constexpr packed_t BackwardOpen = Pack(77, 63, 42, -8);
+	constexpr packed_t BackwardClosed = Pack(21, 11, 12, -1);
 
 	constexpr packed_t DoubledOpen = Pack(12, 6, 0, 0);
 	constexpr packed_t DoubledClosed = Pack(4, 2, 0, 0);
