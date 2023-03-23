@@ -85,8 +85,8 @@ constexpr int FailLoGrowth = 37;	// numerator; denominator is 64
 constexpr int FailHiGrowth = 26;	// numerator; denominator is 64
 constexpr int FailLoDelta = 27;
 constexpr int FailHiDelta = 24;
-constexpr int InitiativeConst = 3 * CP_SEARCH;
-constexpr int InitiativePhase = 3 * CP_SEARCH;
+constexpr int InitiativeConst = int(1.5 * CP_SEARCH);
+constexpr int InitiativePhase = int(4.5 * CP_SEARCH);
 
 #define IncV(var, x) (me ? (var -= (x)) : (var += (x)))
 #define DecV(var, x) IncV(var, -(x))
@@ -2245,7 +2245,7 @@ template<bool me> uint16 kqkp()
 		return 32;
 	if (PWay[opp][lsb(Pawn(opp))] & (King(me) | Queen(me)))
 		return 32;
-	if (Pawn(opp) & (File[0] | File[7]))
+	if (Pawn(opp) & Boundary)
 		return 1;
 	else
 		return 4;
@@ -2825,7 +2825,7 @@ void calc_material(int index, GMaterial& material)
 	for (int me = 0; me < 2; ++me)
 		material.mul[me] = mul[me];
 	material.score = (score * mat[score > 0 ? White : Black]) / 32;
-	material.closed = closed[White] - closed[Black]; // *mat[score > 0 ? White : Black]) / 32;
+	material.closed = Closed(special) + closed[White] - closed[Black]; // *mat[score > 0 ? White : Black]) / 32;
 	material.eval = { nullptr, nullptr };
 	for (int me = 0; me < 2; ++me)
 	{
@@ -2862,7 +2862,7 @@ void calc_material(int index, GMaterial& material)
 			}
 			else if (F(pawns[me]) && T(pawns[opp]))
 			{
-				if (F(NonPawnKing(opp)) && Single(Pawn(opp)))
+				if (tot[opp] == 0 && pawns[opp] == 1)
 					material.eval[me] = TEMPLATE_ME(eval_kqkpx);
 				else if (rooks[opp])
 					material.eval[me] = TEMPLATE_ME(eval_kqkrpx);
@@ -5751,7 +5751,6 @@ template<bool me> int* gen_quiet_moves(int* list)
 	}
 
 	uint64 free = ~occ;
-	auto pTarget = PawnJoins<me>();
 	for (v = Shift<me>(Pawn(me)) & free & (~OwnLine<me>(7)); T(v); Cut(v))
 	{
 		int to = lsb(v);
