@@ -5021,16 +5021,10 @@ template<bool me, bool pv> INLINE int extension(int move, int depth)
 	int from = From(move);
 	if (HasBit(Current->passer, from))
 	{
-		if (T(Current->passer & Pawn(opp) & ~Shift<me>(Piece(me) ^ Queen(me))) && (pv || depth < 10))
-			return 2;
-		if (depth < 14 || (depth < 18 && F(Current->passer & Forward[Current->turn][RankOf(from)] & Pawn(Current->turn))))
-			return pv ? 2 : 1;
-		//int rank = OwnRank(me, from);
-		//if (rank >= 5 && depth < 16)
-			//return pv ? 2 : 1;
+		int rank = OwnRank(me, from);
+		if (rank >= 5 && depth < 16)
+			return T(pv) + T(rank < 6 || depth < 10);
 	}
-	//if (HasBit(Piece(opp), To(move)) && (pv || Current->score > 120 + 30 * depth))
-	//	return 1;
 	return 0;
 }
 
