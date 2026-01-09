@@ -442,7 +442,7 @@ struct CommonData_
 	array<uint64, 8> EPKey;
 	array<uint64, 8> File, Line;
 	array<uint64, 8> West, East, PIsolated;
-	array<packed_t, 8> PasserGeneral, PasserBlocked, PasserFree, PasserSupported, PasserProtected, PasserConnected, PasserOutside, PasserCandidate, PasserClear;
+	array<packed_t, 8> PasserGeneral, PasserBlocked, PasserFree, PasserSupported, PasserProtected, PasserConnected, PasserOutside, PasserCandidate, PasserClear, PawnConnected;
 	array<uint8, 64> UpdateCastling;
 	array<int, 16> MatCode;
 	array<array<sint16, 8>, 3> Shelter;
@@ -1238,28 +1238,33 @@ constexpr array<int, 5> StormLinear = {  // tuner: type=array, var=1280, active=
 	332, 624, 1752, 1284, 48
 };
 
-// type (9: general, blocked, free, supported, protected, connected, outside, candidate, clear) * phase (4)
-constexpr array<int, 36> PasserQuad = {  // tuner: type=array, var=128, active=0
+// type (10: general, blocked, free, supported, protected, connected, outside, candidate, clear, non-passed connected) * phase (4)
+constexpr array<int, 40> PasserQuad = {  // tuner: type=array, var=128, active=0
 	76, 64, 52, 0,
 	84, 48, 12, 0,
 	-96, 204, 504, 0,
 	0, 130, 260,  0,
 	128, 176, 224,  0,
-	108, 44, -20,  0,
+	71, 24, -20,  0,
 	128, 32, -64, 0,
 	52, 34, 16,  0,
-	4, 4, 4, 0 };
-constexpr array<int, 36> PasserLinear = {  // tuner: type=array, var=512, active=0
+	4, 4, 4, 0,
+	37, 20, 0, 0
+};
+constexpr array<int, 40> PasserLinear = {  // tuner: type=array, var=512, active=0
 	164, 86, 8, 0,
 	444, 394, 344, 0,
 	712, 582, 452, 0,
 	808, 434, 60, 0,
 	-244, -80, 84, 0,
-	372, 518, 664, 0,
+	323, 487, 661, 0,
 	344, 356, 368, 0,
 	108, 122, 136, 0,
-	-72, -50, -28, 0 };
-constexpr array<int, 36> PasserConstant = {  // tuner: type=array, var=2048, active=0
+	-72, -50, -28, 0,
+	49, 29, 3, 0
+};
+constexpr array<int, 40> PasserConstant = {  // tuner: type=array, var=2048, active=0
+	0, 0, 0, 0,
 	0, 0, 0, 0,
 	0, 0, 0, 0,
 	0, 0, 0, 0,
@@ -1374,7 +1379,7 @@ namespace Params
 		DoubledClosed
 	};
 	constexpr array<int, 8> Doubled = {  // tuner: type=array, var=26, active=0
-		12, 6, 0, 0,
+		10, 5, 0, 0,
 		4, 2, 0, 0 };
 }
 namespace Values
@@ -1390,22 +1395,16 @@ namespace Params
 	enum
 	{
 		RookHof,
-		RookHofWeakPAtt,
 		RookOf,
-		RookOfOpen,
-		RookOfMinorFixed,
 		RookOfMinorHanging,
 		RookOfKingAtt,
 		Rook7th,
 		Rook7thK8th,
 		Rook7thDoubled
 	};
-	constexpr array<int, 40> RookSpecial = {  // tuner: type=array, var=26, active=0
+	constexpr array<int, 28> RookSpecial = {  // tuner: type=array, var=26, active=0
 		32, 16, 0, 0,
-		8, 4, 0, 0,
 		44, 38, 32, 0,
-		-4, 2, 8, 0,
-		-4, -4, -4, 0,
 		56, 26, -4, 0,
 		20, 0, -20, 0,
 		0, 30, 10, 0,
@@ -1416,10 +1415,7 @@ namespace Values
 {
 #define VALUE(name) constexpr packed_t name = Ca4(Params::RookSpecial, Params::name)
 	VALUE(RookHof);
-	VALUE(RookHofWeakPAtt);
 	VALUE(RookOf);
-	VALUE(RookOfOpen);
-	VALUE(RookOfMinorFixed);
 	VALUE(RookOfMinorHanging);
 	VALUE(RookOfKingAtt);
 	VALUE(Rook7th);
@@ -2544,6 +2540,7 @@ void init_eval(CommonData_* data)
 		data->PasserOutside[i] = pack16ths(6);
 		data->PasserCandidate[i] = pack16ths(7);
 		data->PasserClear[i] = pack16ths(8);
+		data->PawnConnected[i] = pack16ths(9);
 
 		auto attdef = [&](int k) { return PasserAttDefQuad[k] * im2*im2 + PasserAttDefLinear[k] * im2 + PasserAttDefConst[k]; };
 		data->PasserAtt[i] = attdef(0);
@@ -4143,6 +4140,8 @@ template<bool me, class POP> INLINE void eval_pawns(GPawnEntry* PawnEntry, GPawn
 			DecV(PEI.score, open ? Values::BackwardOpen : Values::BackwardClosed);
 		else
 		{
+			if ((PAtts<opp>(sq) | PAtts<opp>(sq + Push[me])) & Pawn(me))
+				IncV(PEI.score, RO->PawnConnected[rrank]);
 			if (open && (F(Pawn(opp) & RO->PIsolated[file]) || pop(Pawn(me) & RO->PIsolated[file]) >= pop(Pawn(opp) & RO->PIsolated[file])))
 				IncV(PEI.score, RO->PasserCandidate[rrank]);  // IDEA: more precise pawn counting for the case of, say,
 															  // white e5 candidate with black pawn on f5 or f4...
@@ -4360,9 +4359,7 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 			if (!(RO->PWay[me][sq] & Pawn(opp)))
 			{
 				IncV(EI.score, Values::RookOf);
-				if (att & OwnLine(me, 7))
-					hof_score += Values::RookOfOpen;
-				else if (uint64 target = att & RO->PWay[me][sq] & Minor(opp))
+				if (uint64 target = att & RO->PWay[me][sq] & Minor(opp))
 				{
 					if (!(Current->patt[opp] & target))
 					{
@@ -4370,15 +4367,7 @@ template<bool me, class POP> INLINE void eval_rooks(GEvalInfo& EI)
 						if (RO->PWay[me][sq] & King(opp))
 							hof_score += Values::RookOfKingAtt;
 					}
-					else
-						hof_score += Values::RookOfMinorFixed;
 				}
-			}
-			else if (att & RO->PWay[me][sq] & Pawn(opp))
-			{
-				uint64 square = lsb(att & RO->PWay[me][sq] & Pawn(opp));
-				if (!(RO->PSupport[opp][square] & Pawn(opp)))
-					hof_score += Values::RookHofWeakPAtt;
 			}
 			IncV(EI.score, hof_score);
 			if (RO->PWay[opp][sq] & att & Major(me))
@@ -9378,6 +9367,7 @@ int main(int argc, char *argv[])
 #if TB
 #undef LOCK
 #undef UNLOCK
+#pragma warning(disable : 4244)
 #include "src\tbconfig.h"
 #include "src\tbcore.h"
 #include "src\tbprobe.c"
