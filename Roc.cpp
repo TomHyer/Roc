@@ -290,14 +290,14 @@ template<bool me> INLINE uint8 Promotion(uint16 move)
 #ifndef W32_BUILD
 INLINE int lsb(uint64 x)
 {
-	register unsigned long y;
+	unsigned long y;
 	_BitScanForward64(&y, x);
 	return y;
 }
 
 INLINE int msb(uint64 x)
 {
-	register unsigned long y;
+	unsigned long y;
 	_BitScanReverse64(&y, x);
 	return y;
 }
@@ -5330,11 +5330,11 @@ template<class I> void sort_moves(I start, I finish)
 
 INLINE int pick_move()
 {
-	register int move = *(Current->current);
+	int move = *(Current->current);
 	if (F(move))
 		return 0;
-	register int* best = Current->current;
-	for (register int* p = Current->current + 1; T(*p); ++p)
+	int* best = Current->current;
+	for (int* p = Current->current + 1; T(*p); ++p)
 	{
 		if ((*p) > move)
 		{
@@ -5938,7 +5938,7 @@ void mark_evasions(int* list)
 {
 	for (; T(*list); ++list)
 	{
-		register int move = (*list) & 0xFFFF;
+		int move = (*list) & 0xFFFF;
 		if (F(PieceAt(To(move))) && F(move & 0xE000))
 		{
 			if (move == Current->ref[0])
