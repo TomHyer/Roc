@@ -1512,17 +1512,20 @@ namespace Params
 	enum 
 	{ 
 		BishopPawnBlock, 
+		BishopOutpost,
 		BishopOutpostNoMinor
 	};
-	constexpr array<int, 16> BishopSpecial = { // tuner: type=array, var=20, active=0
+	constexpr array<int, 12> BishopSpecial = { // tuner: type=array, var=20, active=0
 		0, 6, 14, 6,
-		30, 30, 25, 0
+		20, 20, 17, 0,
+		20, 20, 17, 0
 	};
 }
 namespace Values
 {
 #define VALUE(name) constexpr packed_t name = Ca4(Params::BishopSpecial, Params::name)
 	VALUE(BishopPawnBlock);
+	VALUE(BishopOutpost);
 	VALUE(BishopOutpostNoMinor);
 #undef VALUE
 }
@@ -1613,7 +1616,7 @@ constexpr array<int, 11> KingAttackWeight = {  // tuner: type=array, var=51, act
 	56, 88, 44, 64, 60, 104, 116, 212, 192, 256, 64 };
 constexpr uint16 KingAttackThreshold = 48;
 
-constexpr array<uint64, 2> Outpost = { 0x00007E7E3C000000ull, 0x0000003C7E7E0000ull };
+constexpr array<uint64, 2> Outpost = { 0x3C3C7E7E3C000000ull, 0x0000003C7E7E3C3Cull };
 constexpr array<int, 2> PushW = { 7, -9 };
 constexpr array<int, 2> Push = { 8, -8 };
 constexpr array<int, 2> PushE = { 9, -7 };
@@ -4448,12 +4451,15 @@ template<bool me, class POP> INLINE void eval_bishops(GEvalInfo& EI)
 		uint64 v = RO->BishopForward[me][sq] & Pawn(me) & myArea;
 		v |= (v & (RO->File[2] | RO->File[3] | RO->File[4] | RO->File[5] | RO->BMask[sq])) >> 8;	// the ">>8" is just a trick to double-count these without two calls to pop()
 		DecV(EI.score, Values::BishopPawnBlock * pop(v));
-		if (T(b & Outpost[me]) 
-			&& F(Knight(opp)) 
-			&& T(Current->patt[me] & b)
-			&& F(Pawn(opp) & (RO->PCone[me][sq] ^ RO->PWay[me][sq]))
-			&& F(Bishop(opp) & myArea))
-					IncV(EI.score, Values::BishopOutpostNoMinor);
+		if (T(b & Outpost[me])
+				&& T(Major(opp))
+				&& T(Current->patt[me] & b)
+				&& F(Pawn(opp) & (RO->PCone[me][sq] ^ RO->PWay[me][sq])))
+		{
+			IncV(EI.score, Values::BishopOutpost);
+			if (F(Knight(opp)) && F(Bishop(opp) & myArea))
+				IncV(EI.score, Values::BishopOutpostNoMinor);
+		}
 	}
 }
 
@@ -4479,7 +4485,7 @@ template<bool me, class POP> INLINE void eval_knights(GEvalInfo& EI)
 			IncV(EI.score, Values::TacticalMinorMinor);
 		if (att & EI.area[me])
 			IncV(EI.score, Values::KingDefKnight);
-		if ((b & Outpost[me]) && !(Pawn(opp) & RO->PIsolated[FileOf(sq)] & RO->Forward[me][RankOf(sq)]))
+		if ((b & Outpost[me]) && Major(opp) && !(Pawn(opp) & RO->PIsolated[FileOf(sq)] & RO->Forward[me][RankOf(sq)]))
 		{
 			IncV(EI.score, Values::KnightOutpost);
 			if (Current->patt[me] & b)
