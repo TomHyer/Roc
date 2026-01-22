@@ -6812,6 +6812,39 @@ INLINE int RazoringThreshold(int score, int depth, int height)
 	return score + shift + FutilityThreshold;
 }
 
+template<bool me> bool Worthless(int move, int beta)
+{
+	if (HasBit(Current->att[opp], From(move)))
+		return false;
+	if (F(Current->att[opp] & NonPawnKing(me)))
+		return false;
+	int mover = PieceType[PieceAt(From(move))];
+	switch (mover)
+	{
+	case PieceType[WhitePawn]:
+	case PieceType[WhiteKing]:
+		return false;
+	case PieceType[WhiteKnight]:
+		if (RO->NAtt[To(move)] & (NonPawnKing(opp) | (Piece(opp) & ~Current->att[opp])))
+			return false;
+		break;
+	case PieceType[WhiteLight]:
+		if (RO->BMask[To(move)] & (NonPawnKing(opp) | (Piece(opp) & ~Current->att[opp])))
+			return false;
+		break;
+	case PieceType[WhiteRook]:
+		if (RO->RMask[To(move)] & (NonPawnKing(opp) | (Piece(opp) & ~Current->att[opp])))
+			return false;
+		break;
+	case PieceType[WhiteQueen]:
+		if (RO->QMask[To(move)] & (NonPawnKing(opp) | (Piece(opp) & ~Current->att[opp])))
+			return false;
+		break;
+	}
+	// does not evade, address tactical threat, or create a threat
+	return Pst(mover, To(move)) < Pst(mover, From(move));
+}
+
 INLINE int reduction_n(int depth, int n)
 {
 	return msb(Square(Square(Square(uint64(n))))) / (5 + depth / 8);
@@ -7102,6 +7135,8 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				if (depth >= 6)
 				{
 					int reduction = reduction_n(depth, cnt);
+					if (depth > 10 && Worthless<me>(move, beta))
+						reduction += Min(depth - 10, 4);
 					if (move == Current->ref[0] || move == Current->ref[1])
 						reduction = Max(0, reduction - 1);
 					if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
