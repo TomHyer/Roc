@@ -5301,6 +5301,19 @@ template<bool me> int extension(int pv, int move, int depth, bool* check = nullp
 				if (T((PAtts<me>(Pawn(me) & RO->File[kf]) & Piece(opp)) | (PAtts<opp>(Pawn(opp) & RO->File[kf]) & Piece(me))))
 					return 1;
 			}
+	int to = To(move);
+	if (PieceAt(To(move)) && depth < 16)
+	{	// look for recaptures prevented by pins
+		if (RO->PAtt[me][to] & Pawn(opp) & Current->xray[me])
+			return 1;
+		if (RO->NAtt[to] & Knight(opp) & Current->xray[me])
+			return 1;
+		int oppK = lsb(King(opp));
+		if (RO->BMask[to] & Bishop(opp) & Current->xray[me] & RO->RMask[oppK])
+			return 1;
+		if (RO->RMask[to] & Rook(opp) & Current->xray[me] & RO->BMask[oppK])
+			return 1;
+	}
 //	if (depth < (pv ? 14 : 10) && PieceAt(from) < WhiteKnight && T(RO->PCone[me][from] & King(opp)) && F(RO->PWay[me][from] & Pawn(opp)))
 //		return 1;
 //	contradictory test results; revisit
