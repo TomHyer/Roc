@@ -736,9 +736,10 @@ typedef struct
 	uint8 high_depth;
 } GEntry;
 static GEntry NullEntry = { 0, 1, 0, 0, 0, 0, 0, 0 };
-static const int initial_hash_size = 1024 * 1024;
+constexpr int initial_hash_size = 1024 * 1024;
+constexpr int HASH_CLUSTER = 1 << 2;
 sint64 hash_size = initial_hash_size;
-uint64 hash_mask = (initial_hash_size - 4);
+uint64 hash_mask = (initial_hash_size - HASH_CLUSTER);
 GEntry* Hash;
 
 struct GPawnEntry
@@ -3412,7 +3413,7 @@ void init_hash()
 	Hash = (GEntry*)MapViewOfFile(HASH, FILE_MAP_ALL_ACCESS, 0, 0, size);
 	if (parent)
 		memset(Hash, 0, size);
-	hash_mask = hash_size - 4;
+	hash_mask = hash_size - HASH_CLUSTER;
 }
 
 void init_data()
@@ -3636,7 +3637,7 @@ void init_search(int clear_hash)
 INLINE GEntry* probe_hash()
 {
 	GEntry* start = Hash + (High32(Current->key) & hash_mask);
-	for (GEntry* Entry = start; Entry < start + 4; ++Entry)
+	for (GEntry* Entry = start; Entry < start + HASH_CLUSTER; ++Entry)
 		if (Low32(Current->key) == Entry->key)
 		{
 			Entry->date = date;
@@ -5144,7 +5145,7 @@ void hash_high(int value, int depth)
 
 	// search for an old entry to overwrite
 	int minMerit = 0x70000000;
-	for (i = 0, best = Entry = Hash + (High32(Current->key) & hash_mask); i < 4; ++i, ++Entry)
+	for (i = 0, best = Entry = Hash + (High32(Current->key) & hash_mask); i < HASH_CLUSTER; ++i, ++Entry)
 	{
 		if (Entry->key == Low32(Current->key))
 		{
@@ -5191,7 +5192,7 @@ int hash_low(int move, int value, int depth)
 
 	int min_score = 0x70000000;
 	move &= 0xFFFF;
-	for (i = 0, best = Entry = Hash + (High32(Current->key) & hash_mask); i < 4; ++i, ++Entry)
+	for (i = 0, best = Entry = Hash + (High32(Current->key) & hash_mask); i < HASH_CLUSTER; ++i, ++Entry)
 	{
 		if (Entry->key == Low32(Current->key))
 		{
@@ -6343,7 +6344,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 	hash_move = hash_depth = 0;
 	if (flags & FlagHashCheck)
 	{
-		for (i = 0, Entry = Hash + (High32(Current->key) & hash_mask); i < 4; ++Entry, ++i)
+		for (i = 0, Entry = Hash + (High32(Current->key) & hash_mask); i < HASH_CLUSTER; ++Entry, ++i)
 		{
 			if (Low32(Current->key) == Entry->key)
 			{
@@ -6504,7 +6505,7 @@ template<bool me, bool pv> int q_evasion(int alpha, int beta, int depth, int fla
 	hash_move = hash_depth = 0;
 	if (flags & FlagHashCheck)
 	{
-		for (i = 0, Entry = Hash + (High32(Current->key) & hash_mask); i < 4; ++Entry, ++i)
+		for (i = 0, Entry = Hash + (High32(Current->key) & hash_mask); i < HASH_CLUSTER; ++Entry, ++i)
 		{
 			if (Low32(Current->key) == Entry->key)
 			{
@@ -7597,6 +7598,16 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			pext = 2;
 	}
 
+	auto beta_cut = [&](int move, int value, int depth)
+	{
+		// find the failed refutation in the hash and erase it (at root) or deprecate it
+		do_move<me>(move);
+		if (auto entry = probe_hash())
+			entry->date = Max<uint16>(2, entry->date) - 2;
+		undo_move<me>(move);
+		return hash_low(move, value, depth);
+	};
+
 	cnt = 0;
 	if (hash_move && is_legal<me>(move = hash_move))
 	{
@@ -7654,7 +7665,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 				}
 				Current->best = move;
 				if (value >= beta)
-					return hash_low(move, value, depth);
+					return beta_cut(move, value, depth);
 				alpha = value;
 			}
 			else if (root)
@@ -7785,7 +7796,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			}
 			Current->best = move;
 			if (value >= beta)
-				return hash_low(move, value, depth);
+				return beta_cut(move, value, depth);
 			alpha = value;
 		}
 	}
@@ -7798,7 +7809,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 			Current->best = move = Sp->best_move;
 		}
 		if (value >= beta)
-			return hash_low(move, alpha, depth);
+			return beta_cut(move, alpha, depth);
 	}
 	if (F(cnt) && F(IsCheck(me)))
 	{
