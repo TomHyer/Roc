@@ -5890,7 +5890,10 @@ template<bool me> int* gen_evasions(int* list)
 			esc &= ~RO->FullLine[king][att_sq];
 		else if (PieceAt(att_sq) >= WhiteKnight)
 			esc &= ~RO->NAtt[att_sq];
-
+		uint64 cEsc = esc & Piece(opp);
+		esc ^= cEsc;
+		for (; T(cEsc); Cut(cEsc))
+			list = AddCaptureP(list, IKing[me], king, lsb(cEsc), 0);
 		for (; T(esc); Cut(esc))
 			list = AddCaptureP(list, IKing[me], king, lsb(esc), 0);
 		return NullTerminate(list);
@@ -5910,6 +5913,10 @@ template<bool me> int* gen_evasions(int* list)
 		else if (HasBit(Current->mask, att_sq))
 			list = AddCaptureP(list, IPawn[me], from, att_sq, 0);
 	}
+	uint64 cEsc = esc & Piece(opp);
+	esc ^= cEsc;
+	for (; T(cEsc); Cut(cEsc))
+		list = AddCaptureP(list, IKing[me], king, lsb(cEsc), 0);
 	for (; T(esc); Cut(esc))
 		list = AddCaptureP(list, IKing[me], king, lsb(esc), 0);
 	// now check interpositions
