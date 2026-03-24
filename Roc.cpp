@@ -5734,21 +5734,15 @@ template<bool me> void gen_root_moves()
 	int *p, depth = -256;
 
 	int killer = 0;
-	if (GEntry* Entry = probe_hash())
+	if (GPVEntry* PVEntry = probe_pv_hash(); PVEntry && T(PVEntry->move))
 	{
-		if (T(Entry->move) && Entry->low_depth > depth)
-		{
-			depth = Entry->low_depth;
-			killer = Entry->move;
-		}
+		depth = PVEntry->depth;
+		killer = PVEntry->move;
 	}
-	if (GPVEntry* PVEntry = probe_pv_hash())
+	if (GEntry* Entry = probe_hash(); Entry && T(Entry->move) && Entry->low_depth > depth)
 	{
-		if (PVEntry->depth > depth && T(PVEntry->move))
-		{
-			depth = PVEntry->depth;
-			killer = PVEntry->move;
-		}
+		depth = Entry->low_depth;
+		killer = Entry->move;
 	}
 
 	Current->killer[0] = killer;
@@ -6481,7 +6475,7 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 					{
 						if (N_KILLER >= 1 && Current->killer[1] != move)
 						{
-							for (int jk = N_KILLER; jk > 1; --jk) 
+							for (int jk = N_KILLER; jk > 1; --jk)
 								Current->killer[jk] = Current->killer[jk - 1];
 							Current->killer[1] = move;
 						}
@@ -6625,7 +6619,7 @@ void send_position(GPos* Pos)
 	for (int i = 0; i <= Current->ply; ++i) Pos->stack[i] = Stack[sp - i];
 	for (int i = 0; i < Min(16, 126 - (int)(Current - Data)); ++i)
 		for (int ik = 0; ik < N_KILLER; ++ik) Pos->killer[i][ik] = (Current + i + 1)->killer[ik + 1];
-	for (int i = Min(16, 126 - (int)(Current - Data)); i < 16; ++i)
+	for (int i = Min(16, 126 - (int)(Current - Data)); i < 126; ++i)
 		for (int ik = 0; ik < N_KILLER; ++ik) Pos->killer[i][ik] = 0;
 }
 
@@ -6667,7 +6661,7 @@ void retrieve_position(GPos* Pos, int copy_stack)
 	else
 		sp = Pos->sp;
 
-	for (int i = 0; i < 16; ++i)
+	for (int i = 0; i < 126; ++i)
 		for (int ik = 0; ik < N_KILLER; ++ik) (Current + i + 1)->killer[ik + 1] = Pos->killer[i][ik];
 }
 
