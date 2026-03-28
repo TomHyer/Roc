@@ -1001,15 +1001,6 @@ uint16 SMoves[256];
 jmp_buf Jump, ResetJump;
 HANDLE StreamHandle;
 
-INLINE int ExclSingle(int depth)
-{
-	return 8 * CP_SEARCH;
-}
-INLINE int ExclDouble(int depth)
-{
-	return 16 * CP_SEARCH;
-}
-
 // EVAL
 
 const sint8 DistC[8] = { 3, 2, 1, 0, 0, 1, 2, 3 };
@@ -6879,6 +6870,15 @@ template<int principal> INLINE void check_recapture(int to, int depth, int* ext)
 				*ext = 1;
 		}
 	}
+}
+
+INLINE int ExclSingle(int depth)
+{
+	return (Max(24, depth) * CP_SEARCH) / 3;
+}
+INLINE int ExclDouble(int depth)
+{
+	return ((3 * Max(24, depth) - 8) * CP_SEARCH) / 4;
 }
 
 template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
