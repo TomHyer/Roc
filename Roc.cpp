@@ -6285,6 +6285,26 @@ template<bool me> INLINE uint64 capture_margin_mask(int alpha, int* score)
 	return retval;
 }
 
+// help short-circuit if a capture is good enough
+template<bool me> INLINE int WorstCaseScore(int val_to, int val_from, int beta)
+{
+	if (int worstCase = Current->score + val_to - val_from; worstCase >= beta && abs(beta) < EvalValue)
+	{	// check if we left a piece hanging
+		int cutValue = val_from + worstCase - beta;
+		if (cutValue >= SeeValue[WhiteRook])
+		{
+			if (cutValue >= SeeValue[WhiteQueen] || F(Current->att[opp] & Queen(me)))
+				return worstCase;
+		}
+		else
+		{
+			if (F(Current->att[opp] & (cutValue >= SeeValue[WhiteLight] ? Major(me) : NonPawnKing(me))))
+				return worstCase;
+		}
+	}
+	return beta - 1;	// fail
+}
+
 template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flags)
 {
 	int i, value, score, move, hash_move, hash_depth;
@@ -6369,8 +6389,13 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 			move = hash_move;
 			if (is_legal<me>(move) && !IsIllegal(me, move))
 			{
-				if (SeeValue[PieceAt(To(move))] > SeeValue[PieceAt(From(move))])
+				if (int vTo = SeeValue[PieceAt(To(move))], vFrom = SeeValue[PieceAt(From(move))]; vTo > vFrom)
+				{
 					++nTried;
+					if (int worstCase = WorstCaseScore<me>(vTo, vFrom, beta); worstCase >= beta)
+						return hash_low(move, worstCase, 1);
+				}
+
 				do_move<me>(move);
 				value = -q_search<opp, pv>(-beta, -alpha, depth - 1, FlagNeatSearch);
 				undo_move<me>(move);
@@ -6385,10 +6410,10 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 					}
 				}
 				if (F(Bit(To(hash_move)) & Current->mask) 
-					&& F(hash_move & 0xE000) 
-					&& !pv
-					&& alpha >= beta - 1
-					&& (depth < -2 || depth <= -1 && Current->score + FutilityThreshold < alpha))
+						&& F(hash_move & 0xE000) 
+						&& !pv
+						&& alpha >= beta - 1
+						&& (depth < -2 || depth <= -1 && Current->score + FutilityThreshold < alpha))
 					return alpha;
 			}
 		}
@@ -6401,8 +6426,12 @@ template<bool me, bool pv> int q_search(int alpha, int beta, int depth, int flag
 	{
 		if (move != hash_move && !IsIllegal(me, move) && see<me>(move, -SeeThreshold, SeeValue))
 		{
-			if (SeeValue[PieceAt(To(move))] > SeeValue[PieceAt(From(move))])
+			if (int vTo = SeeValue[PieceAt(To(move))], vFrom = SeeValue[PieceAt(From(move))]; vTo > vFrom)
+			{
 				++nTried;
+				if (int worstCase = WorstCaseScore<me>(vTo, vFrom, beta); worstCase >= beta)
+					return hash_low(move, worstCase, 1);
+			}
 			do_move<me>(move);
 			value = -q_search<opp, pv>(-beta, -alpha, depth - 1, FlagNeatSearch);
 			undo_move<me>(move);
