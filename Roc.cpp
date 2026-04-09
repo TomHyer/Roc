@@ -992,7 +992,7 @@ static const int TimeNoPVSCOMargin = 60;
 static const int TimeNoChangeMargin = 70;
 static const int TimeRatio = 120;
 static const int PonderRatio = 120;
-static const int MovesTg = 30;
+static const int MovesTg = 33;
 static const int InfoLag = 5000;
 static const int InfoDelay = 1000;
 sint64 StartTime, InfoTime, CurrTime;
@@ -6639,7 +6639,7 @@ void send_position(GPos* Pos)
 	for (int i = 0; i <= Current->ply; ++i) Pos->stack[i] = Stack[sp - i];
 	for (int i = 0; i < Min(16, 126 - (int)(Current - Data)); ++i)
 		for (int ik = 0; ik < N_KILLER; ++ik) Pos->killer[i][ik] = (Current + i + 1)->killer[ik + 1];
-	for (int i = Min(16, 126 - (int)(Current - Data)); i < 126; ++i)
+	for (int i = Min(16, 126 - (int)(Current - Data)); i < 16; ++i)
 		for (int ik = 0; ik < N_KILLER; ++ik) Pos->killer[i][ik] = 0;
 }
 
@@ -6681,7 +6681,7 @@ void retrieve_position(GPos* Pos, int copy_stack)
 	else
 		sp = Pos->sp;
 
-	for (int i = 0; i < 126; ++i)
+	for (int i = 0; i < 16; ++i)
 		for (int ik = 0; ik < N_KILLER; ++ik) (Current + i + 1)->killer[ik + 1] = Pos->killer[i][ik];
 }
 
@@ -6903,11 +6903,11 @@ template<int principal> INLINE void check_recapture(int to, int depth, int* ext)
 
 INLINE int ExclSingle(int depth)
 {
-	return (Max(24, depth) * CP_SEARCH) / 3;
+	return (Min(34, Max(18, depth)) * CP_SEARCH) / 3;
 }
 INLINE int ExclDouble(int depth)
 {
-	return ((3 * Max(24, depth) - 8) * CP_SEARCH) / 4;
+	return ((3 * Max(24, depth) - 5) * CP_SEARCH) / 4;
 }
 
 template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
