@@ -35,7 +35,6 @@
 
 //#include "TunerParams.inc"
 
-
 using namespace std;
 #define INLINE __forceinline
 typedef unsigned char uint8;
@@ -79,6 +78,8 @@ template<class C> INLINE bool Odd(const C& x)
 {
 	return T(x & 1);
 }
+
+#include "TuneMat.inc"
 
 typedef sint64 packed_t;
 
@@ -3071,8 +3072,21 @@ template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 	check_forced_stalemate<me>(&EI.mul);
 }
 
+MatModel_ DefaultMatModel()
+{
+	MatModel_ model;
+	model.odd1_ = INIT_ODD;
+	model.even1_ = INIT_EVEN;
+	model.layers_ = INIT_LAYERS;
+	model.biases_ = INIT_BIAS;
+	model.oddVols_ = ODD_VOLS;
+	return model;
+}
+
 void calc_material(int index, GMaterial& material)
 {
+	static MatModel_ TheML = DefaultMatModel();
+
 	array<int, 2> pawns, knights, light, dark, rooks, queens, bishops, major, minor, tot, count, mat, mul, closed;
 	int i = index;
 	queens[White] = i % 3;
@@ -3332,6 +3346,20 @@ void calc_material(int index, GMaterial& material)
 
 		material.pawnsForPiece[me] = tot[me] < tot[opp] && major[me] + minor[me] < major[opp] + minor[opp] &&  pawns[me] > pawns[opp];
 	}
+	/*
+	// Now overwrite it all
+	auto mscore = TheML.score(index, nullptr, 0.0, nullptr);
+	material.score = static_cast<score_t>(mscore.first);
+	// don't trust multipliers enough to use them yet
+	auto tweak = [](uint8* hce, double ml)
+		{
+			*hce = static_cast<uint8>(Min(2.0 * *hce, 32.0 * ml));
+		};
+	if (material.score >= 0)
+		tweak(&material.mul[White], mscore.second);
+	if (material.score <= 0)
+		tweak(&material.mul[Black], mscore.second);
+	*/
 }
 
 void init_material(CommonData_* dst)
@@ -6880,10 +6908,20 @@ template<bool me> bool Worthless(int move, int beta)
 	return Pst(mover, To(move)) < Pst(mover, From(move));
 }
 
-INLINE int reduction_n(int depth, int n)
+template<int PV> struct LMR_
 {
-	return msb(Square(Square(Square(uint64(n))))) / (5 + depth / 8);
-}
+	int denom_;
+	LMR_(int mat_index, int depth) : denom_(40 + depth) 
+	{
+		if (!(mat_index & FlagUnusualMaterial))
+			denom_ -= (RO->Material[mat_index].phase - MIDDLE_PHASE) * Min(8, depth - 20) / 64;
+	}
+
+	INLINE int operator()(int n) const
+	{
+		return (8 * msb(Square(Square(Square(uint64(n)))))) / denom_ - PV;
+	}
+};
 
 template<int principal> INLINE void check_recapture(int to, int depth, int* ext)
 {
@@ -7149,6 +7187,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 	do_split = sp_init = 0;
 	if (depth >= SplitDepth && PrN > 1 && parent && !exclusion)
 		do_split = 1;
+	LMR_<0> lmr(Current->material, depth);
 
 	while (move = get_move<me, 0>(Odd(depth)))
 	{
@@ -7178,7 +7217,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 				}
 				if (depth >= 6)
 				{
-					int reduction = reduction_n(depth, cnt);
+					int reduction = lmr(cnt);
 					if (depth > 10 && Worthless<me>(move, beta))
 						reduction += Min(depth - 10, 4);
 					if (move == Current->ref[0] || move == Current->ref[1])
@@ -7290,7 +7329,7 @@ template<bool me, bool exclusion> int scout(int beta, int depth, int flags)
 
 template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int flags)
 {
-	int value, score, pext, move, cnt, hash_value = -MateValue, hash_depth, hash_move, new_depth, ext, moves_to_play;
+	int score, pext, move, cnt, hash_value = -MateValue, hash_depth, hash_move, new_depth, ext, moves_to_play;
 	int height = (int)(Current - Data);
 
 	if (depth <= 1)
@@ -7432,7 +7471,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 				else
 				{
 					int flags = FlagHaltCheck | FlagHashCheck | ((hash_value >= beta && hash_depth >= depth - 12) ? FlagDisableNull : 0) | ExtToFlag(ext);
-					value = -scout<opp, 0>(1 - beta, new_depth, flags);
+					score_t value = -scout<opp, 0>(1 - beta, new_depth, flags);
 					undo_move<me>(move);
 					if (value > score)
 					{
@@ -7451,6 +7490,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 	Current->ref[1] = RefM(Current->move).check_ref[1];
 	mark_evasions(Current->moves);
 	Current->current = Current->moves;
+	LMR_<0> lmr(Current->material, depth);
 	while (move = pick_move())
 	{
 		if (move == hash_move)
@@ -7473,7 +7513,7 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			{
 				if (cnt > moves_to_play)
 					continue;
-				if ((value = Current->score + DeltaM(move) + 10 * CP_SEARCH) < beta && depth <= 3)
+				if (int value = Current->score + DeltaM(move) + 10 * CP_SEARCH; value < beta && depth <= 3)
 				{
 					score = Max(value, score);
 					continue;
@@ -7481,14 +7521,14 @@ template<bool me, bool exclusion> int scout_evasion(int beta, int depth, int fla
 			}
 			if (depth >= 6 && cnt > 3)
 			{
-				int reduction = reduction_n(depth, cnt);
+				int reduction = lmr(cnt);
 				if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
 					reduction += reduction / 2;
 				new_depth = Max(3, new_depth - reduction);
 			}
 		}
 		do_move<me>(move);
-		value = -scout<opp, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
+		int value = -scout<opp, 0>(1 - beta, new_depth, FlagNeatSearch | ExtToFlag(ext));
 		if (value >= beta && new_depth < depth - 2 + ext)
 			value = -scout<opp, 0>(1 - beta, depth - 2 + ext, FlagNeatSearch | FlagDisableNull | ExtToFlag(ext));
 		undo_move<me>(move);
@@ -7731,6 +7771,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 
 	if (PrN > 1 && !root && parent && depth >= SplitDepthPV)
 		do_split = 1;
+	LMR_<1> lmr(Current->material, depth);
 
 	while (move = get_move<me, root>(Odd(depth)))
 	{
@@ -7754,7 +7795,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		new_depth = depth - 2 + ext;
 		if (depth >= 6 && F(move & 0xE000) && F(PieceAt(To(move))) && (T(root) || !is_killer(move) || T(IsCheck(me))) && cnt > 3)
 		{
-			int reduction = reduction_n(depth, cnt) - 1;
+			int reduction = lmr(cnt);
 			if (move == Current->ref[0] || move == Current->ref[1])
 				reduction = Max(0, reduction - 1);
 			if (reduction >= 2 && !(Queen(White) | Queen(Black)) && popcnt(NonPawnKingAll()) <= 4)
