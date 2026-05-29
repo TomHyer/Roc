@@ -727,7 +727,7 @@ static const int StageNone = (1 << s_none) | (1 << e_none) | (1 << r_none);
 typedef struct
 {
 	uint32 key;
-	uint16 date;
+	uint16 theDate;
 	uint16 move;
 	score_t low;
 	score_t high;
@@ -759,7 +759,7 @@ typedef struct
 	int knodes;
 	int ply;
 	uint32 key;
-	uint16 date;
+	uint16 theDate;
 	uint16 move;
 	score_t value;
 	score_t exclusion;
@@ -847,7 +847,8 @@ INLINE packed_t Pst(int piece, int sq)
 	return RO->PstVals[(piece << 6) | sq];
 };
 
-uint16 date;
+uint64 theEpoch = 1, pvsTunerHash = 0;
+uint16 theDate;
 array<array<array<uint16, 2>, 64>, 16> HistoryVals;
 
 INLINE int* AddMove(int* list, int from, int to, int flags, int score)
@@ -1681,7 +1682,7 @@ typedef struct
 {
 	GPosData Position[1];
 	array<uint64, 104> stack;
-	int sp, date;
+	int sp, theDate;
 	array<array<uint16, N_KILLER>, 16> killer;
 } GPos;
 
@@ -3088,9 +3089,21 @@ template<bool me> void eval_kqkrpx(GEvalInfo& EI, pop_func_t pop)
 	check_forced_stalemate<me>(&EI.mul);
 }
 
-MatModel_ DefaultMatModel()
+MatModel_<3> DefaultMatModel()
 {
-	MatModel_ model;
+	using namespace NNMat;
+	MatModel_<3> model;
+	model.odd1_ = INIT_ODD;
+	model.even1_ = INIT_EVEN;
+	model.layers_ = INIT_LAYERS;
+	model.biases_ = INIT_BIAS;
+	model.oddVols_ = ODD_VOLS;
+	return model;
+}
+MatModel_<5> DefaultMulModel()
+{
+	using namespace NNMul;
+	MatModel_<5> model;
 	model.odd1_ = INIT_ODD;
 	model.even1_ = INIT_EVEN;
 	model.layers_ = INIT_LAYERS;
@@ -3101,7 +3114,8 @@ MatModel_ DefaultMatModel()
 
 void calc_material(int index, GMaterial& material)
 {
-	static MatModel_ TheML = DefaultMatModel();
+	static MatModel_<3> ScoreML = DefaultMatModel();
+	static MatModel_<5> MulML = DefaultMulModel();
 
 	array<int, 2> pawns, knights, light, dark, rooks, queens, bishops, major, minor, tot, count, mat, mul, closed;
 	int i = index;
@@ -3278,17 +3292,13 @@ void calc_material(int index, GMaterial& material)
 					{
 						mul[me] = Min(mul[me], 15);
 						if (pawns[me] - pawns[opp] <= 1)
-							mul[me] = Min(mul[me], 11);
+							mul[me] = Min(mul[me], pawns[me] ? 8 : 0);
 					}
 				}
 			}
 			else if (!pawns[me] && knights[me] == 2 && !bishops[me])
 				mat[me] = (!tot[opp] && pawns[opp]) ? 6 : 0;
 		}
-//		else if (F(queens[me] + queens[opp] + minor[opp] + pawns[opp]) && rooks[me] == rooks[opp] && minor[me] == 1 && T(pawns[me]))	// RNP or RBP vs R
-//			mat[me] += 24 / (pawns[me] + rooks[me]);
-//		else if (F(queens[me] + minor[me] + major[opp] + pawns[opp]) && rooks[me] == minor[opp] && T(pawns[me]))	// RP vs minor
-//			mat[me] = 40;
 
 		if (!mul[me])
 			mat[me] = 0;
@@ -3363,19 +3373,14 @@ void calc_material(int index, GMaterial& material)
 		material.pawnsForPiece[me] = tot[me] < tot[opp] && major[me] + minor[me] < major[opp] + minor[opp] &&  pawns[me] > pawns[opp];
 	}
 	// Now overwrite it all
-	auto mscore = TheML.score(index, nullptr, 0.0, nullptr);
-	material.score = static_cast<score_t>(mscore.first);
-	/*
-	// don't trust multipliers enough to use them yet
-	auto tweak = [](uint8* hce, double ml)
-		{
-			*hce = static_cast<uint8>(Min(2.0 * *hce, 32.0 * ml));
-		};
-	if (material.score >= 0)
-		tweak(&material.mul[White], mscore.second);
-	if (material.score <= 0)
-		tweak(&material.mul[Black], mscore.second);
-	*/
+	if (tot[White] + tot[Black] > 8)
+	{
+		auto mscore = ScoreML.score(index, nullptr, 0.0, nullptr);
+		material.score = static_cast<score_t>(mscore);
+		auto mmuls = MulML.muls(index, nullptr, 0.0, 0.0);
+		material.mul[White] = static_cast<uint8>(32.0 * mmuls.first);
+		material.mul[Black] = static_cast<uint8>(32.0 * mmuls.second);
+	}
 }
 
 void init_material(CommonData_* dst)
@@ -3483,10 +3488,10 @@ void setup_board()
 
 	occ = 0;
 	sp = 0;
-	++date;
-	if (date > 0x8000)
+	++theDate;
+	if (theDate > 0x8000)
 	{  // mustn't ever happen
-		date = 2;
+		theDate = 2;
 		// now GUI must wait for readyok... we have plenty of time :)
 		std::fill(Hash, Hash + hash_size, NullEntry);
 		std::fill(PVHash, PVHash + pv_hash_size, NullPVEntry);
@@ -3599,6 +3604,10 @@ void get_board(const char fen[])
 	setup_board();
 }
 
+void TunerRecord(uint64 epoch, bool me, int material, int mat_score, int score, int deep_score);
+bool TunerFlush();
+
+
 void init_search(int clear_hash)
 {
 	for (int ip = 0; ip < 16; ++ip)
@@ -3610,8 +3619,11 @@ void init_search(int clear_hash)
 	memset(Data + 1, 0, 127 * sizeof(GData));
 	if (clear_hash)
 	{
-		date = 0;
-		date = 1;
+		++theEpoch;
+		if (!TunerFlush())
+			abort();
+		theDate = 0;
+		theDate = 1;
 		memset(Hash, 0, hash_size * sizeof(GEntry));
 		memset(PVHash, 0, pv_hash_size * sizeof(GPVEntry));
 	}
@@ -3646,7 +3658,7 @@ INLINE GEntry* probe_hash()
 	for (GEntry* Entry = start; Entry < start + HASH_CLUSTER; ++Entry)
 		if (Low32(Current->key) == Entry->key)
 		{
-			Entry->date = date;
+			Entry->theDate = theDate;
 			return Entry;
 		}
 	return nullptr;
@@ -3658,7 +3670,7 @@ INLINE GPVEntry* probe_pv_hash()
 	for (GPVEntry* PVEntry = start; PVEntry < start + pv_cluster_size; ++PVEntry)
 		if (Low32(Current->key) == PVEntry->key)
 		{
-			PVEntry->date = date;
+			PVEntry->theDate = theDate;
 			return PVEntry;
 		}
 	return nullptr;
@@ -5155,7 +5167,7 @@ void hash_high(int value, int depth)
 	{
 		if (Entry->key == Low32(Current->key))
 		{
-			Entry->date = date;
+			Entry->theDate = theDate;
 			if (depth > Entry->high_depth || (depth == Entry->high_depth && value < Entry->high))
 			{
 				if (Entry->low <= value)
@@ -5172,14 +5184,14 @@ void hash_high(int value, int depth)
 			}
 			return;
 		}
-		int merit = 8 * static_cast<int>(Entry->date)  + static_cast<int>(Max(Entry->high_depth, Entry->low_depth));
+		int merit = 8 * static_cast<int>(Entry->theDate)  + static_cast<int>(Max(Entry->high_depth, Entry->low_depth));
 		if (merit < minMerit)
 		{
 			minMerit = merit;
 			best = Entry;
 		}
 	}
-	best->date = date;
+	best->theDate = theDate;
 	best->key = Low32(Current->key);
 	best->high = value;
 	best->high_depth = depth;
@@ -5202,7 +5214,7 @@ int hash_low(int move, int value, int depth)
 	{
 		if (Entry->key == Low32(Current->key))
 		{
-			Entry->date = date;
+			Entry->theDate = theDate;
 			if (depth > Entry->low_depth || (depth == Entry->low_depth && value > Entry->low))
 			{
 				if (move)
@@ -5223,14 +5235,14 @@ int hash_low(int move, int value, int depth)
 				Entry->move = move;
 			return value;
 		}
-		int score = (static_cast<int>(Entry->date) << 3) + static_cast<int>(Max(Entry->high_depth, Entry->low_depth));
+		int score = (static_cast<int>(Entry->theDate) << 3) + static_cast<int>(Max(Entry->high_depth, Entry->low_depth));
 		if (score < min_score)
 		{
 			min_score = score;
 			best = Entry;
 		}
 	}
-	best->date = date;
+	best->theDate = theDate;
 	best->key = Low32(Current->key);
 	best->high = 0;
 	best->high_depth = 0;
@@ -5252,7 +5264,7 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 	{
 		if (PVEntry->key == Low32(Current->key))
 		{
-			PVEntry->date = date;
+			PVEntry->theDate = theDate;
 			PVEntry->knodes += knodes;
 			if (PVEntry->depth <= depth)
 			{
@@ -5268,7 +5280,7 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 			}
 			return;
 		}
-		score = (static_cast<int>(PVEntry->date) << 3) + static_cast<int>(PVEntry->depth);
+		score = (static_cast<int>(PVEntry->theDate) << 3) + static_cast<int>(PVEntry->depth);
 		if (score < min_score)
 		{
 			min_score = score;
@@ -5276,7 +5288,7 @@ void hash_exact(int move, int value, int depth, int exclusion, int ex_depth, int
 		}
 	}
 	best->key = Low32(Current->key);
-	best->date = date;
+	best->theDate = theDate;
 	best->value = value;
 	best->depth = depth;
 	best->move = move;
@@ -6654,7 +6666,7 @@ void send_position(GPos* Pos)
 	Pos->Position->pst = Current->pst;
 	Pos->Position->material = Current->material;
 	for (int i = 0; i < 64; ++i) Pos->Position->square[i] = Board->square[i];
-	Pos->date = date;
+	Pos->theDate = theDate;
 	Pos->sp = sp;
 	for (int i = 0; i <= Current->ply; ++i) Pos->stack[i] = Stack[sp - i];
 	for (int i = 0; i < Min(16, 126 - (int)(Current - Data)); ++i)
@@ -6692,7 +6704,7 @@ void retrieve_position(GPos* Pos, int copy_stack)
 	Current->pst = Pos->Position->pst;
 	Current->material = Pos->Position->material;
 	retrieve_board(Pos);
-	date = Pos->date;
+	theDate = Pos->theDate;
 	if (copy_stack)
 	{
 		sp = Current->ply;
@@ -7831,6 +7843,19 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		HALT_CHECK;
 	}
 
+	if (root && !(Current->material & FlagUnusualMaterial))
+	{   // collect data for material tuning
+		evaluate();
+		if (Current->key != pvsTunerHash)
+		{
+			int matScore = RO->Material[Current->material].score * (me ? -1 : 1);
+			int deepScore = pv_search<me, false>(Current->score - FutilityThreshold, Current->score + FutilityThreshold, 24, FlagNeatSearch);
+
+			TunerRecord(theEpoch, me, Current->material, matScore, Current->score, deepScore);
+			pvsTunerHash = Current->key;
+		}
+	}
+
 	// check hash
 	hash_depth = -1;
 	Current->best = hash_move = 0;
@@ -7925,7 +7950,7 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		// find the failed refutation in the hash and erase it (at root) or deprecate it
 		do_move<me>(move);
 		if (auto entry = probe_hash())
-			entry->date = Max<uint16>(2, entry->date) - 2;
+			entry->theDate = Max<uint16>(2, entry->theDate) - 2;
 		undo_move<me>(move);
 		return hash_low(move, value, depth);
 	};
@@ -8163,7 +8188,7 @@ template<bool me> void root()
 	sint64 time;
 	GPVEntry* PVEntry;
 
-	++date;
+	++theDate;
 	nodes = check_node = check_node_smp = 0;
 	if (parent)
 		Smpi->nodes = 0;
