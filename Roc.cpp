@@ -18,6 +18,8 @@
 
 #include <iostream>
 #include <fstream>
+#include <cstdio>
+#include <vector>
 #include <array>
 #include <numeric>
 #include <string>
@@ -847,7 +849,7 @@ INLINE packed_t Pst(int piece, int sq)
 	return RO->PstVals[(piece << 6) | sq];
 };
 
-uint64 theEpoch = 1, pvsTunerHash = 0;
+uint64 pvsTunerHash = 0;
 uint16 theDate;
 array<array<array<uint16, 2>, 64>, 16> HistoryVals;
 
@@ -3097,7 +3099,6 @@ MatModel_<3> DefaultMatModel()
 	model.even1_ = INIT_EVEN;
 	model.layers_ = INIT_LAYERS;
 	model.biases_ = INIT_BIAS;
-	model.oddVols_ = ODD_VOLS;
 	return model;
 }
 MatModel_<5> DefaultMulModel()
@@ -3108,14 +3109,17 @@ MatModel_<5> DefaultMulModel()
 	model.even1_ = INIT_EVEN;
 	model.layers_ = INIT_LAYERS;
 	model.biases_ = INIT_BIAS;
-	model.oddVols_ = ODD_VOLS;
 	return model;
 }
+
+// The tuner sets this so init_material keeps the formula below. Search uses
+// the score net, for piece totals above 8, only when this stays false.
+// The multiplier net is on hold; search keeps the handwritten multiplier.
+bool KeepClassicalMaterial = false;
 
 void calc_material(int index, GMaterial& material)
 {
 	static MatModel_<3> ScoreML = DefaultMatModel();
-	static MatModel_<5> MulML = DefaultMulModel();
 
 	array<int, 2> pawns, knights, light, dark, rooks, queens, bishops, major, minor, tot, count, mat, mul, closed;
 	int i = index;
@@ -3372,14 +3376,12 @@ void calc_material(int index, GMaterial& material)
 
 		material.pawnsForPiece[me] = tot[me] < tot[opp] && major[me] + minor[me] < major[opp] + minor[opp] &&  pawns[me] > pawns[opp];
 	}
-	// Now overwrite it all
-	if (tot[White] + tot[Black] > 8)
+	// Piece totals above 8 use the fitted score. The multiplier stays
+	// handwritten.
+	if (!KeepClassicalMaterial && tot[White] + tot[Black] > 8)
 	{
-		auto mscore = ScoreML.score(index, nullptr, 0.0, nullptr);
+		auto mscore = ScoreML.score(index);
 		material.score = static_cast<score_t>(mscore);
-		auto mmuls = MulML.muls(index, nullptr, 0.0, 0.0);
-		material.mul[White] = static_cast<uint8>(32.0 * mmuls.first);
-		material.mul[Black] = static_cast<uint8>(32.0 * mmuls.second);
 	}
 }
 
@@ -3604,9 +3606,112 @@ void get_board(const char fen[])
 	setup_board();
 }
 
-void TunerRecord(uint64 epoch, bool me, int material, int mat_score, int score, int deep_score);
-bool TunerFlush();
+sint64 get_time();
 
+#ifdef TUNING
+// Snapshot of the root eval, taken before the multiplier scales it and before
+// the side-to-move negation. The collection search evaluates other nodes, so
+// this is updated only while Current is the root.
+static int TunerRootPre = 0;
+static int TunerRootMul = 0;
+static int TunerRootStrong = -1;
+
+static const wchar_t* TunerRecordFilename = L"C:\\dev\\Roc\\RocTuning.csv";
+static uint64 TunerEpoch = 0;
+static bool TunerWrote = false;
+static bool TunerWriteOk = true;
+
+// Rows stay in this process until an exclusive append succeeds. The file is
+// closed immediately afterwards so another process can append its own rows.
+struct TunerPending
+{
+	uint64 epoch;
+	int me;
+	int material;
+	int matWhite;
+	int preWhite;
+	int mul;
+	int strong;
+	int staticWhite;
+	int deepWhite;
+};
+static std::vector<TunerPending> TunerPendingRows;
+static const size_t TunerWriteBatch = 256;
+static int TunerWriteHold = 0;
+
+static bool TunerWritePending()
+{
+	if (TunerPendingRows.empty())
+	{
+		TunerWriteOk = true;
+		return true;
+	}
+	HANDLE file = CreateFileW(TunerRecordFilename, FILE_APPEND_DATA, 0, nullptr,
+		OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (file == INVALID_HANDLE_VALUE)
+	{
+		TunerWriteOk = false;
+		return false;
+	}
+	size_t committed = 0;
+	char line[160];
+	for (const TunerPending& row : TunerPendingRows)
+	{
+		int n = snprintf(line, sizeof(line), "%llu,%d,%d,%d,%d,%d,%d,%d,%d\n",
+			static_cast<unsigned long long>(row.epoch),
+			row.me, row.material, row.matWhite, row.preWhite,
+			row.mul, row.strong, row.staticWhite, row.deepWhite);
+		DWORD wrote = 0;
+		if (n <= 0 || n >= static_cast<int>(sizeof(line))
+			|| !WriteFile(file, line, static_cast<DWORD>(n), &wrote, nullptr)
+			|| wrote != static_cast<DWORD>(n))
+			break;
+		++committed;
+	}
+	CloseHandle(file);
+	if (committed)
+		TunerPendingRows.erase(TunerPendingRows.begin(), TunerPendingRows.begin() + static_cast<std::ptrdiff_t>(committed));
+	TunerWriteOk = TunerPendingRows.empty();
+	return TunerWriteOk;
+}
+
+struct TunerWriteAtExit
+{
+	~TunerWriteAtExit() { TunerWritePending(); }
+};
+static TunerWriteAtExit tunerWriteAtExit;
+
+// White-frame fields: material table, pre-multiplier static score, the
+// multiplier evaluation() applied, the side whose multiplier that was
+// (0 white, 1 black, -1 neither), and the post-multiplier static and
+// search scores. Each row is one position.
+void TunerRecord(int me, int material, int matWhite, int preWhite, int mul, int strong, int staticWhite, int deepWhite)
+{
+	if (!TunerEpoch)
+		TunerEpoch = static_cast<uint64>(get_time()) & 0xFFFFFFFFFFFFULL;
+	TunerPendingRows.push_back({ TunerEpoch, me, material, matWhite, preWhite, mul, strong, staticWhite, deepWhite });
+	TunerWrote = true;
+	if (TunerWriteHold > 0)
+		--TunerWriteHold;
+	else if (TunerPendingRows.size() >= TunerWriteBatch)
+	{
+		if (!TunerWritePending())
+			TunerWriteHold = 64;
+	}
+}
+
+bool TunerFlush()
+{
+	TunerWriteHold = 0;
+	bool ok = TunerWritePending();
+	if (TunerWrote)
+	{
+		++TunerEpoch;
+		TunerWrote = false;
+	}
+	return ok;
+}
+#endif
 
 void init_search(int clear_hash)
 {
@@ -3619,9 +3724,10 @@ void init_search(int clear_hash)
 	memset(Data + 1, 0, 127 * sizeof(GData));
 	if (clear_hash)
 	{
-		++theEpoch;
+#ifdef TUNING
 		if (!TunerFlush())
-			abort();
+			cout << "Tuner write delayed; rows kept for the next try\n";
+#endif
 		theDate = 0;
 		theDate = 1;
 		memset(Hash, 0, hash_size * sizeof(GEntry));
@@ -4859,6 +4965,14 @@ template<class POP> void evaluation()
 	}
 	else
 		EI.mul = Min(value.mul_[White], value.mul_[Black]);
+#ifdef TUNING
+	if (Current == Data)
+	{
+		TunerRootPre = Current->score;
+		TunerRootMul = EI.mul;
+		TunerRootStrong = Current->score > 0 ? 0 : (Current->score < 0 ? 1 : -1);
+	}
+#endif
 	Current->score = (Current->score * EI.mul * CP_SEARCH) / (32 * CP_EVAL);
 
 	if (Current->turn)
@@ -7586,6 +7700,8 @@ void send_pv(int depth, int alpha, int beta, int score)
 	for (sel_depth = 1; sel_depth < 127 && T((Data + sel_depth)->att[0]); ++sel_depth)
 		;
 	--sel_depth;
+	if (F(Current->material & FlagUnusualMaterial)) { sel_depth = RO->Material[Current->material].mul[score > 0 ? 0 : 1]; }
+	
 	pv_length = 64;
 	if (F(move = best_move))
 		move = RootList[0];
@@ -7843,18 +7959,39 @@ template<bool me, bool root> int pv_search(int alpha, int beta, int depth, int f
 		HALT_CHECK;
 	}
 
-	if (root && !(Current->material & FlagUnusualMaterial))
-	{   // collect data for material tuning
+#ifdef TUNING
+	// One exact 12-ply score per position, inside ±200 cp of the static eval.
+	// A return on either bound is not a score and is not recorded. The label
+	// is this position's own search, not the next material and not the game result.
+	// Search futility stays at FutilityThreshold; this window is only the recorder.
+	if (root && !(Current->material & FlagUnusualMaterial) && Current->material < TotalMat)
+	{
 		evaluate();
 		if (Current->key != pvsTunerHash)
 		{
-			int matScore = RO->Material[Current->material].score * (me ? -1 : 1);
-			int deepScore = pv_search<me, false>(Current->score - FutilityThreshold, Current->score + FutilityThreshold, 24, FlagNeatSearch);
-
-			TunerRecord(theEpoch, me, Current->material, matScore, Current->score, deepScore);
 			pvsTunerHash = Current->key;
+			int mul = TunerRootMul;
+			int preWhite = TunerRootPre;
+			int strong = TunerRootStrong;
+			if (mul > 0)
+			{
+				constexpr int tunerWindow = 200 * CP_SEARCH;
+				int windowLo = Current->score - tunerWindow;
+				int windowHi = Current->score + tunerWindow;
+				int deepStm = pv_search<me, false>(windowLo, windowHi, 24, FlagNeatSearch);
+				if (deepStm > windowLo && deepStm < windowHi)
+				{
+					int sign = me ? -1 : 1;
+					int staticWhite = Current->score * sign;
+					int deepWhite = deepStm * sign;
+					if (deepWhite > -20000 && deepWhite < 20000)
+						TunerRecord(me ? 1 : 0, Current->material, RO->Material[Current->material].score,
+							preWhite, mul, strong, staticWhite, deepWhite);
+				}
+			}
 		}
 	}
+#endif
 
 	// check hash
 	hash_depth = -1;
